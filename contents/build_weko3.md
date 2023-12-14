@@ -37,3 +37,4 @@ weko-worker-1          "bash /code/scripts/…"   worker              running
 ![pic](setup_vagrant_weko_003.png)
 ![pic](setup_vagrant_weko_004.png)
 ![pic](setup_vagrant_weko_005.png)
+![pic](setup_vagrant_weko_006.png)
