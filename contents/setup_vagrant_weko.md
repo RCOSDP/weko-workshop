@@ -23,3 +23,41 @@ Bringing machine 'default' up with 'virtualbox' provider...
 ```
 
 
+```
+>vagrant status
+Current machine states:
+
+default                   running (virtualbox)
+
+The VM is running. To stop this VM, you can run `vagrant halt` to
+shut it down forcefully, or you can run `vagrant suspend` to simply
+suspend the virtual machine. In either case, to restart it again,
+simply run `vagrant up`.
+
+```
+
+
+```
+>vagrant ssh-config
+Host default
+  HostName 127.0.0.1
+  User vagrant
+  Port 2222
+  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking no
+  PasswordAuthentication no
+  IdentityFile C:/Users/masah/Downloads/vagrant-weko-master/vagrant-weko-master/single/.vagrant/machines/default/virtualbox/private_key
+  IdentitiesOnly yes
+  LogLevel FATAL
+```
+
+```
+cd %HOMEDRIVE%%HOMEPATH%
+```
+
+```
+>code .ssh\config
+```
+
+![pic](setup_vagrant_weko_001.png)
+

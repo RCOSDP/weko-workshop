@@ -9,14 +9,12 @@
         * [Windows](contents/install_virtualbox_in_windows.md)
       * Install vagrant
         * [Windows](contents/install_vagrant_in_windows.md)
-      * Setup [vagrant-weko](contents/setup_vagrant_weko.md)
-
-
+      * Install openssh
+        * [Windows](contents/install_openssh_in_windows.md)
       * Install visual studio code
-        * https://code.visualstudio.com/
-        * 
-    * Install docker
-        * [Ubuntu](contents/install_container_engine_in_ubuntu.md)
+        * [Windows](contents/install_vscode_in_windows.md)
+      * Setup [vagrant-weko](contents/setup_vagrant_weko.md)
+    * [Build WEKO3](contents/build_weko3.md)
 * Building repository with WEKO3
 * Operating Kubernetes
 * Developing WEKO3
