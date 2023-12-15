@@ -61,3 +61,7 @@ cd %HOMEDRIVE%%HOMEPATH%
 
 ![pic](setup_vagrant_weko_001.png)
 
+```
+>vagrant suspend
+==> default: Saving VM state and suspending execution...
+```
