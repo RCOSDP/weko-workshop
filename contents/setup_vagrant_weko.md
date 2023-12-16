@@ -38,3 +38,5 @@ shut it down forcefully, or you can run `vagrant suspend` to simply
 suspend the virtual machine. In either case, to restart it again,
 simply run `vagrant up`.
 ```
+
+When complete, proceed to the [next step](./setup_sshconfig_in_windows.md).

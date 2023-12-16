@@ -1,24 +1,51 @@
 # build WEKO3
 
-Clone WEKO3 to the local environment.
+## connect to virtual machine
+
+Run visual studio code and open "Remote Explorer".
+Choose virtual machine config, then connect the server.
+
+![pic](build_weko3_000.png)
+
+Open the terminal view in visual studio code.
+
+![pic](build_weko3_001.png)
+
+## clone WEKO3 repository
+
+Next, clone WEKO3 repository to the local environment.
 
 ```
 git clone https://github.com/RCOSDP/weko.git
 ```
 
-Move to the cloned directory.
+When completed cloning, move to the cloned directory.
 
 ```
 cd weko
 ```
 
-Run the installation script.
+## build WEKO3
+
+Run a script for instalation of WEKO3.
 
 ```
 bash install2.sh
 ```
 
-![pic](setup_vagrant_weko_002.png)
+It takes time for all installation processes to be completed. When the installation is complete, the following screen will appear.
+
+![pic](build_weko3_002.png)
+
+WEKO3 consists of 8 containers. Specifically, it consists of the nginx container, application container, celery woker container, elasticsearch container, redis server container, rabbitmq container, postgresql container, pgpool container, and flower container. 
+
+To be sure, run the docker-compose command and check the running containers.
+
+```
+docker-compose -f docker-compose2.yml ps
+```
+
+If it is working correctly, it will appear as follows.
 
 ```
 $ docker-compose -f docker-compose2.yml ps
@@ -34,7 +61,18 @@ weko-web-1             "bash /code/scripts/…"   web                 running   
 weko-worker-1          "bash /code/scripts/…"   worker              running   
 ```
 
-![pic](setup_vagrant_weko_003.png)
-![pic](setup_vagrant_weko_004.png)
-![pic](setup_vagrant_weko_005.png)
-![pic](setup_vagrant_weko_006.png)
+## Configure port fowarding
+
+Open "Ports" tab and click "Foward a Port" button.
+
+![pic](build_weko3_003.png)
+
+Enter the information as shown in the picture below in the Ports tab.
+
+![pic](build_weko3_004.png)
+
+Run a web browser and open "https://localhost". The following screen will appear on your browser screen.
+
+![pic](build_weko3_005.png)
+
+This completes the installation of WEKO3. In the next step we will explain how to build a repository.

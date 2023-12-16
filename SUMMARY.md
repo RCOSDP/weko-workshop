@@ -9,6 +9,7 @@
         * [Install virtualbox in Windows](contents/install_virtualbox_in_windows.md)
       * Vagrant
         * [Install vagrant in Windows](contents/install_vagrant_in_windows.md)
+        * [Vagrant cheat sheet](contents/vagrant_cheat_sheet.md)
       * openssh
         * [Install openssh in Windows](contents/install_openssh_in_windows.md)
       * visual studio code
