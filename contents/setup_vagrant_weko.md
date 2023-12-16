@@ -39,4 +39,8 @@ suspend the virtual machine. In either case, to restart it again,
 simply run `vagrant up`.
 ```
 
+This completes the environment setup, and all necessary commands such as docker, docker-compose, git, etc. required to build WEKO3 are already installed.
+
+Specific installation commands can be found at [Github permalink](https://github.com/RCOSDP/vagrant-weko/blob/5228caa98033bd511d876a3ac6d7447d49943561/single/Vagrantfile#L22-L38).
+
 When complete, proceed to the [next step](./setup_sshconfig_in_windows.md).

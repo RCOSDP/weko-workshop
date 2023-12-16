@@ -5,11 +5,10 @@
 -----
 * Getting started with WEKO3
     * Setup development envrionment
-      * Virtualbox
+      * [Virtualbox](contents/virutalbox.md)
         * [Install virtualbox in Windows](contents/install_virtualbox_in_windows.md)
-      * Vagrant
+      * [Vagrant](contents/vagrant.md)
         * [Install vagrant in Windows](contents/install_vagrant_in_windows.md)
-        * [Vagrant cheat sheet](contents/vagrant_cheat_sheet.md)
       * openssh
         * [Install openssh in Windows](contents/install_openssh_in_windows.md)
       * visual studio code
@@ -18,8 +17,10 @@
     * configure ssh config
       * [configure ssh config in Windows](contents/setup_sshconfig_in_windows.md)
     * [Build WEKO3](contents/build_weko3.md)
-    * [Operate docker-compose](contents/operate_docker_compose.md) 
 * Building repository with WEKO3
 * Operating Kubernetes
 * Developing WEKO3
+* Cheat sheet
+  * [Vagrant](contents/vagrant_cheat_sheet.md) 
+  * [docker-compose](contents/docker_compose_cheat_sheet.md) 
 
