@@ -1,18 +1,21 @@
 # Setup vagrant-weko
 
-open https://github.com/RCOSDP/vagrant-weko
+Download the Vagrant file to build the WEKO3 development environment.
+Go to [https://github.com/RCOSDP/vagrant-weko](https://github.com/RCOSDP/vagrant-weko) in your browser.
 
-download repository zip file from github repository.
+Next, click Code button and Download Zip link. Then start to download zipped github repository.
 
 ![pic](setup_vagrant_weko_000.png)
 
-Extract the downloaded package in any directory.
+When complete to download, extract the downloaded package at any directory.
 
-open command prompt and move the directory.
+Next Open command prompt to build development enviroment using Vagrant. 
 
-move "single" directory in the directory.
+When opend command prompt, move the directory of extracted vagrant-weko.
 
-run vagrant up command then virutual machine environment is built.
+Move "single" directory in the directory.
+
+Run vagrant up command then start to build single virutual machine environment.
 
 ```
 >vagrant up
@@ -22,6 +25,7 @@ Bringing machine 'default' up with 'virtualbox' provider...
 ~ snip ~
 ```
 
+When completed, '''vagrant status''' command, then it show running status of the virtual machine. 
 
 ```
 >vagrant status
@@ -33,35 +37,4 @@ The VM is running. To stop this VM, you can run `vagrant halt` to
 shut it down forcefully, or you can run `vagrant suspend` to simply
 suspend the virtual machine. In either case, to restart it again,
 simply run `vagrant up`.
-
-```
-
-
-```
->vagrant ssh-config
-Host default
-  HostName 127.0.0.1
-  User vagrant
-  Port 2222
-  UserKnownHostsFile /dev/null
-  StrictHostKeyChecking no
-  PasswordAuthentication no
-  IdentityFile C:/Users/masah/Downloads/vagrant-weko-master/vagrant-weko-master/single/.vagrant/machines/default/virtualbox/private_key
-  IdentitiesOnly yes
-  LogLevel FATAL
-```
-
-```
-cd %HOMEDRIVE%%HOMEPATH%
-```
-
-```
->code .ssh\config
-```
-
-![pic](setup_vagrant_weko_001.png)
-
-```
->vagrant suspend
-==> default: Saving VM state and suspending execution...
 ```
