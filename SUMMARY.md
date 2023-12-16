@@ -18,6 +18,7 @@
     * configure ssh config
       * [configure ssh config in Windows](contents/setup_sshconfig_in_windows.md)
     * [Build WEKO3](contents/build_weko3.md)
+    * [Operate docker-compose](contents/operate_docker_compose.md) 
 * Building repository with WEKO3
 * Operating Kubernetes
 * Developing WEKO3
