@@ -8,8 +8,6 @@ WEKO3 can be easily run using Docker. Here we will start by building a virtual m
 
 Although it is possible to use the Docker environment of the OS you are familiar with, the behavior of Docker may differ from one OS to another, so this workshop will start with the installation of a virtual machine to unify the environment.
 
-## Download the application from virtualbox.org
-
 Download the virtualbox installer from virtualbox.org. Go to [https://www.virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads) in your browser.
 
 Next, download the installer for Windows. Click on the link marked in yellow in the following picture.

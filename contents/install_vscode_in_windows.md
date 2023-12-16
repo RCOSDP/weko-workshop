@@ -1,8 +1,12 @@
+# Install visual studio code in Windowss
 
+Install Visual Studio Code as a source code editor and SSH console. Again, use winget.
 
 ```
 winget install Microsoft.VisualStudioCode
 ```
+
+
 
 ```
 code --install-extension ms-vscode-remote.remote-ssh-edit
