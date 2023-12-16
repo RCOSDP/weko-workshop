@@ -17,7 +17,11 @@ set PATH=C:\Program Files\OpenSSH;%PATH%
 Check the version of ssh. If the execution path has been successfully set, the installed openssh version is displayed.
 
 ```
->ssh -V
+ssh -V
+```
+
+```
+> ssh -V
 OpenSSH_for_Windows_9.4p1, LibreSSL 3.7.3
 ```
 
