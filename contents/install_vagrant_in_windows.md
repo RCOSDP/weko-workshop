@@ -1,4 +1,4 @@
-# Windows
+# Install vagrant in Windows
 
 ## Download the application from www.vagrantup.com
 
