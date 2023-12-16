@@ -20,7 +20,7 @@ After downloading, install virtualbox application by the installer.
 
 ![pic](install_virtualbox_in_windows_001.png)
 
-Follow the installer's instructions to proceed with the installation. When complete, proceed to the next step.
+Follow the installer's instructions to proceed with the installation. When complete, proceed to the [next step](./install_vagrant_in_windows.md).
 
 
 
