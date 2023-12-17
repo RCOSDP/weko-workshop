@@ -14,4 +14,4 @@ The metadata of an item is defined by a schema called item type. An item type co
 
 Item registration is performed using "Workflows," which are pairs of "Flow" that define registration procedures and "Item Type" to be registered in those flows. An instance of a workflow is called an "Activity". A user who has the authority to register items in the repository invokes an "Activity" to register items in the repository.
 
-Now we will start the [WEKO3 workshop](./SUMMARY.md).
+Now we will start the [WEKO3 workshop](./contents/getting_started_with_WEKO3.md).
