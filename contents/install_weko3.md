@@ -1,4 +1,4 @@
-# build WEKO3
+# Install WEKO3
 
 ## connect to virtual machine
 

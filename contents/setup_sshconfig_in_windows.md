@@ -37,5 +37,5 @@ And paste the ssh configuration which is copied from vagrant command.
 
 Change HOST name from default to single or you like name.
 
-You are now ready to connect to the virtual machine via ssh. The next step is to [build WEKO3](./build_weko3.md).
+You are now ready to connect to the virtual machine via ssh. The next step is to [build WEKO3](./install_weko3.md).
 

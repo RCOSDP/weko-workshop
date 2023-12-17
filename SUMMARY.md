@@ -16,8 +16,9 @@
       * Setup [vagrant-weko](contents/setup_vagrant_weko.md)
     * configure ssh config
       * [configure ssh config in Windows](contents/setup_sshconfig_in_windows.md)
-    * [Build WEKO3](contents/build_weko3.md)
+    * [Install WEKO3](contents/install_weko3.md)
 * Building repository with WEKO3
+  * [Initialize repository](contents/initialize_repository.md)
 * Operating Kubernetes
 * Developing WEKO3
 * Cheat sheet
