@@ -1,4 +1,4 @@
-Change k8s Image
+# Change k8s Image
 
 /home/vagrant/weko/Dockerfile
 <pre>
@@ -50,3 +50,9 @@ cp -r jdcat-dev.ir.rcos.nii.ac.jp-2022-10-21 jdcat-dev.ir.rcos.nii.ac.jp-2022-12
 $ grep "image:" jdcat-dev.ir.rcos.nii.ac.jp-2022-12-29/manifests/deploy-web.yaml
 
 $kubectl apply -f jdcat-dev.ir.rcos.nii.ac.jp-2022-12-29/manifests/deploy-web.yaml
+
+
+# install oci
+
+bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
+
