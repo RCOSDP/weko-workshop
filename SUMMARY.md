@@ -11,7 +11,7 @@
   * [Configure repository workflow](contents/configure_repository_workflow.md)
   * [Designing repository site](contents/designing_repository_site.md)
 * [Using WEKO3](contents/using_weko3.md)
-* [Operating Kubernetes](contents/Operating Kubernetes.md)
+* [Operating Kubernetes](contents/Operating_Kubernetes.md)
 * Developing WEKO3
 * Cheat sheet
   * [Vagrant](contents/vagrant_cheat_sheet.md) 
