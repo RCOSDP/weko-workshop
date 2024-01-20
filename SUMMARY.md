@@ -12,7 +12,7 @@
   * [Designing repository site](contents/designing_repository_site.md)
 * [Using WEKO3](contents/using_weko3.md)
 * [Operating Kubernetes](contents/Operating_Kubernetes.md)
-* Developing WEKO3
+* [Developing WEKO3](contents/developing_weko3.md)
 * Cheat sheet
   * [Vagrant](contents/vagrant_cheat_sheet.md) 
   * [docker-compose](contents/docker_compose_cheat_sheet.md) 
