@@ -1,6 +1,6 @@
 # Building kubelet instance
 
-## dockerのインストール
+## Installation of docker
 
 1. remove the exist docker
 
@@ -336,7 +336,7 @@ env_auth = false
 access_key_id = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 secret_access_key = yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
 region = ap-tokyo-1
-endpoint = https://nrjjxl1nnwb4.compat.objectstorage.ap-tokyo-1.oraclecloud.com
+endpoint = <endpoint url>
 acl = authenticated-read
  
 [as]
@@ -345,7 +345,7 @@ provider = Other
 env_auth = false
 access_key_id = xxxxxxxxxxxxxxxxxxxxxxxxxx
 secret_access_key = yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
-endpoint = http://storage2.s3.nii.ac.jp
+endpoint = <endpoint url>
 acl = authenticated-read
 ```
 
