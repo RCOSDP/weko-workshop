@@ -7,5 +7,5 @@ If you already have an environment where Docker and docker-compose are available
 * [Setup development envrionment](./setup_development_envrionment.md)
 * [Install WEKO3](./install_weko3.md)
 * [Building repository with WEKO3](./building_repository_with_WEKO3.md)
-* Operating Kubernetes
+* [Operating Kubernetes](./Operating_Kubernetes.md)
 * Developing WEKO3
