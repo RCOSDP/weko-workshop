@@ -12,13 +12,13 @@ Add language information to I18N_LANGUAGES.
 
 ```
 I18N_LANGUAGES = [('ja', 'Japanese'), ('zh', 'Chinese'), ('id', 'Indonesian'), ('vi', 'Vietnamese'),('ms', 'Malay'), ('fil', 'Filipino (Pilipinas)'), ('th', 'Thai'), ('hi', 'Hindi'), ('ar', 'Arabic')]
-I```
+```
 
 For example, add French.
 
 ```
 I18N_LANGUAGES = [('ja', 'Japanese'), ('fr', 'French') ,('zh', 'Chinese'), ('id', 'Indonesian'), ('vi', 'Vietnamese'),('ms', 'Malay'), ('fil', 'Filipino (Pilipinas)'), ('th', 'Thai'), ('hi', 'Hindi'), ('ar', 'Arabic')]
-I```
+```
 
 Build an image to get the configuration file into the container.
 
