@@ -239,6 +239,24 @@ echo "########## 5.5) pgpool (pooling + read load-balancing) ##########"
 # Deploy pgpool AFTER the password is pinned (pgpool imports the Secret password into pool_passwd at startup)
 sed "s#image: pgpool/pgpool:4.2.2#image: $PGPOOL_IMAGE#" 62-pgpool.yaml | kubectl apply -f -
 kubectl -n weko3 rollout status deploy/weko-pgpool --timeout=180s
+# `rollout status` only proves the readinessProbe passed, and that probe is a bare tcpSocket check on
+# 5432 - pgpool accepts TCP well before its backend connections are usable. Step 7's first statement
+# then dies with "FATAL: unable to read data from DB node 0 / DETAIL: EOF encountered with backend".
+# Gate on a real query instead. Three in a row, because load balancing spreads them over both backends
+# and a single one could be answered by the primary while the replica is still unusable.
+# Non-fatal: step 7 reports a far clearer error than this loop can if pgpool is genuinely broken.
+echo "-- waiting until a query goes through pgpool --"
+PGPOOL_OK=no
+for _ in $(seq 1 30); do
+  if kubectl exec -n weko3 "$PGM" -- sh -c \
+       'for _ in 1 2 3; do PGPASSWORD=weko psql -h pgpool -U weko -d postgres -tAc "SELECT 1" >/dev/null || exit 1; done' \
+       >/dev/null 2>&1; then
+    PGPOOL_OK=yes; break
+  fi
+  sleep 5
+done
+[ "$PGPOOL_OK" = yes ] && echo "   pgpool is answering queries" \
+  || echo "WARNING: pgpool did not answer a query within 150s, continuing anyway"
 
 echo "########## 6) generate, deploy and provision tenants ##########"
 bash gen-tenant.sh
