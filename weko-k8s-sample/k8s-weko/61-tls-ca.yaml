@@ -1,0 +1,50 @@
+# Automatic HTTPS certificate issuance (cert-manager) - a self-signed root CA
+#
+# Issuing a separate self-signed certificate per tenant means one browser warning (and one trust-store
+# entry) per tenant. Instead, create a single root CA and let it sign every tenant certificate, so
+# trusting the CA once covers all tenants.
+#
+#     -> Secret cert-manager/weko-ca-key-pair
+#
+# Per-tenant certificates are issued automatically from the Ingress annotation (cert-manager's
+# ingress-shim). Passing WEKO_TLS_ISSUER to gen-tenant.sh emits the annotation and spec.tls.
+#
+# Requires cert-manager, which deploy-arm64.sh installs in step 3.
+---
+# A self-signed issuer, used only to sign the root CA itself.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: weko-selfsigned
+spec:
+  selfSigned: {}
+---
+# The root CA. Its Secret must live in the cert-manager namespace, because a ClusterIssuer resolves
+# ca.secretName in cert-manager's cluster resource namespace.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: weko-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: WEKO Local Root CA
+  secretName: weko-ca-key-pair
+  duration: 87600h     # 10 years
+  renewBefore: 720h    # renew 30 days before expiry
+  privateKey:
+    algorithm: RSA
+    size: 4096
+  issuerRef:
+    name: weko-selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+# The issuer that signs with the CA above; tenant certificates come from here.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: weko-ca-issuer
+spec:
+  ca:
+    secretName: weko-ca-key-pair

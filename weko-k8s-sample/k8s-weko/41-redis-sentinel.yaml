@@ -1,0 +1,143 @@
+# Redis Sentinel HA (namespace weko3re)
+# Names match what instance.cfg expects: sentinel service = weko-sentinel-service.weko3re:26379, master=mymaster
+# Layout: redis StatefulSet of 3 (pod-0=master, pod-1/2=replicas, each on a PVC) + sentinel Deployment of 3
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: weko3re
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-conf
+  namespace: weko3re
+data:
+  redis.conf: |
+    appendonly yes
+    dir /data
+    replica-announce-ip $(POD_FQDN)
+    protected-mode no
+    databases 512
+  sentinel.conf: |
+    port 26379
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+    sentinel monitor mymaster redis-0.redis.weko3re.svc.cluster.local 6379 2
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel failover-timeout mymaster 10000
+    sentinel parallel-syncs mymaster 1
+    protected-mode no
+  start-redis.sh: |
+    #!/bin/sh
+    set -e
+    ORD=${HOSTNAME##*-}
+    export POD_FQDN="${HOSTNAME}.redis.weko3re.svc.cluster.local"
+    cp /conf/redis.conf /data/redis.conf
+    sed -i "s#\$(POD_FQDN)#${POD_FQDN}#g" /data/redis.conf
+    if [ "$ORD" = "0" ]; then
+      echo "starting as MASTER ($POD_FQDN)"
+      exec redis-server /data/redis.conf
+    else
+      echo "starting as REPLICA of redis-0 ($POD_FQDN)"
+      exec redis-server /data/redis.conf --replicaof redis-0.redis.weko3re.svc.cluster.local 6379
+    fi
+  start-sentinel.sh: |
+    #!/bin/sh
+    set -e
+    cp /conf/sentinel.conf /data/sentinel.conf
+    exec redis-sentinel /data/sentinel.conf
+---
+# Headless service providing stable DNS names (redis-0.redis.weko3re...)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: weko3re
+spec:
+  clusterIP: None
+  selector: { app: redis }
+  ports: [ { port: 6379, targetPort: 6379 } ]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: weko3re
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: redis
+        image: redis:6.2
+        command: ["sh","/conf/start-redis.sh"]
+        ports: [ { containerPort: 6379 } ]
+        resources:
+          requests: { memory: "64Mi", cpu: "25m" }
+          limits:   { memory: "384Mi", cpu: "1" }
+        readinessProbe:
+          exec: { command: ["redis-cli","ping"] }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - { name: conf, mountPath: /conf }
+        - { name: data, mountPath: /data }
+      volumes:
+      - name: conf
+        configMap: { name: redis-conf }
+  volumeClaimTemplates:
+  - metadata: { name: data }
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources: { requests: { storage: 2Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel
+  namespace: weko3re
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: sentinel }
+  template:
+    metadata:
+      labels: { app: sentinel }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: sentinel
+        image: redis:6.2
+        command: ["sh","/conf/start-sentinel.sh"]
+        ports: [ { containerPort: 26379 } ]
+        resources:
+          requests: { memory: "32Mi", cpu: "25m" }
+          limits:   { memory: "128Mi", cpu: "500m" }
+        readinessProbe:
+          exec: { command: ["redis-cli","-p","26379","ping"] }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - { name: conf, mountPath: /conf }
+        - { name: data, mountPath: /data }
+      volumes:
+      - name: conf
+        configMap: { name: redis-conf }
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weko-sentinel-service
+  namespace: weko3re
+spec:
+  selector: { app: sentinel }
+  ports: [ { port: 26379, targetPort: 26379 } ]

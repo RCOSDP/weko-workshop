@@ -1,0 +1,199 @@
+# In-cluster NFS server (nfs-ganesha = user-space NFS, arm64 native, no kernel nfsd required)
+# Ships a dynamic provisioner → provides the RWX (ReadWriteMany) StorageClass "nfs".
+# The same kind of shared FS as production (JAIRO Cloud) OKE File Storage (NFS, storageClassName: nfs).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nfs-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-provisioner
+  namespace: nfs-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nfs-provisioner-runner
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get","list","watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get","list","watch","create","delete"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get","list","watch","update"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get","list","watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create","update","patch"]
+- apiGroups: [""]
+  resources: ["services","endpoints"]
+  verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nfs-provisioner-runner
+subjects:
+- kind: ServiceAccount
+  name: nfs-provisioner
+  namespace: nfs-system
+roleRef:
+  kind: ClusterRole
+  name: nfs-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-provisioner
+  namespace: nfs-system
+  labels: { app: nfs-provisioner }
+spec:
+  # The ClusterIP is pinned so the static PVs (/fs-*) can reference it. kind's Service CIDR is
+  # 10.96.0.0/16. The kubelet resolves names with the node resolver, so PVs use the IP, not a DNS name.
+  clusterIP: 10.96.0.99
+  selector: { app: nfs-provisioner }
+  ports:
+  - { name: nfs, port: 2049 }
+  - { name: nfs-udp, port: 2049, protocol: UDP }
+  - { name: nlockmgr, port: 32803 }
+  - { name: nlockmgr-udp, port: 32803, protocol: UDP }
+  - { name: mountd, port: 20048 }
+  - { name: mountd-udp, port: 20048, protocol: UDP }
+  - { name: rquotad, port: 875 }
+  - { name: rquotad-udp, port: 875, protocol: UDP }
+  - { name: rpcbind, port: 111 }
+  - { name: rpcbind-udp, port: 111, protocol: UDP }
+  - { name: statd, port: 662 }
+  - { name: statd-udp, port: 662, protocol: UDP }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-provisioner
+  namespace: nfs-system
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: nfs-provisioner }
+  template:
+    metadata:
+      labels: { app: nfs-provisioner }
+    spec:
+      serviceAccountName: nfs-provisioner
+      nodeSelector: { nodeType: DATA }
+      initContainers:
+      # Create the same shared-FS tree as production (OKE FSS): /fs-nginx /fs-shibboleth /fs-config /fs-data
+      # (per-tenant subdirectories are created by provision-nfs.sh)
+      - name: init-fs-tree
+        image: busybox:1.36
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          mkdir -p /export/fs-nginx /export/fs-shibboleth /export/fs-config /export/fs-data
+          chmod 0777 /export/fs-nginx /export/fs-shibboleth /export/fs-config /export/fs-data
+          ls -la /export
+        volumeMounts:
+        - { name: export-volume, mountPath: /export }
+      containers:
+      - name: nfs-provisioner
+        image: registry.k8s.io/sig-storage/nfs-provisioner:v4.0.8
+        ports:
+        - { name: nfs, containerPort: 2049 }
+        - { name: nfs-udp, containerPort: 2049, protocol: UDP }
+        - { name: nlockmgr, containerPort: 32803 }
+        - { name: mountd, containerPort: 20048 }
+        - { name: rquotad, containerPort: 875 }
+        - { name: rpcbind, containerPort: 111 }
+        - { name: statd, containerPort: 662 }
+        securityContext:
+          capabilities:
+            add: ["DAC_READ_SEARCH","SYS_ADMIN"]
+        args:
+        - "-provisioner=weko.example.com/nfs"
+        env:
+        - { name: POD_IP, valueFrom: { fieldRef: { fieldPath: status.podIP } } }
+        - { name: SERVICE_NAME, value: nfs-provisioner }
+        - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+        resources:
+          requests: { memory: "128Mi", cpu: "50m" }
+          limits:   { memory: "512Mi", cpu: "1" }
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                # The dynamic provisioner only exports the volumes it creates, so add a static export for
+                # the whole /export (without it, mounting /export/fs-*/<tenant> fails). The provisioner
+                # rewrites /export/vfs.conf at startup, so the block goes into a separate file and is
+                # added over dbus (editing vfs.conf directly races with it and breaks ganesha startup).
+                CONF=/export/static-export.conf
+                [ -f "$CONF" ] || cat > "$CONF" <<'EOC'
+                EXPORT {
+                	Export_Id = 1000;
+                	Path = /export;
+                	Pseudo = /export;
+                	Access_Type = RW;
+                	Squash = No_Root_Squash;
+                	SecType = sys;
+                	Protocols = 3,4;
+                	Transports = TCP;
+                	FSAL { Name = VFS; }
+                }
+                EOC
+                for i in $(seq 1 90); do
+                  dbus-send --print-reply --system --dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \
+                    org.ganesha.nfsd.exportmgr.AddExport string:"$CONF" string:"EXPORT(Export_Id=1000)" >/dev/null 2>&1 && break
+                  sleep 2
+                done
+        volumeMounts:
+        - name: export-volume
+          mountPath: /export
+      volumes:
+      - name: export-volume
+        # The NFS backing store: a sizeable local-path PVC (i.e. on the host's docker overlay).
+        persistentVolumeClaim:
+          claimName: nfs-export
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-export
+  namespace: nfs-system
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 30Gi
+---
+# StorageClass providing RWX (equivalent to production's storageClassName: nfs)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs
+provisioner: weko.example.com/nfs
+mountOptions:
+  - vers=4.1
+# Do not declare parameters. An empty map `parameters: {}` is dropped by the API, so every re-apply
+# produces a diff that tries to set it and fails with "updates to parameters are forbidden".
+---
+# Class for the static PVs (/fs-*/<tenant>) that mirror production's volume-pv.yaml; the dynamic
+# provisioner is not involved.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-static
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: Immediate
+reclaimPolicy: Retain

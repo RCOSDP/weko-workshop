@@ -1,0 +1,124 @@
+# pgpool-II — connection pooling + read load-balancing between WEKO and PostgreSQL (Patroni HA)
+#
+# Ported from production weko-k8s to the single-host layout. Reads are load-balanced onto the
+# replica (weight 1); writes always go to the primary (ALWAYS_PRIMARY).
+# On arm64 there is no official pgpool image, so weko-pgpool:4.2.2-arm64 is built locally.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgpool-config
+  namespace: weko3
+  labels: { app: pgpool-config }
+data:
+  PGPOOL_PARAMS_LISTEN_ADDRESSES: '*'
+  PGPOOL_PARAMS_PORT: "5432"
+  PGPOOL_PARAMS_SOCKET_DIR: '/var/run/pgpool'
+  PGPOOL_PARAMS_PCP_LISTEN_ADDRESSES: '*'
+  PGPOOL_PARAMS_PCP_PORT: "9898"
+  PGPOOL_PARAMS_PCP_SOCKET_DIR: '/var/run/pgpool'
+  # backend0 = primary (writes), backend1 = replica (read load-balancing)
+  PGPOOL_PARAMS_BACKEND_HOSTNAME0: 'weko-postgresql'
+  PGPOOL_PARAMS_BACKEND_PORT0: "5432"
+  PGPOOL_PARAMS_BACKEND_WEIGHT0: "0"
+  PGPOOL_PARAMS_BACKEND_FLAG0: 'ALWAYS_PRIMARY|DISALLOW_TO_FAILOVER'
+  PGPOOL_PARAMS_BACKEND_HOSTNAME1: 'weko-postgresql-repl'
+  PGPOOL_PARAMS_BACKEND_PORT1: "5432"
+  PGPOOL_PARAMS_BACKEND_WEIGHT1: "1"
+  PGPOOL_PARAMS_BACKEND_FLAG1: 'DISALLOW_TO_FAILOVER'
+  # sr_check is disabled (0): Patroni handles replication, so pgpool need not check it.
+  PGPOOL_PARAMS_SR_CHECK_PERIOD: "0"
+  PGPOOL_PARAMS_ENABLE_POOL_HBA: "on"
+  PGPOOL_PARAMS_BACKEND_CLUSTERING_MODE: 'streaming_replication'
+  PGPOOL_PARAMS_NUM_INIT_CHILDREN: "32"
+  PGPOOL_PARAMS_MAX_POOL: "4"
+  PGPOOL_PARAMS_CHILD_LIFE_TIME: "300"
+  PGPOOL_PARAMS_CHILD_MAX_CONNECTIONS: "0"
+  PGPOOL_PARAMS_CONNECTION_LIFE_TIME: "0"
+  PGPOOL_PARAMS_CLIENT_IDLE_LIMIT: "900"
+  PGPOOL_PARAMS_CONNECTION_CACHE: "on"
+  PGPOOL_PARAMS_LOAD_BALANCE_MODE: "on"
+  PGPOOL_PARAMS_SSL: "off"
+  PGPOOL_PARAMS_FAILOVER_ON_BACKEND_ERROR: "off"
+  PGPOOL_PARAMS_RELCACHE_SIZE: "256"
+  PGPOOL_PARAMS_DEBUG_LEVEL: "0"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgpool-hba-config
+  namespace: weko3
+  labels: { app: pgpool-hba-config }
+data:
+  pool_hba.conf: |-
+    local   all         all                               trust
+    host    all         all         127.0.0.1/32          trust
+    host    all         all         ::1/128               trust
+    host    all         all         0.0.0.0/0             md5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weko-pgpool
+  namespace: weko3
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pgpool }
+  template:
+    metadata:
+      labels: { app: pgpool }
+    spec:
+      # Wait until the PG backend accepts TCP before starting pgpool (busybox is arm64-native)
+      initContainers:
+      - name: wait-postgresql
+        image: busybox:1.36
+        command: ['sh','-c','until nc -z weko-postgresql 5432; do echo "waiting for weko-postgresql:5432"; sleep 3; done; echo "primary reachable"']
+      containers:
+      - name: pgpool
+        image: weko-pgpool:4.2.2-arm64
+        imagePullPolicy: Never
+        ports:
+        - { name: pgpool, containerPort: 5432 }
+        - { name: pcp,    containerPort: 9898 }
+        env:
+        # weko user credentials (operator-generated Secret; deploy pins the password to 'weko')
+        # pgpool registers each *_USERNAME/*_PASSWORD pair into pool_passwd
+        - name: POSTGRES_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: weko.weko-postgresql.credentials.postgresql.acid.zalan.do
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: weko.weko-postgresql.credentials.postgresql.acid.zalan.do
+              key: password
+        envFrom:
+        - configMapRef: { name: pgpool-config }
+        volumeMounts:
+        - { name: pgpool-hba-config, mountPath: /config }
+        readinessProbe:
+          tcpSocket: { port: 5432 }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket: { port: 5432 }
+          initialDelaySeconds: 30
+          periodSeconds: 20
+        resources:
+          requests: { cpu: "250m", memory: "300Mi" }
+          limits:   { cpu: "1",    memory: "1Gi" }
+      volumes:
+      - name: pgpool-hba-config
+        configMap: { name: pgpool-hba-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgpool
+  namespace: weko3
+spec:
+  selector: { app: pgpool }
+  ports:
+  - { name: pgpool, protocol: TCP, port: 5432, targetPort: 5432 }

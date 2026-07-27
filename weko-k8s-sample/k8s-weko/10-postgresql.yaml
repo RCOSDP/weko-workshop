@@ -1,0 +1,64 @@
+# PostgreSQL 13 (PVC-persisted version)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-secret
+  namespace: weko3
+type: Opaque
+stringData:
+  POSTGRES_USER: weko
+  POSTGRES_PASSWORD: weko
+  POSTGRES_DB: wekodb
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: weko3
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels: { app: postgresql }
+  template:
+    metadata:
+      labels: { app: postgresql }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: postgresql
+        image: postgres:13
+        envFrom:
+        - secretRef: { name: postgresql-secret }
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+        resources:
+          requests: { memory: "256Mi", cpu: "100m" }
+          limits:   { memory: "1Gi",   cpu: "2" }
+        readinessProbe:
+          exec: { command: ["pg_isready","-U","weko","-d","wekodb"] }
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata: { name: data }
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: weko3
+spec:
+  selector: { app: postgresql }
+  ports:
+  - port: 5432
+    targetPort: 5432

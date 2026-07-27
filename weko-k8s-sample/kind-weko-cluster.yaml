@@ -1,0 +1,34 @@
+# weko3 用 kind マルチノードクラスタ
+# kind multi-node cluster for weko3
+# control-plane 1 + worker 2 (うち1台を weko ワークロード用に nodeType=WEKO でラベル付け)
+# 1 control-plane + 2 workers (one of them labelled nodeType=WEKO for the weko workload)
+# ingress-nginx を動かすため control-plane に 80/443 をホストへ公開
+# Ports 80/443 of the control-plane are published to the host so ingress-nginx can serve traffic
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: weko3
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+  - role: worker
+    # weko3 本体(web/nginx/worker)を載せるノード。nodeType=WEKO でラベル付け
+    # Node hosting the weko3 application (web/nginx/worker); labelled nodeType=WEKO
+    labels:
+      nodeType: WEKO
+  - role: worker
+    # バックエンド(postgres/elasticsearch/redis/rabbitmq)用ノード
+    # Node for the backends (postgres/elasticsearch/redis/rabbitmq)
+    labels:
+      nodeType: DATA

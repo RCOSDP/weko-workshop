@@ -1,0 +1,17 @@
+# weko3 マルチテナント定義 / weko3 multi-tenant definitions
+# 初期デプロイは 1テナント。バックエンドは 8テナント分のキャパで確保済み。
+# The initial deployment has one tenant; the backends are already sized for eight.
+# 列 / columns: NAME  DBNAME  HOST  ADMIN_EMAIL  ADMIN_PASS  INIT  CACHE_DB SESSION_DB CELERY_DB
+#  - Redis DB は 予約(3=crawler,4=group_info) を避けて 3個ずつ割当 (databases=512)
+#    Assign 3 Redis DBs per tenant, avoiding the reserved ones (3=crawler, 4=group_info); databases=512
+tenant1   tenant1   tenant1.localhost   admin@tenant1.example   pass-t1   yes   0  1  2
+#
+# ▼ 8テナントまで増やす時は以下のコメントを外して gen→apply→provision→init (詳細は TARGET-*.md §5)
+# ▼ To grow to 8 tenants, uncomment the lines below and run gen → apply → provision → init (see TARGET-*.md §5)
+# tenant2   tenant2   tenant2.localhost   admin@tenant2.example   pass-t2   yes   5  6  7
+# tenant3   tenant3   tenant3.localhost   admin@tenant3.example   pass-t3   yes   8  9  10
+# tenant4   tenant4   tenant4.localhost   admin@tenant4.example   pass-t4   yes   11 12 13
+# tenant5   tenant5   tenant5.localhost   admin@tenant5.example   pass-t5   yes   14 15 16
+# tenant6   tenant6   tenant6.localhost   admin@tenant6.example   pass-t6   yes   17 18 19
+# tenant7   tenant7   tenant7.localhost   admin@tenant7.example   pass-t7   yes   20 21 22
+# tenant8   tenant8   tenant8.localhost   admin@tenant8.example   pass-t8   yes   23 24 25

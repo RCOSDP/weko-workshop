@@ -1,0 +1,33 @@
+# Minimal front-nginx configuration (uwsgi protocol to the web container at 127.0.0.1:5000)
+# The nginx image itself is the Shibboleth-enabled build from the weko source (weko3-nginx:<arch>), but
+# production's weko.conf assumes TLS/IP restrictions/Shibboleth, so behind kind's HTTP Ingress this
+# default.conf is used by default. Set WEKO_NGINX_SHIB=yes in gen-tenant.sh to enable weko.conf instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weko-nginx-conf
+  namespace: weko3
+data:
+  default.conf: |
+    server {
+        listen 80 default_server;
+        server_name _;
+        client_max_body_size 0;
+        charset utf-8;
+
+        location = /ping {
+            return 200 'ok';
+            add_header Content-Type text/plain;
+        }
+
+        location / {
+            include uwsgi_params;
+            uwsgi_pass 127.0.0.1:5000;
+            uwsgi_param HTTP_X_FORWARDED_PROTO http;
+            uwsgi_read_timeout 3600s;
+            uwsgi_send_timeout 3600s;
+            uwsgi_buffer_size 32k;
+            uwsgi_buffers 8 32k;
+            uwsgi_busy_buffers_size 64k;
+        }
+    }

@@ -1,0 +1,46 @@
+#
+# The official pgpool/pgpool:4.2.2 is amd64-only (no arm64 image), so this reproduces the
+# same image (env-driven PGPOOL_PARAMS_* entrypoint, /opt/pgpool-II layout) by building
+# pgpool-II from source, natively on arm64.
+ARG PGPOOL_VERSION=4.2.2
+ARG PGPOOL_TAG=V4_2_2
+
+# ---- builder: configure/make/install from source into /opt/pgpool-II -----------------
+FROM debian:bookworm-slim AS builder
+ARG PGPOOL_VERSION
+ARG PGPOOL_TAG
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates wget \
+      libpq-dev postgresql-server-dev-all libssl-dev flex libmemcached-dev \
+    && rm -rf /var/lib/apt/lists/*
+# Same source as the official release (the GitHub tag tarball ships a pre-generated configure)
+RUN wget -qO /tmp/pgpool.tar.gz \
+      "https://github.com/pgpool/pgpool2/archive/refs/tags/${PGPOOL_TAG}.tar.gz" \
+    && mkdir -p /tmp/pgpool && tar -xzf /tmp/pgpool.tar.gz -C /tmp/pgpool --strip-components=1
+WORKDIR /tmp/pgpool
+RUN ./configure --prefix=/opt/pgpool-II --with-openssl \
+    && make -j"$(nproc)" \
+    && make install
+# make install puts the pcp/pgpool sample configs into /opt/pgpool-II/etc/*.sample
+
+# ---- runtime: the minimum needed to run ----------------------------------------------
+FROM debian:bookworm-slim
+LABEL org.opencontainers.image.title="weko-pgpool" \
+      org.opencontainers.image.description="arm64-native pgpool-II (reproduces pgpool/pgpool env-driven image)"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash libpq5 libssl3 libmemcached11 openssl ca-certificates hostname \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -m -d /var/lib/pgpool -s /bin/bash postgres 2>/dev/null || true
+COPY --from=builder /opt/pgpool-II /opt/pgpool-II
+COPY entrypoint.sh /opt/pgpool-II/bin/entrypoint.sh
+COPY start.sh      /opt/pgpool-II/bin/start.sh
+# Same environment variables, layout and permissions as the official image
+ENV PGPOOL_INSTALL_DIR=/opt/pgpool-II \
+    PGPOOL_CONF_VOLUME=/config \
+    PATH=/opt/pgpool-II/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN mkdir -p /var/run/pgpool /config \
+    && chmod +x /opt/pgpool-II/bin/entrypoint.sh /opt/pgpool-II/bin/start.sh \
+    && chown -R postgres:postgres /opt/pgpool-II /var/run/pgpool /config
+USER postgres
+ENTRYPOINT ["/opt/pgpool-II/bin/entrypoint.sh"]
+CMD ["/opt/pgpool-II/bin/start.sh"]

@@ -1,0 +1,36 @@
+# 3-node RabbitMQ cluster (RabbitMQ Cluster Operator / RabbitmqCluster CR)
+# The same operator approach as production. Quorum queues are replicated across the whole cluster.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: weko-rabbitmq
+  namespace: weko3
+spec:
+  replicas: 3
+  image: rabbitmq:4.0.9-management
+  resources:
+    requests: { cpu: "150m", memory: "512Mi" }
+    limits:   { cpu: "2",    memory: "1536Mi" }
+  persistence:
+    storageClassName: standard
+    storage: 5Gi
+  rabbitmq:
+    # Note: default_user/default_pass are managed by the operator, so do not put them in
+    #       additionalConfig. The weko user is created later with rabbitmqctl.
+    additionalConfig: |
+      log.console.level = warning
+  # The latest operator's startup probe calls a health API that does not exist in rabbitmq 4.0.9
+  # (reached-target-cluster-size → 404), so it is replaced with a rabbitmq-diagnostics based probe.
+  override:
+    statefulSet:
+      spec:
+        template:
+          spec:
+            containers:
+            - name: rabbitmq
+              startupProbe:
+                exec:
+                  command: ["rabbitmq-diagnostics","check_running"]
+                failureThreshold: 30
+                periodSeconds: 10
+                timeoutSeconds: 15

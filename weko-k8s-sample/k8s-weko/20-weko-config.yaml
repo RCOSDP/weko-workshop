@@ -1,0 +1,71 @@
+# Environment variables for the weko3 application (ConfigMap + Secret)
+# instance.cfg (jinja2) reads them through environ(); the endpoints are services in the weko3 namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weko-config
+  namespace: weko3
+data:
+  # --- endpoints ---
+  INVENIO_POSTGRESQL_HOST: postgresql
+  INVENIO_POSTGRESQL_DBNAME: wekodb
+  INVENIO_ELASTICSEARCH_HOST: elasticsearch
+  INVENIO_REDIS_HOST: redis
+  INVENIO_RABBITMQ_HOST: rabbitmq
+  INVENIO_RABBITMQ_VHOST: "/"
+  # --- Web ---
+  INVENIO_WEB_HOST: "127.0.0.1"
+  INVENIO_WEB_HOST_NAME: "localhost"
+  INVENIO_WEB_INSTANCE: invenio
+  INVENIO_WEB_VENV: invenio
+  INVENIO_WEB_PROTOCOL: http
+  INVENIO_WORKER_HOST: "127.0.0.1"
+  # --- file storage ---
+  INVENIO_FILES_LOCATION_NAME: local
+  INVENIO_FILES_LOCATION_URI: /var/tmp
+  # --- roles ---
+  INVENIO_ROLE_SYSTEM: System Administrator
+  INVENIO_ROLE_REPOSITORY: Repository Administrator
+  INVENIO_ROLE_CONTRIBUTOR: Contributor
+  INVENIO_ROLE_COMMUNITY: Community Administrator
+  # --- Redis DB numbers ---
+  CACHE_REDIS_DB: "0"
+  ACCOUNTS_SESSION_REDIS_DB_NO: "1"
+  CELERY_RESULT_BACKEND_DB_NO: "2"
+  # --- aggregation event schedule ---
+  WEKO_AGGREGATE_EVENT_HOUR: "1"
+  WEKO_AGGREGATE_EVENT_MINUTE: "0"
+  # --- search index prefix ---
+  SEARCH_INDEX_PREFIX: wekodb
+  # --- DB pool ---
+  INVENIO_DB_POOL_CLASS: NullPool
+  # --- misc ---
+  FLASK_DEBUG: "0"
+  SHIB_IDP_LOGIN_ENABLED: "False"
+  WEKO_HANDLE_ALLOW_REGISTER_CRNI: "False"
+  IDENTIFIER_GRANT_SUFFIX_METHOD: "0"
+  PATH: /home/invenio/.virtualenvs/invenio/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  VIRTUALENVWRAPPER_PYTHON: /home/invenio/.virtualenvs/invenio/bin/python
+  TMPDIR: /home/invenio/.virtualenvs/invenio/var/instance/data/tmp
+  TIKA_JAR_FILE_PATH: /code/tika/tika-app-2.6.0.jar
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: weko-secret
+  namespace: weko3
+type: Opaque
+stringData:
+  INVENIO_POSTGRESQL_DBUSER: weko
+  INVENIO_POSTGRESQL_DBPASS: weko
+  INVENIO_RABBITMQ_USER: weko
+  INVENIO_RABBITMQ_PASS: weko
+  INVENIO_USER_EMAIL: admin@example.org
+  INVENIO_USER_PASS: adminpass123
+  GOOGLE_TRACKING_ID_SYSTEM: ""
+  WEKO_RECORDS_UI_SECRET_KEY: FMCjj7kG
+  SECRET_KEY: weko3-local-NcVV6mVZ
+  WTF_CSRF_SECRET_KEY: weko3-local-BX8vwrcs
+  S3_ACCCESS_KEY_ID: ""
+  S3_SECRECT_ACCESS_KEY: ""
+  S3_ENDPOINT_URL: ""

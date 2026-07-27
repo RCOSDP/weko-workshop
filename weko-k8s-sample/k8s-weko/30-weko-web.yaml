@@ -1,0 +1,121 @@
+# The weko3 application (1 Pod = nginx + web(uwsgi) + worker(celery))
+# Scheduled onto the nodeType=WEKO node; web/nginx run under amd64 emulation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weko-web
+  namespace: weko3
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: weko-web }
+  template:
+    metadata:
+      labels: { app: weko-web }
+    spec:
+      nodeSelector: { nodeType: WEKO }
+      containers:
+      # ---- nginx (stock image, uwsgi_pass) ----
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests: { memory: "64Mi", cpu: "50m" }
+          limits:   { memory: "256Mi", cpu: "1" }
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        readinessProbe:
+          httpGet: { path: /ping, port: 80 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      # ---- web (uwsgi) ----
+      - name: web
+        image: mhayashi55/weko3-web:latest
+        imagePullPolicy: Never
+        command: ["/bin/bash","-c"]
+        args:
+        - |
+          set -e
+          export PATH=/home/invenio/.virtualenvs/invenio/bin:$PATH
+          INST=/home/invenio/.virtualenvs/invenio/var/instance
+          jinja2 /code/scripts/instance.cfg > $INST/conf/invenio.cfg
+          mkdir -p $INST/static $INST/data/tmp
+          if [ -z "$(ls -A $INST/static 2>/dev/null)" ] && [ -d $INST/static.org ]; then
+            cp -r $INST/static.org/. $INST/static/ 2>/dev/null || true
+          fi
+          exec uwsgi --ini $INST/conf/uwsgi.ini
+        envFrom:
+        - configMapRef: { name: weko-config }
+        - secretRef:    { name: weko-secret }
+        ports:
+        - containerPort: 5000
+        resources:
+          requests: { memory: "700Mi", cpu: "250m" }
+          limits:   { memory: "2Gi",   cpu: "4" }
+        readinessProbe:
+          tcpSocket: { port: 5000 }
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 40
+      # ---- worker (celery) ----
+      - name: worker
+        image: mhayashi55/weko3-web:latest
+        imagePullPolicy: Never
+        command: ["/bin/bash","-c"]
+        args:
+        - |
+          set -e
+          export PATH=/home/invenio/.virtualenvs/invenio/bin:$PATH
+          INST=/home/invenio/.virtualenvs/invenio/var/instance
+          jinja2 /code/scripts/instance.cfg > $INST/conf/invenio.cfg
+          rm -f /home/invenio/celeryd.pid
+          exec celery worker --pidfile /home/invenio/celeryd.pid \
+            --schedule=/home/invenio/celerybeat-schedule \
+            -c 1 -A invenio_app.celery --loglevel=INFO -B
+        envFrom:
+        - configMapRef: { name: weko-config }
+        - secretRef:    { name: weko-secret }
+        resources:
+          requests: { memory: "500Mi", cpu: "250m" }
+          limits:   { memory: "1536Mi", cpu: "2" }
+      volumes:
+      - name: nginx-conf
+        configMap: { name: weko-nginx-conf }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weko-nginx
+  namespace: weko3
+spec:
+  selector: { app: weko-web }
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: weko-ingress
+  namespace: weko3
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: weko-nginx
+            port:
+              number: 80

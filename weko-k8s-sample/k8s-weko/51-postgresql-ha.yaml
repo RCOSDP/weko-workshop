@@ -1,0 +1,32 @@
+# PostgreSQL HA — a 3-node Patroni cluster via the Zalando postgres-operator (same as production)
+# arm64-native spilo-17 (PG17), automatic failover; master=weko-postgresql, replica=weko-postgresql-repl
+apiVersion: "acid.zalan.do/v1"
+kind: postgresql
+metadata:
+  name: weko-postgresql
+  namespace: weko3
+spec:
+  teamId: "weko"
+  numberOfInstances: 3           # HA: 1 primary + 2 standby (synchronous Patroni)
+  postgresql:
+    version: "17"
+    parameters:
+      # pgpool authenticates to the backend with md5 (as in production's PG12). Leaving spilo-17's
+      # default scram-sha-256 breaks pgpool's md5 backend auth ("backend authentication failed").
+      password_encryption: "md5"
+  volume:
+    size: 10Gi
+    storageClass: standard
+  users:
+    weko:                        # user for the weko application
+    - superuser
+    - createdb
+  databases:
+    wekodb: weko                 # tenant1
+    tenant2: weko                # tenant2
+  enableMasterLoadBalancer: false
+  patroni:
+    synchronous_mode: true       # synchronous replication
+  resources:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "2",    memory: "1Gi" }

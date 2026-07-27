@@ -1,0 +1,13 @@
+# Pod environment for the spilo (PG) containers. ALLOW_NOSSL=true makes spilo drop the
+# "hostnossl all all all reject" line and allow non-SSL "host all all all md5". pgpool connects to the
+# backend over non-SSL, so without this pgpool→PG fails with 'E' (rejected).
+#
+# Wiring: setting pod_environment_configmap=weko3/postgres-pod-config on the operator's configmap makes
+# the operator inject this env into every PG pod (configured in deploy-arm64.sh's operator step).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-pod-config
+  namespace: weko3
+data:
+  ALLOW_NOSSL: "true"

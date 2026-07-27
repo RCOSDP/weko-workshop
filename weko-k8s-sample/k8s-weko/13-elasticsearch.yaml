@@ -1,0 +1,75 @@
+# Elasticsearch 6.8.23 — 3-node cluster (arm64-native weko image, no emulation)
+# Image: built from $WEKO_SRC/elasticsearch/Dockerfile.arm64 (default $WEKO_SRC=$HOME/weko)
+#   - real kui.txt (character normalization dictionary) / analysis-kuromoji / ingest-attachment /
+#     repository-s3 (MinIO credentials in the keystore)
+# The cluster forms via ES6 zen discovery, minimum_master_nodes=2, each node persisted on a PVC.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: weko3
+spec:
+  clusterIP: None
+  selector: { app: elasticsearch }
+  ports:
+  - { name: http, port: 9200, targetPort: 9200 }
+  - { name: transport, port: 9300, targetPort: 9300 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: weko3
+spec:
+  serviceName: elasticsearch
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: { app: elasticsearch }
+  template:
+    metadata:
+      labels: { app: elasticsearch }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      securityContext:
+        fsGroup: 1000            # so elasticsearch (uid/gid 1000) can write to the PVC
+      containers:
+      - name: elasticsearch
+        image: weko-elasticsearch:6.8.23-arm64
+        imagePullPolicy: Never
+        # This image has no env→settings conversion entrypoint like the official one, so the
+        # cluster settings are passed as -E command-line arguments.
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          exec /usr/share/elasticsearch/bin/elasticsearch \
+            -Ecluster.name=weko-es \
+            -Enode.name=${NODE_NAME} \
+            -Enetwork.host=0.0.0.0 \
+            -Ediscovery.zen.ping.unicast.hosts=elasticsearch-0.elasticsearch,elasticsearch-1.elasticsearch,elasticsearch-2.elasticsearch \
+            -Ediscovery.zen.minimum_master_nodes=2 \
+            -Ebootstrap.memory_lock=false
+        env:
+        - name: NODE_NAME
+          valueFrom: { fieldRef: { fieldPath: metadata.name } }
+        - name: ES_JAVA_OPTS
+          value: "-Xms1g -Xmx1g"
+        ports:
+        - { containerPort: 9200, name: http }
+        - { containerPort: 9300, name: transport }
+        resources:
+          requests: { memory: "1280Mi", cpu: "250m" }
+          limits:   { memory: "2Gi",    cpu: "3" }
+        readinessProbe:
+          httpGet: { path: "/_cluster/health?local=true", port: 9200 }
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          failureThreshold: 30
+        volumeMounts:
+        - { name: data, mountPath: /usr/share/elasticsearch/data }
+  volumeClaimTemplates:
+  - metadata: { name: data }
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources: { requests: { storage: 10Gi } }

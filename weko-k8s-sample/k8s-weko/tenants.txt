@@ -1,0 +1,14 @@
+# weko3 マルチテナント定義 / weko3 multi-tenant definitions
+# 列 / columns: NAME  DBNAME  HOST  ADMIN_EMAIL  ADMIN_PASS  INIT  CACHE_DB SESSION_DB CELERY_DB
+#  - DBNAME    : PostgreSQL DB 名 兼 ES インデックス接頭辞
+#                PostgreSQL DB name, also used as the ES index prefix
+#  - HOST      : Ingress host (*.localhost はループバックに解決)
+#                Ingress host (*.localhost resolves to loopback)
+#  - INIT      : no=既存DB/インデックス再利用, yes=新規フル初期化
+#                no = reuse the existing DB/indices, yes = full fresh initialization
+#  - *_DB      : 共有Redis(Sentinel)内でテナントが使う DB 番号。
+#                DB numbers the tenant uses inside the shared Redis (Sentinel).
+#                CRAWLER_REDIS_DB=3 / GROUP_INFO_REDIS_DB=4 は instance.cfg で予約のため 3,4 を避ける
+#                3 and 4 are reserved in instance.cfg (CRAWLER_REDIS_DB=3 / GROUP_INFO_REDIS_DB=4), so avoid them
+tenant1  wekodb   tenant1.localhost  admin@example.org   adminpass123  no  0 1 2
+# tenant2  tenant2  tenant2.localhost  admin@tenant2.local  adminpass2    no  5 6 7

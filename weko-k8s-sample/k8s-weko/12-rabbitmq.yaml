@@ -1,0 +1,58 @@
+# RabbitMQ 3.13 (PVC-persisted, quorum-queue capable; vhosts are created by provision-tenants.sh)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: weko3
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: { app: rabbitmq }
+  template:
+    metadata:
+      labels: { app: rabbitmq }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3.13-management
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          value: weko
+        - name: RABBITMQ_DEFAULT_PASS
+          value: weko
+        ports:
+        - containerPort: 5672
+        - containerPort: 15672
+        resources:
+          requests: { memory: "256Mi", cpu: "100m" }
+          limits:   { memory: "1Gi",   cpu: "2" }
+        readinessProbe:
+          exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/rabbitmq
+  volumeClaimTemplates:
+  - metadata: { name: data }
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: weko3
+spec:
+  selector: { app: rabbitmq }
+  ports:
+  - name: amqp
+    port: 5672
+    targetPort: 5672
+  - name: management
+    port: 15672
+    targetPort: 15672

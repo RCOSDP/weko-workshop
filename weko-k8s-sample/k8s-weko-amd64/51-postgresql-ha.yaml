@@ -1,0 +1,38 @@
+# PostgreSQL HA — Zalando postgres-operator / Patroni (2 instances, sized for a 64GB Gen9)
+# On a single server, 2 instances (primary + synchronous standby) suffice: process-failure
+# resilience plus online switchover.
+# On amd64, spilo runs natively, so the operator default (spilo-17 = PG17) is fine.
+# To match production's PG13 exactly, override the operator's docker_image with spilo-13.
+apiVersion: "acid.zalan.do/v1"
+kind: postgresql
+metadata:
+  name: weko-postgresql
+  namespace: weko3
+spec:
+  teamId: "weko"
+  numberOfInstances: 2
+  postgresql:
+    version: "17"
+    parameters:
+      shared_buffers: "1GB"
+      max_connections: "200"
+      work_mem: "16MB"
+      # pgpool authenticates to the backend with md5; spilo-17's default scram-sha-256 breaks it.
+      password_encryption: "md5"
+  volume:
+    size: 50Gi
+    storageClass: standard
+  users:
+    weko:
+    - superuser
+    - createdb
+  databases:
+    # Initially only tenant1. When tenants are added, provision-tenants.sh issues CREATE DATABASE
+    # (outside the operator's management, which is fine)
+    tenant1: weko
+  enableMasterLoadBalancer: false
+  patroni:
+    synchronous_mode: true
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "4",    memory: "2560Mi" }
