@@ -89,6 +89,18 @@ kubectl exec -n weko3 $PGM -- psql -U postgres -c "DROP DATABASE tenant1;"
 > The Elasticsearch indices are separate from the database and survive. No manual step is needed:
 > on the next deploy `weko-init.sh` runs `index destroy` and rebuilds them.
 
+## 6.5) Shibboleth IdP (if deployed with `WEKO_SHIB=yes`)
+Safe to remove before the tenants. The SP-side configuration lives in `/export/fs-shibboleth/<tenant>`
+on NFS and goes away with "6) Tenant deployment" below.
+
+```bash
+kubectl delete -f 70-shibboleth-idp.yaml --ignore-not-found
+kubectl delete -f 71-shibboleth-map.yaml --ignore-not-found
+kubectl delete configmap weko-idp-sp-metadata -n weko3 --ignore-not-found
+```
+> Keeping the local `.shib-sp/` (the SP key and the IdP metadata) restores the same trust on the next
+> deployment. Delete it only when you want to re-establish it.
+
 ## 6) Tenant deployment
 The Deployment/Service/Ingress/PVCs, the **cluster-scoped PVs**, and the data on NFS.
 
@@ -145,6 +157,7 @@ for f in postgresteam.crd operatorconfiguration.crd postgresql.crd api-service p
 done
 kubectl delete -f https://github.com/rabbitmq/cluster-operator/releases/latest/download/cluster-operator.yml --ignore-not-found
 kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml --ignore-not-found
+kubectl delete -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml --ignore-not-found
 ```
 
 ## 2) Images

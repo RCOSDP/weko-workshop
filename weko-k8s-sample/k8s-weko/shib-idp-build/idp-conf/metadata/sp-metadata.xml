@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  プレースホルダ。実体は provision-shib.sh が tenants.txt から生成し、ConfigMap weko-idp-sp-metadata
+  としてこのパスに上書きマウントされる。
+  Placeholder. The real file is generated from tenants.txt by provision-shib.sh and mounted over this
+  path as the ConfigMap weko-idp-sp-metadata.
+-->
+<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" Name="urn:weko3:kind:sps" />

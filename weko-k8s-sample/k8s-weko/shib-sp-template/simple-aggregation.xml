@@ -1,0 +1,39 @@
+<!--
+  学認mAP 相当のグループ所属 (isMemberOf) を SAML2 AttributeQuery で取得する。
+  provision-shib.sh が WEKO_SHIB_MAP=aggregation のときだけ、shibboleth2.xml のプレースホルダ行を
+  この内容で置換する (それ以外のときはプレースホルダ行ごと削除される)。
+
+  Fetches the GakuNin mAP-equivalent group membership (isMemberOf) with a SAML2 AttributeQuery.
+  provision-shib.sh substitutes the placeholder line in shibboleth2.xml with this block only when
+  WEKO_SHIB_MAP=aggregation (otherwise the placeholder line is simply dropped).
+
+  本番 (学認クラウドゲートウェイ) との違いは <Entity> の値だけ。本番は
+      <Entity>https://sptest.cg.gakunin.jp/idp/shibboleth</Entity>
+  ここでは 71-shibboleth-map.yaml で立てた属性認証局を指す。
+  The only difference from production (the GakuNin cloud gateway) is the <Entity> value; production has
+      <Entity>https://sptest.cg.gakunin.jp/idp/shibboleth</Entity>
+  while here it names the attribute authority deployed by 71-shibboleth-map.yaml.
+
+  <Entity> は「ログインした IdP とは別のエンティティ」でなければならない。shibd は既に属性を
+  取得済みのエンティティへの問い合わせをスキップするため (ログ: skipping previously queried
+  attribute source)、ログイン IdP 自身を指定しても AttributeQuery は発行されない。
+  <Entity> must name an entity other than the IdP that performed the login. shibd skips querying an
+  entity it already obtained attributes from ("skipping previously queried attribute source" in its
+  log), so pointing it at the login IdP never produces an AttributeQuery.
+
+  attributeId="eppn" / format="urn:oid:1.3.6.1.4.1.5923.1.1.1.6":
+    SSO で得た eppn を、その NameID Format で Subject に載せて問い合わせる。属性認証局側はこの Format を
+    subject-c14n.xml の shibboleth.NameTransformFormats に登録しておかないと主体を解決できない。
+    The eppn obtained during SSO is sent as the Subject with that NameID Format. The attribute authority
+    cannot resolve the subject unless that Format is registered in shibboleth.NameTransformFormats in
+    its subject-c14n.xml.
+-->
+        <AttributeResolver type="SimpleAggregation"
+                           attributeId="eppn"
+                           format="urn:oid:1.3.6.1.4.1.5923.1.1.1.6">
+            <Entity>__MAP_ENTITYID__</Entity>
+            <saml2:Attribute xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion"
+                             Name="urn:oid:1.3.6.1.4.1.5923.1.5.1.1"
+                             NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri"
+                             FriendlyName="isMemberOf"/>
+        </AttributeResolver>

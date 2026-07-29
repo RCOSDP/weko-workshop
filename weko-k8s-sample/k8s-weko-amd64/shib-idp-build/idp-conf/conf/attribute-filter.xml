@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ワークショップ用の属性公開ポリシー。閉じた kind クラスタ内のテスト IdP なので、
+  メタデータを登録済みの SP すべてに WEKO3 が必要とする属性を無条件で公開する。
+  実運用では PolicyRequirementRule を Requester で絞ること。
+
+  Attribute release policy for the workshop. This is a test IdP inside a closed kind cluster, so the
+  attributes WEKO3 needs are released unconditionally to every SP whose metadata is registered.
+  In a real deployment, restrict the PolicyRequirementRule by Requester.
+-->
+<AttributeFilterPolicyGroup id="ShibbolethFilterPolicy"
+        xmlns="urn:mace:shibboleth:2.0:afp"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="urn:mace:shibboleth:2.0:afp http://shibboleth.net/schema/idp/shibboleth-afp.xsd">
+
+    <AttributeFilterPolicy id="releaseToWeko">
+        <PolicyRequirementRule xsi:type="ANY" />
+
+        <AttributeRule attributeID="eduPersonPrincipalName" permitAny="true" />
+        <AttributeRule attributeID="mail"                   permitAny="true" />
+        <AttributeRule attributeID="displayName"            permitAny="true" />
+        <AttributeRule attributeID="wekoId"                 permitAny="true" />
+        <AttributeRule attributeID="wekoSocietyAffiliation" permitAny="true" />
+        <!-- SimpleAggregation の AttributeQuery で返す属性。SSO アサーションにも同じものが載る
+             (WEKO_SHIB_MAP=sso のときはそちらだけを使う)。
+             The attribute returned by the SimpleAggregation AttributeQuery. The same one also rides the
+             SSO assertion (with WEKO_SHIB_MAP=sso only that path is used). -->
+        <AttributeRule attributeID="isMemberOf"              permitAny="true" />
+        <AttributeRule attributeID="eduPersonScopedAffiliation" permitAny="true" />
+        <AttributeRule attributeID="schacHomeOrganization"  permitAny="true" />
+    </AttributeFilterPolicy>
+
+</AttributeFilterPolicyGroup>

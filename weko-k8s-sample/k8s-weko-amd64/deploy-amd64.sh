@@ -24,6 +24,16 @@
 #   CLUSTER_NAME      kind cluster name                          (default weko3)
 #   KIND_CONFIG       kind cluster config                        (default kind-weko-cluster.yaml)
 #   FORCE_INIT        yes = fresh initialization for every tenant (default yes)
+#   WEKO_SHIB         yes = also deploy the Shibboleth IdP and enable the WEKO3 Shibboleth login
+#                     (default no). See SHIBBOLETH-IDP.md.
+#   WEKO_IDP_IMAGE    same as WEKO_IMAGE, for the Shibboleth IdP image
+#   WEKO_IDP_HOST     Ingress host of the IdP                    (default idp.localhost)
+#   WEKO_SHIB_LOGIN_ONLY yes = make /login itself go to the IdP (Shibboleth-only login)
+#                     (default no). Only meaningful together with WEKO_SHIB=yes.
+#   WEKO_SHIB_MAP     no|sso|aggregation - how the GakuNin mAP group mapping (isMemberOf)
+#                     is reproduced (default no). See SHIBBOLETH-IDP.md.
+#   WEKO_MAP_IMAGE    same as WEKO_IMAGE, for the mAP-equivalent attribute authority image
+#   WEKO_MAP_HOST     Ingress host of the attribute authority (default map.localhost)
 set -uo pipefail
 cd "$(dirname "$0")"
 WEKO_SRC="${WEKO_SRC:-$HOME/weko}"
@@ -47,6 +57,25 @@ export WEKO_TLS_ISSUER="${WEKO_TLS_ISSUER-weko-ca-issuer}"
 # (e.g. from Docker Hub), set WEKO_IMAGE=<repo>/<name>:<tag> and it is pulled instead of built.
 # The value is inherited by gen-tenant.sh.
 export WEKO_IMAGE="${WEKO_IMAGE:-weko3-web:$IMG_TAG}"
+# Shibboleth ログインのデモ。yes にすると IdP (70-shibboleth-idp.yaml) を立て、SP 側 (nginx+shibd) と
+# WEKO の設定も Shibboleth 有効で生成する。gen-tenant.sh / provision-shib.sh に引き継がれる。
+# The Shibboleth login demo. With yes the IdP (70-shibboleth-idp.yaml) is deployed and both the SP side
+# (nginx+shibd) and the WEKO configuration are generated with Shibboleth enabled. Inherited by
+# gen-tenant.sh / provision-shib.sh.
+export WEKO_SHIB="${WEKO_SHIB:-no}"
+export WEKO_IDP_HOST="${WEKO_IDP_HOST:-idp.localhost}"
+export WEKO_IDP_IMAGE="${WEKO_IDP_IMAGE:-weko3-shib-idp:$IMG_TAG}"
+# /login をローカルフォームのままにするか、IdP へ直行させるか (gen-tenant.sh が読む)。
+# Whether /login keeps the local form or goes straight to the IdP (read by gen-tenant.sh).
+export WEKO_SHIB_LOGIN_ONLY="${WEKO_SHIB_LOGIN_ONLY:-no}"
+# 学認mAP 連携 (isMemberOf) の再現方法。gen-tenant.sh と provision-shib.sh の両方が読む。
+# How the GakuNin mAP integration (isMemberOf) is reproduced; read by both gen-tenant.sh
+# and provision-shib.sh.
+export WEKO_SHIB_MAP="${WEKO_SHIB_MAP:-no}"
+# 属性認証局 (学認mAP 相当)。WEKO_SHIB_MAP=aggregation のときだけ立てる。
+# The attribute authority (GakuNin mAP equivalent); only deployed with WEKO_SHIB_MAP=aggregation.
+export WEKO_MAP_HOST="${WEKO_MAP_HOST:-map.localhost}"
+export WEKO_MAP_IMAGE="${WEKO_MAP_IMAGE:-weko3-shib-map:$IMG_TAG}"
 KIND_CONFIG="${KIND_CONFIG:-kind-weko-cluster.yaml}"
 # kind cluster name (default weko3; override it e.g. for a parallel verification run)
 CLUSTER_NAME="${CLUSTER_NAME:-weko3}"
@@ -155,6 +184,28 @@ if [ "$WEKO_NGINX_IMAGE" = "weko3-nginx:$IMG_TAG" ]; then
   sed "s/focal_arm64\.deb/focal_amd64.deb/g" \
     "$WEKO_SRC/nginx/Dockerfile" > "$NGINX_DF"
   # supervisord.conf hardcodes the x86_64 shibauthorizer/shibresponder paths, which are correct on amd64
+  # weko/nginx/Dockerfile は login.php しか入れず fcgiwrap も入れないが、weko-accounts が実際に
+  # 使うのは /secure/login.py の方 (AdminSettings の attribute_mapping が eppn/mail/DisplayName/
+  # HTTP_WEKOSOCIETYAFFILIATION というフィールド名を要求するため、SHIB_ATTR_* を送る login.php では
+  # 属性が空になる)。supervisord.conf には fcgiwrap の定義が既にあるので、実体と login.py を足す。
+  # weko/nginx/Dockerfile only ships login.php and does not install fcgiwrap, but what weko-accounts
+  # actually uses is /secure/login.py (AdminSettings' attribute_mapping asks for the field names
+  # eppn/mail/DisplayName/HTTP_WEKOSOCIETYAFFILIATION, so login.php - which posts SHIB_ATTR_* - yields
+  # empty attributes). supervisord.conf already defines the fcgiwrap program, so add the binary and
+  # login.py to match.
+  {
+    printf 'RUN apt-get update && apt-get install -y fcgiwrap python3-requests && rm -rf /var/lib/apt/lists/*\n'
+    printf 'RUN mkdir -p /usr/lib/systemd/system\n'
+    printf 'ADD ./login.py /usr/share/nginx/html/secure/login.py\n'
+    printf 'RUN chmod 755 /usr/share/nginx/html/secure/login.py\n'
+    # login.py はステータス行を "HTTP/1.1 302 Found" として出力するが、これは NPH スクリプトの書式で、
+    # fcgiwrap 経由では単なる不正なヘッダ行になり nginx が 502 を返す。CGI 本来の "Status:" に直す。
+    # login.py emits its status line as "HTTP/1.1 302 Found", which is the NPH-script form; through
+    # fcgiwrap it is just a malformed header line and nginx answers 502. Rewrite it to CGI's "Status:".
+    printf 'RUN sed -i "s#%s#%s#; s#%s#%s#" /usr/share/nginx/html/secure/login.py\n' \
+      "print('HTTP/1.1 302 Found')" "print('Status: 302 Found')" \
+      "print('HTTP/1.1 200 OK')"    "print('Status: 200 OK')"
+  } >> "$NGINX_DF"
   docker build -f "$NGINX_DF" -t "$WEKO_NGINX_IMAGE" "$WEKO_SRC/nginx"
 else
   echo "-- pulling WEKO_NGINX_IMAGE=$WEKO_NGINX_IMAGE --"
@@ -166,9 +217,56 @@ export PGPOOL_IMAGE="${PGPOOL_IMAGE:-pgpool/pgpool:4.2.2}"
 # The official pgpool image is amd64, so it is pulled rather than built.
 docker pull "$PGPOOL_IMAGE"
 kind load docker-image "$PGPOOL_IMAGE" --name "$CLUSTER_NAME"
+# Shibboleth IdP: 公式 tarball (純 Java) + Tomcat 10.1 から自前ビルドするのでアーキ非依存。
+# WEKO_SHIB=yes のときだけ作る (ビルドに数分かかるため)。
+# Shibboleth IdP: built from the official tarball (pure Java) + Tomcat 10.1, so it is arch independent.
+# Only built with WEKO_SHIB=yes (the build takes a few minutes).
+if [ "$WEKO_SHIB" = "yes" ]; then
+  # aggregation のときは isMemberOf を SSO で配らない (属性認証局から取らせるため)。
+  # With aggregation, the institutional IdP does not hand out isMemberOf over SSO - the attribute
+  # authority supplies it instead.
+  if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then IDP_ISMEMBEROF=no; else IDP_ISMEMBEROF=yes; fi
+  if [ "$WEKO_IDP_IMAGE" = "weko3-shib-idp:$IMG_TAG" ]; then
+    docker build \
+      --build-arg IDP_HOST="$WEKO_IDP_HOST" \
+      --build-arg IDP_ENTITYID="https://$WEKO_IDP_HOST/idp/shibboleth" \
+      --build-arg IDP_RELEASE_ISMEMBEROF="$IDP_ISMEMBEROF" \
+      -t "$WEKO_IDP_IMAGE" shib-idp-build || { echo "ERROR: failed to build the Shibboleth IdP image"; exit 1; }
+  else
+    echo "-- pulling WEKO_IDP_IMAGE=$WEKO_IDP_IMAGE --"
+    docker pull "$WEKO_IDP_IMAGE"
+  fi
+  kind load docker-image "$WEKO_IDP_IMAGE" --name "$CLUSTER_NAME"
+  # 属性認証局。同じイメージだが entityID が別で、グループ名には機関 IdP の FQDN を埋める。
+  # The attribute authority: same image, a different entityID, and the institutional IdP's FQDN baked
+  # into the group names.
+  if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then
+    if [ "$WEKO_MAP_IMAGE" = "weko3-shib-map:$IMG_TAG" ]; then
+      docker build \
+        --build-arg IDP_HOST="$WEKO_MAP_HOST" \
+        --build-arg IDP_ENTITYID="https://$WEKO_MAP_HOST/idp/shibboleth" \
+        --build-arg IDP_GROUP_FQDN_HOST="$WEKO_IDP_HOST" \
+        -t "$WEKO_MAP_IMAGE" shib-idp-build || { echo "ERROR: failed to build the attribute authority image"; exit 1; }
+    else
+      echo "-- pulling WEKO_MAP_IMAGE=$WEKO_MAP_IMAGE --"
+      docker pull "$WEKO_MAP_IMAGE"
+    fi
+    kind load docker-image "$WEKO_MAP_IMAGE" --name "$CLUSTER_NAME"
+  fi
+fi
 
 echo "########## 3) operators (cert-manager / rabbitmq / postgres) ##########"
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+# metrics-server: kubectl top を使えるようにする。kind の kubelet はクラスタ CA が署名していない
+# サービング証明書を使うので、--kubelet-insecure-tls を足さないと収集に失敗し続ける
+# ("Metrics API not available" のまま)。マルチアーキイメージなので arm64/amd64 とも同じもので動く。
+# metrics-server, so that kubectl top works. kind's kubelet serves a certificate that the cluster CA did
+# not sign, so without --kubelet-insecure-tls scraping keeps failing and kubectl top stays stuck on
+# "Metrics API not available". The image is multi-arch, so the same one works on arm64 and amd64.
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml
+kubectl -n kube-system patch deploy metrics-server --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
+  >/dev/null 2>&1 || echo "WARNING: could not patch metrics-server (kubectl top may not work)"
 kubectl wait -n cert-manager --for=condition=ready pod --all --timeout=180s
 kubectl apply -f https://github.com/rabbitmq/cluster-operator/releases/latest/download/cluster-operator.yml
 # Applying the RabbitmqCluster before the operator's webhook is up fails the webhook call, so wait for it
@@ -263,6 +361,21 @@ bash gen-tenant.sh
 # Create the per-tenant directories (/fs-nginx /fs-shibboleth /fs-config /fs-data) on the shared FS and
 # seed the nginx / Shibboleth templates. Required before the Pods mount them (= production's make_volumes.sh)
 bash provision-nfs.sh
+# Shibboleth: SP 鍵の生成、IdP メタデータの取り出し、SP メタデータ (ConfigMap) の登録、
+# 各テナントの /fs-shibboleth への配置。Pod が /etc/shibboleth をマウントする前に済ませる必要がある。
+# Shibboleth: generate the SP key, extract the IdP metadata, register the SP metadata (ConfigMap) and
+# place everything into each tenant's /fs-shibboleth. Must happen before the Pods mount /etc/shibboleth.
+if [ "$WEKO_SHIB" = "yes" ]; then
+  bash provision-shib.sh || { echo "ERROR: provision-shib.sh failed"; exit 1; }
+  # ConfigMap weko-idp-sp-metadata が無いと Pod が起動しないので、必ず provision-shib.sh の後に適用する
+  # The Pod will not start without the ConfigMap weko-idp-sp-metadata, so apply this after provision-shib.sh
+  sed -e "s#image: weko3-shib-idp:amd64#image: $WEKO_IDP_IMAGE#" \
+      -e "s#idp\.localhost#$WEKO_IDP_HOST#g" 70-shibboleth-idp.yaml | kubectl apply -f -
+  if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then
+    sed -e "s#image: weko3-shib-map:amd64#image: $WEKO_MAP_IMAGE#" \
+        -e "s#map\.localhost#$WEKO_MAP_HOST#g" 71-shibboleth-map.yaml | kubectl apply -f -
+  fi
+fi
 # Applying the whole generated/ directory also applies stale manifests of tenants that were removed
 # from tenants.txt, creating orphan tenants that are never provisioned or initialized (and whose PVs
 # are Retain, so they linger). Apply only what tenants.txt lists, and just warn about leftovers.
@@ -348,6 +461,19 @@ grep -vE '^\s*#|^\s*$' tenants.txt | while read -r NAME DB HOST _; do
   SCODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: $HOST" https://localhost/ --max-time 60)
   echo "  $HOST -> http:$HCODE https:$SCODE"
 done
+if [ "$WEKO_SHIB" = "yes" ]; then
+  kubectl -n weko3 rollout status deploy/weko-shib-idp --timeout=300s \
+    || echo "WARNING: the Shibboleth IdP did not become ready"
+  if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then
+    kubectl -n weko3 rollout status deploy/weko-shib-map --timeout=300s \
+      || echo "WARNING: the attribute authority did not become ready"
+  fi
+  # /idp/status は 200 を返せば設定の読み込みまで成功している (403 なら access-control.xml の許可漏れ)
+  # A 200 from /idp/status means the configuration loaded successfully (403 = access-control.xml gap)
+  ICODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: $WEKO_IDP_HOST" \
+            "https://localhost/idp/status" --max-time 60)
+  echo "  $WEKO_IDP_HOST/idp/status -> https:$ICODE"
+fi
 if [ -n "$WEKO_TLS_ISSUER" ]; then
   echo "-- certificate ($WEKO_TLS_ISSUER) --"
   echo | openssl s_client -connect localhost:443 \
@@ -355,3 +481,11 @@ if [ -n "$WEKO_TLS_ISSUER" ]; then
     | openssl x509 -noout -issuer -ext subjectAltName -enddate 2>/dev/null | sed 's/^/  /'
 fi
 echo "done. (browser: http://<tenant>.localhost/ ; see tenants.txt for the administrator)"
+if [ "$WEKO_SHIB" = "yes" ]; then
+  if [ "$WEKO_SHIB_LOGIN_ONLY" = "yes" ]; then
+    echo "shibboleth login: https://<tenant>.localhost/login/ (goes straight to the IdP)"
+  else
+    echo "shibboleth login: https://<tenant>.localhost/weko/shib/sp/login"
+  fi
+  echo "  IdP demo users: admin/admin123  libadmin/libadmin123  teacher/teacher123 (see SHIBBOLETH-IDP.md)"
+fi

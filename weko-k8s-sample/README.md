@@ -362,7 +362,11 @@ bash set-s3-location.sh                              # weko-<tenant> バケッ�
 
 ### まだ本番と異なる点（さらなる忠実化の候補）
 - PostgreSQL の HA（postgres-operator/Spilo + pgpool）は現フル構成（付録D / `deploy-*.sh`）で導入済み。pgbouncer は未導入。
-- F5 NGINX App Protect(WAF)、Shibboleth/学認認証、flustd ログ集約、Prometheus 監視は未導入。
+- Shibboleth 認証は **任意で導入できる**（`WEKO_SHIB=yes bash deploy-*.sh`）。クラスタ内に本物の
+  Shibboleth IdP 5 を立て、SP(shibd)＋`/secure/login.py` 経由の学認相当の経路が一通り動く。
+  ただし IdP は 1 台固定・メタデータはローカルファイル・認証は htpasswd で、学認フェデレーション
+  （DS/WAYF、署名付きメタデータ、LDAP）とは異なる。→ `k8s-weko/SHIBBOLETH-IDP.md`
+- F5 NGINX App Protect(WAF)、flustd ログ集約、Prometheus 監視は未導入。
 - Ingress のテナント別 TLS 証明書（現状は Ingress 既定の自己署名）。
 
 ---

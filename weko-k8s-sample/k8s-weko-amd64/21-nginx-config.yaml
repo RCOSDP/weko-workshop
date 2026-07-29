@@ -2,6 +2,12 @@
 # The nginx image itself is the Shibboleth-enabled build from the weko source (weko3-nginx:<arch>), but
 # production's weko.conf assumes TLS/IP restrictions/Shibboleth, so behind kind's HTTP Ingress this
 # default.conf is used by default. Set WEKO_NGINX_SHIB=yes in gen-tenant.sh to enable weko.conf instead.
+#
+# WEKO_SHIB=yes (Shibboleth ログインのデモ) のときは default.conf の代わりに default-shib.conf が
+# /etc/nginx/conf.d/default.conf にマウントされ、weko_shib_params が /etc/nginx/weko_shib_params に入る。
+# With WEKO_SHIB=yes (the Shibboleth login demo) default-shib.conf is mounted at
+# /etc/nginx/conf.d/default.conf instead of default.conf, and weko_shib_params lands in
+# /etc/nginx/weko_shib_params.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -24,6 +30,192 @@ data:
             include uwsgi_params;
             uwsgi_pass 127.0.0.1:5000;
             uwsgi_param HTTP_X_FORWARDED_PROTO http;
+            uwsgi_read_timeout 3600s;
+            uwsgi_send_timeout 3600s;
+            uwsgi_buffer_size 32k;
+            uwsgi_buffers 8 32k;
+            uwsgi_busy_buffers_size 64k;
+        }
+    }
+
+  # ---------------------------------------------------------------------------------------------
+  # FastCGI パラメータ一式。shibauthorizer / shibresponder / login.py に渡す。
+  # nginx の fastcgi_params をそのまま include すると、この下で上書きしたい HTTPS / SERVER_PORT /
+  # REQUEST_SCHEME / SERVER_NAME が二重に送られてどちらが採用されるかが実装依存になるため、
+  # include せずにここで全部書き出している。
+  #
+  # The full set of FastCGI parameters handed to shibauthorizer / shibresponder / login.py.
+  # Simply including nginx's fastcgi_params would send HTTPS / SERVER_PORT / REQUEST_SCHEME /
+  # SERVER_NAME twice (the values overridden below), leaving which one wins up to the FastCGI
+  # implementation - so nothing is included and every parameter is spelled out here.
+  # ---------------------------------------------------------------------------------------------
+  weko_shib_params: |
+    fastcgi_param  QUERY_STRING       $query_string;
+    fastcgi_param  REQUEST_METHOD     $request_method;
+    fastcgi_param  CONTENT_TYPE       $content_type;
+    fastcgi_param  CONTENT_LENGTH     $content_length;
+
+    fastcgi_param  SCRIPT_NAME        $fastcgi_script_name;
+    fastcgi_param  REQUEST_URI        $request_uri;
+    fastcgi_param  DOCUMENT_URI       $document_uri;
+    fastcgi_param  DOCUMENT_ROOT      $document_root;
+    fastcgi_param  SERVER_PROTOCOL    $server_protocol;
+    fastcgi_param  GATEWAY_INTERFACE  CGI/1.1;
+    fastcgi_param  SERVER_SOFTWARE    nginx/$nginx_version;
+
+    fastcgi_param  REMOTE_ADDR        $remote_addr;
+    fastcgi_param  REMOTE_PORT        $remote_port;
+    fastcgi_param  SERVER_ADDR        $server_addr;
+    fastcgi_param  REDIRECT_STATUS    200;
+
+    # TLS は Ingress で終端するので nginx 自身は平文で受ける。shibd は受け取ったこの値から
+    # ACS URL / entityID / リダイレクト先を組み立てるため、https と伝えないと SAML の
+    # Destination 検証やセキュアクッキーが噛み合わない。Ingress が付ける X-Forwarded-Proto を使う。
+    # TLS terminates at the Ingress, so nginx itself serves plaintext. shibd builds the ACS URL /
+    # entityID / redirect targets from these values, so unless it is told https the SAML destination
+    # check and the secure cookies do not line up. The Ingress' X-Forwarded-Proto drives it.
+    # if_not_empty: 平文のときは HTTPS 自体を送らない。空文字で送ると「値の有無」だけを見る実装に
+    # https と誤解されうるため、nginx 標準の fastcgi_params と同じ扱いに揃える。
+    # if_not_empty: do not send HTTPS at all over plaintext. An empty value could read as https to an
+    # implementation that only checks whether the variable is present, so this matches how nginx's own
+    # fastcgi_params handles it.
+    fastcgi_param  HTTPS              $weko_https if_not_empty;
+    fastcgi_param  REQUEST_SCHEME     $weko_scheme;
+    fastcgi_param  SERVER_PORT        $weko_server_port;
+    # server_name は "_" (default_server) なので、テナントの FQDN は Host ヘッダから取る。
+    # HTTP_HOST は nginx がリクエストヘッダを自動で HTTP_* として渡すので、ここでは指定しない。
+    # server_name is "_" (default_server), so the tenant FQDN comes from the Host header.
+    # HTTP_HOST is not set here: nginx already passes request headers through as HTTP_* automatically.
+    fastcgi_param  SERVER_NAME        $host;
+
+  # ---------------------------------------------------------------------------------------------
+  # Shibboleth ログイン有効時の nginx 設定 (WEKO_SHIB=yes)。
+  # 本番の weko.conf から、この構成で必要な部分 (shibauthorizer / shibresponder / /secure/login.py /
+  # /weko/shib) だけを取り出したもの。IP 制限・WAF 的なリダイレクトルール・AMS は含めていない。
+  #
+  # nginx configuration used when the Shibboleth login is enabled (WEKO_SHIB=yes).
+  # It keeps only the parts of production's weko.conf that this setup needs (shibauthorizer /
+  # shibresponder / /secure/login.py / /weko/shib); the IP restrictions, the WAF-like redirect rules
+  # and AMS are left out.
+  # ---------------------------------------------------------------------------------------------
+  default-shib.conf: |
+    # X-Forwarded-Proto が無い場合 (Pod 内からの直接アクセス) は実際のスキームにフォールバックする。
+    # Without X-Forwarded-Proto (a direct in-Pod request) fall back to the real scheme.
+    map $http_x_forwarded_proto $weko_scheme {
+        default $http_x_forwarded_proto;
+        ""      $scheme;
+    }
+    map $weko_scheme $weko_https {
+        default "";
+        https   on;
+    }
+    map $weko_scheme $weko_server_port {
+        default $server_port;
+        https   443;
+    }
+
+    server {
+        listen 80 default_server;
+        # login.py は自分自身の $base (= REQUEST_SCHEME://HTTP_HOST) に対して HTTP リクエストを投げ返す。
+        # hostAliases でテナント FQDN が 127.0.0.1 に向いているので、https で戻ってこられるように
+        # 443 も自前で受ける。証明書はイメージ同梱の自己署名 (login.py は verify=False)。
+        # login.py issues an HTTP request back to its own $base (= REQUEST_SCHEME://HTTP_HOST). The
+        # tenant FQDN resolves to 127.0.0.1 via hostAliases, so 443 is served here too in order to
+        # accept that call over https. The certificate is the image's self-signed one (login.py uses
+        # verify=False).
+        listen 443 ssl default_server;
+        ssl_certificate     /etc/nginx/server.crt;
+        ssl_certificate_key /etc/nginx/server.key;
+
+        server_name _;
+        client_max_body_size 0;
+        charset utf-8;
+
+        location = /ping {
+            return 200 'ok';
+            add_header Content-Type text/plain;
+        }
+
+        # shibd の FastCGI authorizer。shib_request から内部的に呼ばれる。
+        # shibd's FastCGI authorizer, called internally from shib_request.
+        location = /shibauthorizer {
+            internal;
+            include /etc/nginx/weko_shib_params;
+            fastcgi_pass unix:/tmp/shibauthorizer.sock;
+        }
+
+        # shibd の FastCGI responder。SAML のアサーション受信 (ACS) やメタデータ生成はここ。
+        # shibd's FastCGI responder: the assertion consumer (ACS), metadata generation, etc.
+        location /Shibboleth.sso {
+            include /etc/nginx/weko_shib_params;
+            fastcgi_pass unix:/tmp/shibresponder.sock;
+        }
+
+        # SP のエラーページ用スタイルシートなど / stylesheets etc. for the SP error pages
+        location /shibboleth-sp {
+            alias /usr/share/shibboleth/;
+        }
+
+        # Shibboleth セッションを要求する唯一の場所。ここに未認証で来ると shibd が IdP へ飛ばす。
+        # 認証後は login.py が属性を集めて /weko/shib/login へ POST し、WEKO のログイン処理に渡す。
+        # The only place that requires a Shibboleth session: arriving here unauthenticated makes shibd
+        # bounce the browser to the IdP. Afterwards login.py collects the attributes and POSTs them to
+        # /weko/shib/login, handing over to WEKO's login processing.
+        # 本番の weko.conf と同じく ".py$" ではなく "/secure/" 全体に掛ける。weko-accounts が
+        # ".../secure/login.py/login?next=..." のように PATH_INFO 付きの URL を組み立てることがあり、
+        # 拡張子で終わる前提だと 404 になるため。切り分けは fastcgi_split_path_info が行う。
+        # As in production's weko.conf this matches all of "/secure/" rather than ".py$": weko-accounts
+        # can build URLs with a PATH_INFO suffix (".../secure/login.py/login?next=..."), which a
+        # extension-anchored pattern would 404 on. fastcgi_split_path_info does the splitting.
+        location ~ ^/secure/ {
+            # クライアントが偽装ヘッダを送ってきても shibd 由来の値で上書きされるよう、先に消す。
+            # Drop any spoofed headers from the client first so only shibd-derived values survive.
+            more_clear_input_headers 'Shib-Session-ID' 'Shib-Session-Index' 'Remote-User' 'eppn'
+                                     'mail' 'isMemberOf' 'DisplayName' 'wekoId' 'wekoSocietyAffiliation'
+                                     'WEKOID' 'WEKOSOCIETYAFFILIATION';
+            shib_request /shibauthorizer;
+            shib_request_use_headers on;
+
+            include /etc/nginx/weko_shib_params;
+            # イメージ同梱。属性ごとの shib_request_set + fastcgi_param が並んでいる。
+            # login.py はこのファイルを読んで POST するフィールド名を決めるので、必ず include すること。
+            # Ships with the image: a shib_request_set + fastcgi_param pair per attribute.
+            # login.py reads this very file to decide which fields to POST, so it must be included.
+            include /etc/nginx/shib_fastcgi_params;
+
+            # WEKO 固有属性。login.py が HTTP_WEKOID / HTTP_WEKOSOCIETYAFFILIATION を
+            # SHIB_ATTR_USER_NAME / SHIB_ATTR_ROLE_AUTHORITY_NAME として WEKO に渡す。
+            # The WEKO-specific attributes. login.py forwards HTTP_WEKOID /
+            # HTTP_WEKOSOCIETYAFFILIATION to WEKO as SHIB_ATTR_USER_NAME / SHIB_ATTR_ROLE_AUTHORITY_NAME.
+            shib_request_set $shib_wekoid $upstream_http_variable_wekoid;
+            fastcgi_param HTTP_WEKOID $shib_wekoid;
+            shib_request_set $shib_wekosocietyaffiliation $upstream_http_variable_wekosocietyaffiliation;
+            fastcgi_param HTTP_WEKOSOCIETYAFFILIATION $shib_wekosocietyaffiliation;
+
+            # TRUE = wekoSocietyAffiliation が無くてもログイン自体は通す。属性が来ていればロールは
+            # 通常どおり割り当てられる。FALSE にすると本番同様「Permission is invalid」で弾かれる。
+            # TRUE = let the login through even without wekoSocietyAffiliation. When the attribute is
+            # present the role is assigned as usual. FALSE reproduces production's "Permission is
+            # invalid" rejection.
+            fastcgi_param NO_CHECK_WEKOSOCIETYAFFILIATION TRUE;
+
+            fastcgi_split_path_info ^(.+\.py)(.*)$;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_pass unix:/usr/lib/systemd/system/fcgiwrap.socket;
+            root /usr/share/nginx/html;
+        }
+
+        location / {
+            include uwsgi_params;
+            uwsgi_pass 127.0.0.1:5000;
+            uwsgi_param HTTP_X_FORWARDED_PROTO $weko_scheme;
+            # weko3 は ProxyFix を入れていないので、Flask の request.url_root は uwsgi が決める
+            # wsgi.url_scheme に従う。UWSGI_SCHEME を渡さないと url_root が http:// になり、
+            # weko-accounts が組み立てるログイン URL (url_root + "secure/login.py") も http になる。
+            # weko3 does not install ProxyFix, so Flask's request.url_root follows the wsgi.url_scheme
+            # that uwsgi decides. Without UWSGI_SCHEME the url_root would be http://, and so would the
+            # login URL weko-accounts builds from it (url_root + "secure/login.py").
+            uwsgi_param UWSGI_SCHEME $weko_scheme;
             uwsgi_read_timeout 3600s;
             uwsgi_send_timeout 3600s;
             uwsgi_buffer_size 32k;

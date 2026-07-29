@@ -1,0 +1,110 @@
+# 学認mAP 相当の属性認証局 (AA) / the GakuNin mAP-equivalent attribute authority
+#
+# WEKO_SHIB_MAP=aggregation のときだけデプロイされる。70-shibboleth-idp.yaml と同じイメージだが、
+# 別の entityID / ホスト名でビルドしたものを使う (weko3-shib-map:<arch>)。
+# Deployed only with WEKO_SHIB_MAP=aggregation. Same image as 70-shibboleth-idp.yaml, but built with a
+# different entityID / host name (weko3-shib-map:<arch>).
+#
+# なぜ 2 台目が要るのか / why a second one is needed:
+#   Shibboleth SP の SimpleAggregation は「既に属性を取得済みのエンティティ」への問い合わせを
+#   意図的にスキップする (shibd のログ: "skipping previously queried attribute source")。
+#   そのためログインした IdP 自身を <Entity> に指定しても AttributeQuery は発行されない。
+#   本番で成立しているのは、学認クラウドゲートウェイが機関 IdP とは別エンティティだからで、
+#   ここでも別エンティティを立てる必要がある。
+#   The SP's SimpleAggregation deliberately skips an entity it already obtained attributes from
+#   (shibd logs "skipping previously queried attribute source"), so naming the login IdP itself in
+#   <Entity> never produces an AttributeQuery. Production works because the GakuNin cloud gateway is a
+#   separate entity from the institutional IdP, so a separate entity is needed here too.
+#
+# 役割分担 / division of labour:
+#   idp.localhost (70-) … 認証と eppn/mail/displayName/wekoId/wekoSocietyAffiliation
+#   map.localhost (71-) … isMemberOf だけを AttributeQuery で返す
+#   idp.localhost (70-) … authentication plus eppn/mail/displayName/wekoId/wekoSocietyAffiliation
+#   map.localhost (71-) … answers AttributeQuery with isMemberOf only
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weko-shib-map
+  namespace: weko3
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: weko-shib-map } }
+  strategy: { type: Recreate }
+  template:
+    metadata: { labels: { app: weko-shib-map } }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: idp
+        image: weko3-shib-map:arm64
+        imagePullPolicy: Never
+        ports: [ { containerPort: 8080 }, { containerPort: 8443 } ]
+        resources: { requests: { memory: "768Mi", cpu: "100m" }, limits: { memory: "1536Mi", cpu: "2" } }
+        volumeMounts:
+        # 問い合わせてくる SP を認識するために必要。署名検証もこのメタデータの証明書で行う。
+        # Needed to recognise the querying SP; the signature is verified with the certificate in here.
+        - name: sp-metadata
+          mountPath: /opt/shibboleth-idp/metadata/sp-metadata.xml
+          subPath: sp-metadata.xml
+        startupProbe:
+          httpGet: { path: /idp/status, port: 8080 }
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet: { path: /idp/status, port: 8080 }
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /idp/status, port: 8080 }
+          periodSeconds: 30
+          failureThreshold: 5
+      volumes:
+      - name: sp-metadata
+        configMap:
+          name: weko-idp-sp-metadata
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weko-shib-map
+  namespace: weko3
+spec:
+  # ClusterIP を固定する。SP はバックチャネルの TLS 証明書 (CN=map.localhost) と繋ぎ先のホスト名を
+  # そろえる必要があるため、テナントの Pod に hostAliases で map.localhost -> このアドレスを入れる
+  # (gen-tenant.sh が WEKO_SHIB_MAP=aggregation のときに追加する)。60-nfs-server.yaml と同じ方式。
+  # A pinned ClusterIP. The SP needs the host name it connects to to line up with the back-channel TLS
+  # certificate (CN=map.localhost), so the tenant Pods get a hostAliases entry mapping map.localhost to
+  # this address (added by gen-tenant.sh with WEKO_SHIB_MAP=aggregation). Same approach as
+  # 60-nfs-server.yaml.
+  clusterIP: 10.96.0.98
+  selector: { app: weko-shib-map }
+  ports:
+  - { name: http,  port: 8080, targetPort: 8080 }
+  # Shibboleth 標準のバックチャネル。SimpleAggregation の SOAP はここに来る。
+  # The standard Shibboleth back-channel; the SimpleAggregation SOAP arrives here.
+  - { name: soap,  port: 8443, targetPort: 8443 }
+---
+# SP からのバックチャネル (SOAP) はクラスタ内 Service を直接叩くので Ingress は必須ではないが、
+# /idp/status をブラウザから見られると切り分けが楽なので用意しておく。
+# The back-channel (SOAP) from the SP goes straight to the in-cluster Service, so this Ingress is not
+# strictly required - it just makes /idp/status reachable from a browser, which helps when debugging.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: weko-shib-map
+  namespace: weko3
+  annotations:
+    cert-manager.io/cluster-issuer: "weko-ca-issuer"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts: [ "map.localhost" ]
+    secretName: weko-shib-map-tls
+  rules:
+  - host: "map.localhost"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend: { service: { name: weko-shib-map, port: { number: 8080 } } }

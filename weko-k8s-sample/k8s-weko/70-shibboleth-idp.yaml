@@ -1,0 +1,93 @@
+# Shibboleth IdP (テスト用) / Shibboleth IdP (for testing)
+#
+# WEKO3 の Shibboleth ログインを kind クラスタ内で完結して試すための IdP。イメージは
+# shib-idp-build/Dockerfile から作る (公式 tarball + Tomcat 10.1、arm64/amd64 どちらもネイティブ)。
+# An IdP that lets the WEKO3 Shibboleth login be exercised entirely inside the kind cluster. The image
+# is built from shib-idp-build/Dockerfile (official tarball + Tomcat 10.1, native on both arm64/amd64).
+#
+# 信頼関係 / trust:
+#   IdP -> SP : ConfigMap weko-idp-sp-metadata (provision-shib.sh が tenants.txt から生成)
+#   SP  -> IdP: /etc/shibboleth/idp-metadata.xml (provision-shib.sh がイメージから取り出して NFS に配置)
+#   IdP -> SP : ConfigMap weko-idp-sp-metadata (generated from tenants.txt by provision-shib.sh)
+#   SP  -> IdP: /etc/shibboleth/idp-metadata.xml (extracted from the image onto NFS by provision-shib.sh)
+#
+# デモユーザ / demo users (shib-idp-build/idp-conf/credentials/demo.htpasswd):
+#   admin/admin123 (System Administrator) libadmin/libadmin123 (Repository Administrator)
+#   teacher/teacher123 (Contributor)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weko-shib-idp
+  namespace: weko3
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: weko-shib-idp } }
+  strategy: { type: Recreate }
+  template:
+    metadata: { labels: { app: weko-shib-idp } }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: idp
+        image: weko3-shib-idp:arm64
+        imagePullPolicy: Never
+        ports: [ { containerPort: 8080 } ]
+        resources: { requests: { memory: "768Mi", cpu: "100m" }, limits: { memory: "1536Mi", cpu: "2" } }
+        volumeMounts:
+        # SP のメタデータ。複数テナントは 1 つの EntitiesDescriptor にまとめて入っている。
+        # SP metadata; multiple tenants are combined into a single EntitiesDescriptor.
+        - name: sp-metadata
+          mountPath: /opt/shibboleth-idp/metadata/sp-metadata.xml
+          subPath: sp-metadata.xml
+        # 起動には 40 秒ほどかかる (Spring の初期化 + war 展開)。startupProbe で猶予を与える。
+        # Startup takes ~40s (Spring initialization + war expansion); startupProbe gives it room.
+        startupProbe:
+          httpGet: { path: /idp/status, port: 8080 }
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet: { path: /idp/status, port: 8080 }
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /idp/status, port: 8080 }
+          periodSeconds: 30
+          failureThreshold: 5
+      volumes:
+      - name: sp-metadata
+        configMap:
+          name: weko-idp-sp-metadata
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weko-shib-idp
+  namespace: weko3
+spec:
+  selector: { app: weko-shib-idp }
+  ports: [ { port: 8080, targetPort: 8080 } ]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: weko-shib-idp
+  namespace: weko3
+  annotations:
+    # テナントと同じ社内 CA (61-tls-ca.yaml) で証明書を発行する。ブラウザからは https でアクセスする。
+    # Issue the certificate from the same internal CA as the tenants (61-tls-ca.yaml); browsers use https.
+    cert-manager.io/cluster-issuer: "weko-ca-issuer"
+    # SAML の POST バインディングは自動 POST フォームを通るので、ボディサイズ制限を外しておく。
+    # SAML's POST binding goes through an auto-submitting form; lift the body size limit.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts: [ "idp.localhost" ]
+    secretName: weko-shib-idp-tls
+  rules:
+  - host: "idp.localhost"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend: { service: { name: weko-shib-idp, port: { number: 8080 } } }

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SP のメタデータはローカルファイルから読む。kind クラスタ内の閉じた構成なので、フェデレーション
+  メタデータの取得も署名検証も行わない。sp-metadata.xml は provision-shib.sh が tenants.txt から生成し、
+  ConfigMap 経由で /opt/shibboleth-idp/metadata/sp-metadata.xml にマウントされる (複数テナントは
+  EntitiesDescriptor で 1 ファイルにまとめる)。
+
+  SP metadata is read from a local file. This is a closed setup inside a kind cluster, so no federation
+  metadata is fetched and no signature is verified. sp-metadata.xml is generated from tenants.txt by
+  provision-shib.sh and mounted at /opt/shibboleth-idp/metadata/sp-metadata.xml via a ConfigMap
+  (multiple tenants are combined into one file with an EntitiesDescriptor).
+
+  failFastInitialization="false": ファイル未配置でも IdP 自体は起動させる (配置後に再読込される)。
+  failFastInitialization="false": the IdP still starts when the file is not there yet (it is reloaded later).
+-->
+<MetadataProvider id="ShibbolethMetadata" xsi:type="ChainingMetadataProvider"
+        xmlns="urn:mace:shibboleth:2.0:metadata"
+        xmlns:samlmd="urn:oasis:names:tc:SAML:2.0:metadata"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="urn:mace:shibboleth:2.0:metadata http://shibboleth.net/schema/idp/shibboleth-metadata.xsd
+                            urn:oasis:names:tc:SAML:2.0:metadata http://docs.oasis-open.org/security/saml/v2.0/saml-schema-metadata-2.0.xsd">
+
+    <MetadataProvider id="WekoSPs"
+                      xsi:type="FilesystemMetadataProvider"
+                      metadataFile="%{idp.home}/metadata/sp-metadata.xml"
+                      failFastInitialization="false"
+                      requireValidMetadata="true" />
+
+</MetadataProvider>

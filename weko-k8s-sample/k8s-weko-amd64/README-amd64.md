@@ -22,6 +22,7 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | [デプロイ](#デプロイ) | `bash deploy-amd64.sh`。手順0〜9の内訳、[作成されるユーザ](#作成されるユーザ重要) |
 | [イメージの差し替え](#weko--pgpool-イメージの差し替え) | 既成イメージを使う場合。環境変数一覧もここ |
 | [HTTPS 証明書の指定](#https-証明書の指定) | 既定は自動発行。持ち込み証明書／Let's Encrypt |
+| [Shibboleth ログイン](#shibboleth-ログイン任意) | `WEKO_SHIB=yes` でクラスタ内に IdP を立てて学認相当の経路を試す |
 | [運用・後始末](#運用後始末) | 削除は **`teardown-amd64.sh`**。一部だけ巻き戻すなら [UNDEPLOY-amd64.md](./UNDEPLOY-amd64.md) |
 | [調整ポイント](#調整ポイント) / [トラブルシュート](#トラブルシュート) | 規模の増減、不具合対応 |
 
@@ -55,7 +56,8 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | クラスタ | `kind-weko-cluster.yaml`（このディレクトリ。3ノード: control-plane + WEKO + DATA） |
 | バックエンド(YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-minio.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
 | HTTPS(任意) | `61-tls-ca.yaml`（cert-manager のルートCA。既定 `WEKO_TLS_ISSUER=weko-ca-issuer` で展開）<br>`HTTPS-letsencrypt.md`（公開ドメインで Let's Encrypt に切り替える手順） |
-
+| Shibboleth(任意) | `70-shibboleth-idp.yaml` `71-shibboleth-map.yaml`（クラスタ内テスト IdP と学認mAP 相当の属性認証局）<br>`shib-idp-build/`（IdP イメージ。公式 tarball + Tomcat 10.1）<br>`shib-sp-template/` `provision-shib.sh` `check-shib-login.py` `list-shib-users.py`<br>`SHIBBOLETH-IDP.md`（`WEKO_SHIB=yes` で有効化する手順） |
+| アクセス方法 | `ACCESS-kubectl.md`（kubectl で PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / IdP に入るコマンド集） |
 | テナント関連 | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
 | 設定 | `tenants.txt`（テナント定義。管理者メール/パスワードはここで編集） |
 
@@ -200,7 +202,7 @@ bash deploy-amd64.sh
 0. **weko ソースの取得/更新**（`git clone` / `git pull`。`WEKO_REPO`/`WEKO_BRANCH`/`WEKO_SRC_UPDATE` で制御）
 1. kind クラスタ + ingress-nginx（**binfmt無し**）
 2. イメージをソースからビルド → `kind load`: `weko3-web:amd64` / `weko3-nginx:amd64` / `weko-elasticsearch:6.8.23` / `pgpool/pgpool:4.2.2`（公式イメージを pull）
-3. operator: cert-manager / rabbitmq / postgres-operator（`ghcr.io/zalando` amd64・spilo-17 にピン留め）
+3. operator: cert-manager / rabbitmq / postgres-operator（`ghcr.io/zalando` amd64・spilo-17 にピン留め）。あわせて metrics-server（`kubectl top` 用）も導入する
 4. 共有基盤: **ES×3 / PG(Patroni)×2 / RabbitMQ×3 / Redis Sentinel / MinIO / NFS**（全PVC）＋ MinIO 共通バケット
 5. PG `weko` PW を `weko` に固定（operator のリセット対策）
 5.5. **pgpool** を展開（weko と PostgreSQL の間：コネクションプール＋参照負荷分散→Patroni primary/replica）
@@ -324,6 +326,13 @@ KIND_CONFIG=kind-weko-cluster.yaml \
 | `WEKO_TLS_ISSUER` | HTTPS 証明書を自動発行する ClusterIssuer（[HTTPS 証明書の指定](#https-証明書の指定)） | **`weko-ca-issuer`**（空にすると無効化） |
 | `WEKO_TLS_SECRET` | HTTPS 証明書の Secret 名（手動で用意する場合） | 空（Issuer 指定時は `<tenant>-tls`） |
 | `WEKO_SSL_REDIRECT` | HTTP→HTTPS リダイレクトの有無 | `yes` |
+| `WEKO_SHIB` | Shibboleth IdP を立てて WEKO3 の Shibboleth ログインを有効にする（[Shibboleth ログイン](#shibboleth-ログイン任意)） | `no` |
+| `WEKO_IDP_IMAGE` | Shibboleth IdP の既成イメージ | `shib-idp-build/` からビルド |
+| `WEKO_IDP_HOST` | IdP の Ingress ホスト | `idp.localhost` |
+| `WEKO_SHIB_LOGIN_ONLY` | `/login` 自体を IdP へ飛ばす Shibboleth 専用ログインにする（副作用は SHIBBOLETH-IDP.md 参照） | `no` |
+| `WEKO_SHIB_MAP` | 学認mAP 連携（isMemberOf → ロール）の再現方法。`no`/`sso`/`aggregation` | `no` |
+| `WEKO_MAP_IMAGE` | 属性認証局の既成イメージ | `shib-idp-build/` からビルド |
+| `WEKO_MAP_HOST` | 属性認証局の Ingress ホスト | `map.localhost` |
 
 > **4種すべてを既成イメージにすると、weko ソースは一切ビルドに使われない**（手順0の clone/pull は走る）。
 >
@@ -470,7 +479,29 @@ curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: tenant1.localhost' https://l
 ```
 自己署名のままブラウザの警告を消したい場合は、`tls.crt` を OS/ブラウザの信頼済みルートに登録する。
 
+## Shibboleth ログイン（任意）
+クラスタ内に **本物の Shibboleth IdP（5.2.3）** を立て、学認相当のログイン経路を外部依存なしで試せる。
+
+```bash
+WEKO_SHIB=yes bash deploy-amd64.sh
+python3 check-shib-login.py            # ブラウザの代わりに一通りたどって確認
+```
+
+入口は `https://tenant1.localhost/weko/shib/sp/login`。デモユーザは
+`admin`/`admin123`（System Administrator）、`libadmin`/`libadmin123`、`teacher`/`teacher123`。
+
+IdP イメージは公式 tarball（純 Java）と Tomcat 10.1 から自前でビルドしている（arm64 版と同一内容）。
+SP（nginx 同梱の shibd）と IdP の信頼関係は `provision-shib.sh` がローカルファイルだけで張る。
+**HTTPS を切ると SAML が通らない**点に注意（shibd が ACS URL を http で組み立ててしまう）。
+
+`WEKO_SHIB_LOGIN_ONLY=yes` を足すと `/login` 自体も IdP に飛ぶ「Shibboleth 専用ログイン」になるが、
+ローカルログインが消えるため IdP 停止時にブラウザから入れなくなる。副作用は SHIBBOLETH-IDP.md 参照。
+
+→ **[SHIBBOLETH-IDP.md](./SHIBBOLETH-IDP.md)**
+
 ## 運用・後始末
+各コンポーネントに入るコマンドは **[ACCESS-kubectl.md](./ACCESS-kubectl.md)** にまとめてある。
+
 ```bash
 kubectl get pods -n weko3                 # 状態確認
 kubectl logs -n weko3 <pod> -c web        # weko ログ

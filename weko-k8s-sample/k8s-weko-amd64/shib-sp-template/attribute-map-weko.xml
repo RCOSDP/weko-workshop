@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WEKO 固有属性の SP 側マッピング。イメージ同梱の /etc/shibboleth/attribute-map.xml には
+  1.3.6.1.4.1.32264.2.1.x (weko*) が入っていないので、shibboleth2.xml の Chaining で追加する。
+  id はそのまま shibauthorizer の応答ヘッダ Variable-<id> になり、nginx が FastCGI パラメータへ移す。
+
+  SP-side mapping for the WEKO-specific attributes. The image's /etc/shibboleth/attribute-map.xml does
+  not contain 1.3.6.1.4.1.32264.2.1.x (weko*), so this file is chained in from shibboleth2.xml.
+  Each id becomes the shibauthorizer response header Variable-<id>, which nginx copies into a FastCGI
+  parameter.
+-->
+<Attributes xmlns="urn:mace:shibboleth:2.0:attribute-map" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <Attribute name="urn:oid:1.3.6.1.4.1.32264.2.1.1" id="wekoId"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.32264.2.1.6" id="wekoSocietyAffiliation"/>
+
+    <!-- 参考: 学認が使う他の WEKO 拡張属性 / for reference: the other WEKO extension attributes -->
+    <Attribute name="urn:oid:1.3.6.1.4.1.32264.2.1.2" id="wekoGmoIdentifier"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.32264.2.1.7" id="wekoSocietySubGroup"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.32264.2.1.8" id="wekoActiveUser"/>
+
+</Attributes>

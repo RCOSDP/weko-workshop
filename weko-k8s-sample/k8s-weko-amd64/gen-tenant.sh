@@ -44,14 +44,154 @@ WEKO_NGINX_IMAGE="${WEKO_NGINX_IMAGE:-weko3-nginx:amd64}"
 # Whether to enable the production-style weko.conf (Shibboleth/TLS/IP restrictions). Default no = use the
 # simple default.conf (uwsgi_pass) suited to kind's HTTP Ingress; yes keeps weko.conf as-is.
 WEKO_NGINX_SHIB="${WEKO_NGINX_SHIB:-no}"
+# Shibboleth ログインのデモを有効にするか (yes/no)。yes にすると:
+#   - nginx が 21-nginx-config.yaml の default-shib.conf で動く (shibauthorizer / /secure/login.py 付き)
+#   - shibd を含む supervisord がそのまま起動する
+#   - invenio.cfg に WEKO_ACCOUNTS_SHIB_* を追記してログイン画面に「学認/機関アカウント」導線が出る
+#   - 70-shibboleth-idp.yaml の IdP と provision-shib.sh の信頼関係が前提になる
+# WEKO_NGINX_SHIB (本番の weko.conf をそのまま使うモード) とは排他で、こちらが優先される。
+#
+# Whether to enable the Shibboleth login demo (yes/no). With yes:
+#   - nginx runs default-shib.conf from 21-nginx-config.yaml (shibauthorizer / /secure/login.py)
+#   - the image's supervisord starts as-is, so shibd runs
+#   - WEKO_ACCOUNTS_SHIB_* is appended to invenio.cfg, exposing the institutional login path
+#   - it assumes the IdP from 70-shibboleth-idp.yaml and the trust set up by provision-shib.sh
+# It is mutually exclusive with WEKO_NGINX_SHIB (the raw production weko.conf mode) and takes precedence.
+WEKO_SHIB="${WEKO_SHIB:-no}"
+# Shibboleth 専用ログイン (instance.cfg のコメントでいう「パターン4」) にするか。
+#   no  (既定): /login はローカルのログインフォームを出す。Shibboleth の入口は /weko/shib/sp/login。
+#   yes       : /login が meta refresh で /secure/login.py へ飛び、そのまま IdP に行く。
+#               WEKO_ACCOUNTS_SHIB_INST_LOGIN_DIRECTLY_ENABLED を True にすることで切り替わる。
+# yes の副作用 (実測): ローカルログインフォームが消えるので IdP 停止時にブラウザから入れない /
+# WEKO のログアウトでは SP セッションが消えないため /login で無言で再ログインされ別ユーザに変えられない /
+# 失敗時の flash メッセージがログイン画面ごとリダイレクトされて表示されない。詳細は SHIBBOLETH-IDP.md。
+#
+# Whether to make the login Shibboleth-only ("pattern 4" in instance.cfg's comments).
+#   no  (default): /login renders the local login form; the Shibboleth entry point is /weko/shib/sp/login.
+#   yes          : /login meta-refreshes to /secure/login.py and goes straight to the IdP.
+#                  It works by setting WEKO_ACCOUNTS_SHIB_INST_LOGIN_DIRECTLY_ENABLED to True.
+# Observed side effects of yes: the local login form disappears, so a stopped IdP locks everyone out of
+# the browser; WEKO's logout does not clear the SP session, so /login silently logs the same user back
+# in with no way to switch accounts; and failure messages are lost because the login page that renders
+# the flash is itself redirected away. See SHIBBOLETH-IDP.md.
+WEKO_SHIB_LOGIN_ONLY="${WEKO_SHIB_LOGIN_ONLY:-no}"
+# 学認mAP 連携 (isMemberOf によるグループ→ロール変換) をどう再現するか。
+#   no          … 使わない (既定)
+#   sso         … IdP が isMemberOf を SSO アサーションに載せる
+#   aggregation … 本番と同じく SP が SimpleAggregation (SAML2 AttributeQuery) で取りに行く
+# sso / aggregation のどちらでも WEKO から見た入力は同じで、weko-accounts の
+# _assign_roles_to_user() / sync_shib_gakunin_map_groups() が動く。詳細は SHIBBOLETH-IDP.md。
+#
+# How the GakuNin mAP integration (group→role mapping via isMemberOf) is reproduced.
+#   no          … not used (default)
+#   sso         … the IdP puts isMemberOf in the SSO assertion
+#   aggregation … the SP fetches it with SimpleAggregation (a SAML2 AttributeQuery), as in production
+# WEKO sees the same input either way, so weko-accounts' _assign_roles_to_user() /
+# sync_shib_gakunin_map_groups() run in both. See SHIBBOLETH-IDP.md.
+WEKO_SHIB_MAP="${WEKO_SHIB_MAP:-no}"
+WEKO_IDP_HOST="${WEKO_IDP_HOST:-idp.localhost}"
+WEKO_IDP_ENTITYID="${WEKO_IDP_ENTITYID:-https://${WEKO_IDP_HOST}/idp/shibboleth}"
+case "$WEKO_SHIB_MAP" in
+  no|sso|aggregation) ;;
+  *) echo "ERROR: WEKO_SHIB_MAP must be no|sso|aggregation (got '$WEKO_SHIB_MAP')" >&2; exit 1 ;;
+esac
+if [ "$WEKO_SHIB_MAP" != "no" ] && [ "$WEKO_SHIB" != "yes" ]; then
+  echo "NOTE: WEKO_SHIB_MAP=$WEKO_SHIB_MAP has no effect without WEKO_SHIB=yes" >&2
+fi
+if [ "$WEKO_SHIB" = "yes" ] && [ "$WEKO_NGINX_SHIB" = "yes" ]; then
+  echo "NOTE: WEKO_SHIB=yes overrides WEKO_NGINX_SHIB=yes (default-shib.conf is used, not weko.conf)" >&2
+  WEKO_NGINX_SHIB=no
+fi
 # Default (no): run nginx only. shibd/shibauthorizer/shibresponder require a real IdP (GakuNin) setup
 # and go FATAL without it, so they are not started in the default mode.
 # yes: keep the image's supervisord CMD, i.e. the production-equivalent stack including shibd.
-if [ "$WEKO_NGINX_SHIB" = "yes" ]; then
+if [ "$WEKO_NGINX_SHIB" = "yes" ] || [ "$WEKO_SHIB" = "yes" ]; then
   NGINX_COMMAND=""
 else
   NGINX_COMMAND='        command: ["/bin/sh","-c","exec nginx -g '"'"'daemon off;'"'"'"]
 '
+fi
+
+# WEKO_SHIB=yes のときだけ差し込むマニフェスト断片 / manifest fragments injected only when WEKO_SHIB=yes
+NGINX_CONF_SUBPATH="default.conf"
+SHIB_EXTRA_MOUNTS=""
+SHIB_INIT_CONTAINER=""
+SHIB_CFG_APPEND=""
+MAP_HOST_ALIAS=""
+if [ "$WEKO_SHIB" = "yes" ]; then
+  NGINX_CONF_SUBPATH="default-shib.conf"
+  SHIB_EXTRA_MOUNTS='        - { name: nginx-conf, mountPath: /etc/nginx/weko_shib_params, subPath: weko_shib_params }
+'
+  # /etc/shibboleth は共有 FS (PVC) なので、イメージ同梱の attribute-map.xml / protocols.xml /
+  # security-policy.xml などを流し込まないと shibd が起動できない。provision-shib.sh が先に置いた
+  # shibboleth2.xml / 鍵 / idp-metadata.xml を潰さないよう cp -an (既存ファイルは上書きしない) を使う。
+  # /etc/shibboleth lives on the shared FS (PVC), so shibd cannot start unless the image's
+  # attribute-map.xml / protocols.xml / security-policy.xml etc. are seeded into it. cp -an (never
+  # clobber) keeps the shibboleth2.xml / keys / idp-metadata.xml that provision-shib.sh placed first.
+  # $WEKO_NGINX_IMAGE はここで展開する。ヒアドキュメントは変数の「値」を再スキャンしないので、
+  # コンテナ側で評価させたい $(ls ...) はエスケープしてリテラルのまま残す。
+  # $WEKO_NGINX_IMAGE is expanded here. The heredoc does not re-scan a variable's value, so the
+  # $(ls ...) meant for the container's own shell is escaped to stay literal.
+  # instance.cfg は Shibboleth を無効 (WEKO_ACCOUNTS_SHIB_LOGIN_ENABLED = False) で焼き込んでおり、
+  # 環境変数では切り替えられないので、生成後の invenio.cfg に追記して上書きする。
+  # instance.cfg bakes Shibboleth in as disabled (WEKO_ACCOUNTS_SHIB_LOGIN_ENABLED = False) and it is
+  # not switchable via environment variables, so it is overridden by appending to the generated
+  # invenio.cfg.
+  #
+  # WEKO_SHIB_LOGIN_ONLY で /login の挙動が変わる唯一の設定がこれ (True = /login も IdP へ飛ばす)。
+  # This is the one setting WEKO_SHIB_LOGIN_ONLY flips (True = send /login to the IdP as well).
+  if [ "$WEKO_SHIB_LOGIN_ONLY" = "yes" ]; then SHIB_INST_DIRECT=True; else SHIB_INST_DIRECT=False; fi
+  SHIB_CFG_APPEND="          # ---- Shibboleth (WEKO_SHIB=yes, WEKO_SHIB_LOGIN_ONLY=$WEKO_SHIB_LOGIN_ONLY) ----
+          echo \"WEKO_ACCOUNTS_SHIB_LOGIN_ENABLED = True\"                             >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_SHIB_IDP_LOGIN_ENABLED = True\"                         >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_SHIB_INST_LOGIN_DIRECTLY_ENABLED = $SHIB_INST_DIRECT\"  >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_SHIB_DP_LOGIN_DIRECTLY_ENABLED = False\"                >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_SHIB_IDP_LOGIN_URL = \\\"{}secure/login.py\\\"\"          >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_SKIP_CONFIRMATION_PAGE = False\"                        >> /conf/invenio.cfg
+"
+  # 学認mAP 連携。isMemberOf の入手経路 (SSO / SimpleAggregation) が何であれ、WEKO 側の設定は同じ。
+  #
+  # WEKO_ACCOUNTS_ATTRIBUTE_MAP を上書きしているのが要点。既定の instance.cfg のマップには
+  # shib_is_member_of のエントリが無く、その場合 parse_attributes() は辞書のキー名
+  # ("SHIB_ATTR_IS_MEMBER_OF") をフォームのフィールド名として探しにいく。ところが login.py が実際に
+  # 送るのは /etc/nginx/shib_fastcgi_params 由来の "isMemberOf" なので、追加しないと値が
+  # 黙って捨てられる (このマップは起動時に _adjust_shib_admin_DB が admin_settings へ書き込む)。
+  #
+  # The GakuNin mAP integration. The WEKO-side settings are the same regardless of how isMemberOf
+  # arrived (SSO or SimpleAggregation).
+  #
+  # The key part is overriding WEKO_ACCOUNTS_ATTRIBUTE_MAP. The stock instance.cfg map has no
+  # shib_is_member_of entry, and without one parse_attributes() looks for a form field named after the
+  # dictionary key ("SHIB_ATTR_IS_MEMBER_OF") - whereas login.py actually posts "isMemberOf", the name
+  # that comes from /etc/nginx/shib_fastcgi_params. Without this the value is silently dropped.
+  # (_adjust_shib_admin_DB writes this map into admin_settings at startup.)
+  # SimpleAggregation のバックチャネルは属性認証局の TLS 証明書 (CN=map.localhost) を使うので、
+  # 繋ぎ先のホスト名もそろえる必要がある。Service の ClusterIP は 71-shibboleth-map.yaml で固定。
+  # The SimpleAggregation back-channel uses the attribute authority's TLS certificate
+  # (CN=map.localhost), so the host name connected to has to match. The Service ClusterIP is pinned in
+  # 71-shibboleth-map.yaml.
+  if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then
+    MAP_HOST_ALIAS=$(printf '\n      - { ip: "%s", hostnames: ["%s"] }' \
+                       "${WEKO_MAP_CLUSTER_IP:-10.96.0.98}" "${WEKO_MAP_HOST:-map.localhost}")
+  fi
+  if [ "$WEKO_SHIB_MAP" != "no" ]; then
+    SHIB_CFG_APPEND="${SHIB_CFG_APPEND}          # ---- GakuNin mAP (WEKO_SHIB_MAP=$WEKO_SHIB_MAP) ----
+          echo \"WEKO_ACCOUNTS_SHIB_BIND_GAKUNIN_MAP_GROUPS = True\"                   >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_IDP_ENTITY_ID = \\\"$WEKO_IDP_ENTITYID\\\"\"               >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_ATTRIBUTE_MAP = {\\\"shib_eppn\\\": \\\"eppn\\\", \\\"shib_role_authority_name\\\": \\\"HTTP_WEKOSOCIETYAFFILIATION\\\", \\\"shib_mail\\\": \\\"mail\\\", \\\"shib_user_name\\\": \\\"DisplayName\\\", \\\"shib_is_member_of\\\": \\\"isMemberOf\\\"}\" >> /conf/invenio.cfg
+"
+  fi
+  SHIB_INIT_CONTAINER="      - name: seed-shib
+        image: $WEKO_NGINX_IMAGE
+        imagePullPolicy: Never
+        command: [\"/bin/sh\",\"-c\"]
+        args:
+        - |
+          cp -an /etc/shibboleth/. /seed-shib/ 2>/dev/null || true
+          echo \"seeded shibboleth: \$(ls /seed-shib | wc -l) entries\"
+        volumeMounts:
+        - { name: shib, mountPath: /seed-shib }
+"
 fi
 
 # Seed for the application secret keys. Per-tenant keys are derived from it and the seed is persisted
@@ -264,7 +404,7 @@ spec:
       securityContext: { fsGroup: 1000 }
       # resolve our own FQDN to loopback, as in production
       hostAliases:
-      - { ip: "127.0.0.1", hostnames: ["$HOST"] }
+      - { ip: "127.0.0.1", hostnames: ["$HOST"] }$MAP_HOST_ALIAS
       initContainers:
       # Equivalent to production's init container: generate invenio.cfg from instance.cfg with jinja2
       # onto the shared FS (conf)
@@ -287,7 +427,7 @@ spec:
           jinja2 /code/scripts/instance.cfg > /conf/invenio.cfg
           # App-layer fix: disable the non-idempotent template override causing infinite recursion on /login
           echo "OAUTHCLIENT_TEMPLATE_KEY = None" >> /conf/invenio.cfg
-        envFrom:
+$SHIB_CFG_APPEND        envFrom:
         - { configMapRef: { name: $NAME-config } }
         - { secretRef: { name: $NAME-secret } }
         volumeMounts:
@@ -336,7 +476,7 @@ spec:
           echo seeded-nginx
         volumeMounts:
         - { name: nginx-etc, mountPath: /seed-nginx }
-      containers:
+$SHIB_INIT_CONTAINER      containers:
       # The weko nginx with the Shibboleth SP (supervisord runs shibd + nginx)
       - name: nginx
         image: $WEKO_NGINX_IMAGE
@@ -346,8 +486,10 @@ $NGINX_COMMAND        ports: [ { containerPort: 80 }, { containerPort: 443 } ]
         volumeMounts:
         # the whole /etc/nginx comes from the shared FS, as in production
         - { name: nginx-etc, mountPath: /etc/nginx }
-        - { name: nginx-conf, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf }
-        # As in production, the Shibboleth SP config comes from the shared FS (unused by stock nginx)
+        # WEKO_SHIB=yes のときは default-shib.conf (shibauthorizer / /secure/login.py 付き) が入る
+        # With WEKO_SHIB=yes this carries default-shib.conf (with shibauthorizer / /secure/login.py)
+        - { name: nginx-conf, mountPath: /etc/nginx/conf.d/default.conf, subPath: $NGINX_CONF_SUBPATH }
+$SHIB_EXTRA_MOUNTS        # As in production, the Shibboleth SP config comes from the shared FS (unused by stock nginx)
         - { name: shib, mountPath: /etc/shibboleth }
         # static and data are mounted into nginx as in production
         - { name: static, mountPath: /home/invenio/.virtualenvs/invenio/var/instance/static }

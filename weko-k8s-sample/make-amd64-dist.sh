@@ -49,9 +49,40 @@ CORE=(
   unwedge-amd64.sh
   tenants.txt
 )
+# Shibboleth IdP 一式(任意機能: WEKO_SHIB=yes)。
+#   shib-idp-build/ の中身は鍵を含まない(鍵はイメージビルド時に生成される)。
+#   SP 鍵は provision-shib.sh が実行時に .shib-sp/ へ作るので、ここには入らない。
+# The Shibboleth IdP set (the optional WEKO_SHIB=yes feature).
+#   Nothing under shib-idp-build/ contains a key (the keys are generated at image build time).
+#   The SP key is created at run time into .shib-sp/ by provision-shib.sh, so it is never packaged.
+SHIB=(
+  70-shibboleth-idp.yaml
+  71-shibboleth-map.yaml
+  provision-shib.sh
+  check-shib-login.py
+  list-shib-users.py
+  shib-idp-build/Dockerfile
+  shib-idp-build/idp-conf/conf/access-control.xml
+  shib-idp-build/idp-conf/conf/attribute-filter.xml
+  shib-idp-build/idp-conf/conf/attribute-resolver.xml
+  shib-idp-build/idp-conf/conf/metadata-providers.xml
+  shib-idp-build/idp-conf/conf/relying-party.xml
+  shib-idp-build/idp-conf/conf/c14n/subject-c14n.xml
+  shib-idp-build/idp-conf/conf/authn/password-authn-config.xml
+  shib-idp-build/idp-conf/conf/attributes/custom/weko.properties
+  shib-idp-build/idp-conf/conf/attributes/custom/weko-society-affiliation.properties
+  shib-idp-build/idp-conf/conf/attributes/custom/is-member-of.properties
+  shib-idp-build/idp-conf/credentials/demo.htpasswd
+  shib-idp-build/idp-conf/metadata/sp-metadata.xml
+  shib-sp-template/shibboleth2.xml
+  shib-sp-template/attribute-map-weko.xml
+  shib-sp-template/simple-aggregation.xml
+  shib-sp-template/map-metadata-provider.xml
+)
+CORE+=( "${SHIB[@]}" )
 # 言語別ドキュメント / per-language docs
-DOCS_EN=( README-amd64.en.md UNDEPLOY-amd64.en.md HTTPS-letsencrypt.en.md TARGET-deploy1-capacity8-64gb.en.md )
-DOCS_JA=( README-amd64.md    UNDEPLOY-amd64.md    HTTPS-letsencrypt.md    TARGET-deploy1-capacity8-64gb.md )
+DOCS_EN=( README-amd64.en.md UNDEPLOY-amd64.en.md HTTPS-letsencrypt.en.md TARGET-deploy1-capacity8-64gb.en.md SHIBBOLETH-IDP.en.md ACCESS-kubectl.en.md )
+DOCS_JA=( README-amd64.md    UNDEPLOY-amd64.md    HTTPS-letsencrypt.md    TARGET-deploy1-capacity8-64gb.md    SHIBBOLETH-IDP.md    ACCESS-kubectl.md )
 
 FILES=( "${CORE[@]}" )
 case "$LANG_ONLY" in

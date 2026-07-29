@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ワークショップ用の属性定義。ディレクトリサーバを立てないので、すべてログイン ID (uid) から導出する。
+  WEKO3 が必要とするのは以下の 4 つ:
+    eduPersonPrincipalName -> eppn                   (SP 側で Remote-User にもなる)
+    mail                   -> mail                   (WEKO アカウントの照合キー)
+    displayName            -> DisplayName            (WEKO の shib_user_name)
+    wekoSocietyAffiliation -> HTTP_WEKOSOCIETYAFFILIATION (WEKO のロール決定に使う)
+  加えて wekoId を HTTP_WEKOID として渡す。
+
+  Attribute definitions for the workshop. No directory server is involved, so everything is derived from
+  the login id (uid). WEKO3 needs these four:
+    eduPersonPrincipalName -> eppn                   (also becomes Remote-User on the SP side)
+    mail                   -> mail                   (the key used to match a WEKO account)
+    displayName            -> DisplayName            (WEKO's shib_user_name)
+    wekoSocietyAffiliation -> HTTP_WEKOSOCIETYAFFILIATION (drives WEKO's role assignment)
+  wekoId is additionally passed through as HTTP_WEKOID.
+-->
+<AttributeResolver
+        xmlns="urn:mace:shibboleth:2.0:resolver"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="urn:mace:shibboleth:2.0:resolver http://shibboleth.net/schema/idp/shibboleth-attribute-resolver.xsd">
+
+    <!-- 認証されたログイン ID そのもの / the authenticated login id itself -->
+    <AttributeDefinition id="uid" xsi:type="PrincipalName" />
+
+    <!-- eppn = <uid>@<idp.scope> -->
+    <AttributeDefinition id="eduPersonPrincipalName" xsi:type="Scoped" scope="%{idp.scope}">
+        <InputAttributeDefinition ref="uid" />
+    </AttributeDefinition>
+
+    <!-- mail = <uid>@<idp.scope>。tenants.txt の管理者メールと一致させると初回ログインの紐付けが楽。
+         Template の本文は Velocity のテンプレートでもあり ${...} と %{...} が混ざると読みにくいので、
+         スコープは __IDP_SCOPE__ として Dockerfile のビルド時に sed で埋めている
+         (IdP 同梱の既定設定も、ここは example.org を直書きしている)。
+         mail = <uid>@<idp.scope>. Matching it to the admin e-mail in tenants.txt makes the first-login
+         account linking straightforward. The Template body is also a Velocity template, and mixing
+         ${...} with %{...} reads badly, so the scope is substituted from __IDP_SCOPE__ by sed at image
+         build time (the IdP's own default config hardcodes example.org here as well). -->
+    <AttributeDefinition id="mail" xsi:type="Template">
+        <InputAttributeDefinition ref="uid" />
+        <Template><![CDATA[${uid}@__IDP_SCOPE__]]></Template>
+    </AttributeDefinition>
+
+    <AttributeDefinition id="displayName" xsi:type="Template">
+        <InputAttributeDefinition ref="uid" />
+        <Template><![CDATA[${uid}]]></Template>
+    </AttributeDefinition>
+
+    <AttributeDefinition id="wekoId" xsi:type="Simple">
+        <InputAttributeDefinition ref="uid" />
+    </AttributeDefinition>
+
+    <!-- WEKO のロールは wekoSocietyAffiliation の文字列で決まる (weko-accounts の
+         WEKO_ACCOUNTS_SHIB_ROLE_RELATION: 管理者/図書館員/教員/教官)。ここではログイン ID から静的に割り当てる。
+         WEKO's role is decided from the wekoSocietyAffiliation string (weko-accounts'
+         WEKO_ACCOUNTS_SHIB_ROLE_RELATION: 管理者/図書館員/教員/教官). Here it is assigned statically
+         from the login id. -->
+    <AttributeDefinition id="wekoSocietyAffiliation" xsi:type="Mapped">
+        <InputAttributeDefinition ref="uid" />
+        <DefaultValue passThru="false">教員</DefaultValue>
+        <ValueMap>
+            <ReturnValue>管理者</ReturnValue>
+            <SourceValue>admin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>図書館員</ReturnValue>
+            <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+    </AttributeDefinition>
+
+    <!-- 学認mAP のグループ所属。本番の mAP が返すのと同じ形（グループのパス）で出す。
+         weko-accounts は末尾のセグメントだけを見て
+           jc_<IdP の FQDN>_ro_<suffix> … WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT.role_mapping で変換
+                                          (radm→Repository Administrator / cadm→Community Administrator
+                                           / cont→Contributor)
+           jc_roles_sysadm              … System Administrator
+         と解釈する。FQDN 部分は WEKO_ACCOUNTS_IDP_ENTITY_ID から作られるので、IdP のホスト名を
+         変えたらここも変えること (idp.localhost → idp_localhost)。
+
+         GakuNin mAP group membership, emitted in the same shape the real mAP returns (a group path).
+         weko-accounts only looks at the last path segment and reads it as
+           jc_<IdP FQDN>_ro_<suffix> … mapped through WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT.role_mapping
+                                       (radm→Repository Administrator / cadm→Community Administrator
+                                        / cont→Contributor)
+           jc_roles_sysadm            … System Administrator
+         The FQDN part is derived from WEKO_ACCOUNTS_IDP_ENTITY_ID, so changing the IdP host name means
+         changing it here too (idp.localhost → idp_localhost). -->
+    <!-- 値の形は本番の学認mAP に合わせている:
+           __MAP_BASE__/<グループ名>          … そのグループのメンバー
+           __MAP_BASE__/<グループ名>/admin    … そのグループの管理者
+         (本番は https://cg.gakunin.jp/gr/<グループ名>)
+         weko-accounts は最後のセグメントだけを見るのでホスト部分は何でもよいが、
+         "/admin" で終わる値と "/sp/" を含む値は _assign_roles_to_user() が読み飛ばす。
+         The value shape follows the real GakuNin mAP:
+           __MAP_BASE__/<group>          … a member of that group
+           __MAP_BASE__/<group>/admin    … an administrator of that group
+         (production uses https://cg.gakunin.jp/gr/<group>)
+         weko-accounts only looks at the last segment, so the host does not matter - but values ending
+         in "/admin" and values containing "/sp/" are skipped by _assign_roles_to_user(). -->
+
+    <!-- ① ロール決定用のグループ。ユーザごとに 1 つ。
+         Group that decides the WEKO role; one per user. -->
+    <AttributeDefinition id="mapRoleGroup" xsi:type="Mapped">
+        <InputAttributeDefinition ref="uid" />
+        <DefaultValue passThru="false">__MAP_BASE__/jc___IDP_FQDN___ro_cont</DefaultValue>
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/jc_roles_sysadm</ReturnValue>
+            <SourceValue>admin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/jc___IDP_FQDN___ro_radm</ReturnValue>
+            <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+    </AttributeDefinition>
+
+    <!-- ② 研究プロジェクトなどの一般グループ。同じユーザに複数マッチさせてよい
+         (Mapped は一致した ValueMap を全部返す)。SourceValue は正規表現。
+         Ordinary groups such as research projects. Several ValueMaps may match the same user - Mapped
+         returns every match. SourceValue is a regular expression. -->
+    <AttributeDefinition id="mapOrgGroup" xsi:type="Mapped">
+        <InputAttributeDefinition ref="uid" />
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/research-project-a</ReturnValue>
+            <SourceValue>libadmin|teacher</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/lib-staff</ReturnValue>
+            <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+    </AttributeDefinition>
+
+    <!-- ③ グループの管理者であることを表す "/admin" 付きの値。mAP はメンバーとしての値と
+         セットで返す。weko-accounts はこれを読み飛ばすので、ロールは増えない
+         (管理者かどうかを WEKO 側のロールには反映しない設計)。
+         The "/admin" flavour that marks a group administrator; mAP returns it alongside the plain
+         membership value. weko-accounts skips it, so it grants no extra role - being a group admin is
+         deliberately not reflected in the WEKO roles. -->
+    <AttributeDefinition id="mapOrgAdminGroup" xsi:type="Mapped">
+        <InputAttributeDefinition ref="uid" />
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/research-project-a/admin</ReturnValue>
+            <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+    </AttributeDefinition>
+
+    <!-- ④ 全員が入る共通グループ。Static データコネクタに <Value> を並べれば増やせる。
+         A common group everyone belongs to; add more <Value> entries to the Static connector. -->
+    <AttributeDefinition id="mapCommonGroup" xsi:type="Simple">
+        <InputDataConnector ref="staticAttributes" attributeNames="commonGroup" />
+    </AttributeDefinition>
+
+    <!-- ①〜④ を 1 つの isMemberOf にまとめる。Simple 属性定義は入力を全部連結するので、
+         種類ごとに分けて定義したものを束ねられる。値が無い入力は単に無視される。
+         SP は多値属性を ";" 区切りで 1 つの環境変数に入れ、weko-accounts の ShibUser.__init__ が
+         ";" で split してリストに戻す。
+         Merge (1)-(4) into a single isMemberOf. A Simple definition concatenates all its inputs, so the
+         categories can be defined separately and bundled here; inputs with no value are simply skipped.
+         The SP joins a multi-valued attribute into one environment variable separated by ";", and
+         weko-accounts' ShibUser.__init__ splits it back on ";". -->
+    <AttributeDefinition id="isMemberOf" xsi:type="Simple">
+        <InputAttributeDefinition ref="mapRoleGroup" />
+        <InputAttributeDefinition ref="mapOrgGroup" />
+        <InputAttributeDefinition ref="mapOrgAdminGroup" />
+        <InputAttributeDefinition ref="mapCommonGroup" />
+    </AttributeDefinition>
+
+    <!-- 参考用の標準属性 / standard attribute, for reference -->
+    <AttributeDefinition id="eduPersonScopedAffiliation" xsi:type="Scoped" scope="%{idp.scope}">
+        <InputDataConnector ref="staticAttributes" attributeNames="affiliation" />
+    </AttributeDefinition>
+
+    <DataConnector id="staticAttributes" xsi:type="Static" exportAttributes="schacHomeOrganization commonGroup">
+        <Attribute id="schacHomeOrganization">
+            <Value>%{idp.scope}</Value>
+        </Attribute>
+        <Attribute id="affiliation">
+            <Value>member</Value>
+        </Attribute>
+        <Attribute id="commonGroup">
+            <Value>__MAP_BASE__/all_users</Value>
+        </Attribute>
+    </DataConnector>
+
+</AttributeResolver>

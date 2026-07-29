@@ -1,0 +1,12 @@
+<!--
+  属性認証局 (学認mAP 相当) のメタデータ。本番の手順でいう
+      <MetadataProvider type="XML" path="/etc/shibboleth/metadata/sptestcgidp-metadata.xml"/>
+  に相当する。provision-shib.sh が属性認証局のイメージからメタデータを取り出し、SOAP の
+  AttributeService を追記したうえで /etc/shibboleth/map-metadata.xml に配置する。
+
+  The metadata of the attribute authority (the GakuNin mAP equivalent). It corresponds to
+      <MetadataProvider type="XML" path="/etc/shibboleth/metadata/sptestcgidp-metadata.xml"/>
+  in the production procedure. provision-shib.sh extracts the metadata from the attribute authority's
+  image, appends the SOAP AttributeService, and places it at /etc/shibboleth/map-metadata.xml.
+-->
+        <MetadataProvider type="XML" validate="true" path="map-metadata.xml"/>

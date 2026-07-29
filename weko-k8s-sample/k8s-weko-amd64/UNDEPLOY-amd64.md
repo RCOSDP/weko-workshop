@@ -86,6 +86,18 @@ kubectl exec -n weko3 $PGM -- psql -U postgres -c "DROP DATABASE tenant1;"
 > ES 側のインデックスは DB とは別に残る。再デプロイ時に `weko-init.sh` が `index destroy` してから
 > 作り直すため、手動操作は不要。
 
+## 6.5) Shibboleth IdP（`WEKO_SHIB=yes` でデプロイした場合）
+テナントより先に消してよい。SP 側の設定は NFS の `/export/fs-shibboleth/<tenant>` にあるので、
+次の「6) テナント展開」で一緒に消える。
+
+```bash
+kubectl delete -f 70-shibboleth-idp.yaml --ignore-not-found
+kubectl delete -f 71-shibboleth-map.yaml --ignore-not-found
+kubectl delete configmap weko-idp-sp-metadata -n weko3 --ignore-not-found
+```
+> ローカルの `.shib-sp/`（SP 鍵と IdP メタデータ）は残しておくと次回デプロイで信頼関係が
+> そのまま復元される。作り直したい場合だけ削除する。
+
 ## 6) テナント展開
 Deployment/Service/Ingress/PVC と、**cluster-scoped の PV**、NFS 上の実体を消す。
 
@@ -142,6 +154,7 @@ for f in postgresteam.crd operatorconfiguration.crd postgresql.crd api-service p
 done
 kubectl delete -f https://github.com/rabbitmq/cluster-operator/releases/latest/download/cluster-operator.yml --ignore-not-found
 kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml --ignore-not-found
+kubectl delete -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml --ignore-not-found
 ```
 
 ## 2) イメージ

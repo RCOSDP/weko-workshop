@@ -27,6 +27,7 @@ open `https://tenant1.localhost/`
 | [Building a specific version](#building-a-specific-version-tag) | Pin a release with `WEKO_TAG` |
 | [Using different images](#using-different-weko--pgpool-images) | Prebuilt images; the full environment-variable list is here |
 | [HTTPS certificates](#https-certificates) | Automatic issuance by default; bring your own or use Let's Encrypt |
+| [Shibboleth login](#shibboleth-login-optional) | `WEKO_SHIB=yes` stands up an in-cluster IdP to exercise the GakuNin-equivalent path |
 | [Day-to-day operation and teardown](#day-to-day-operation-and-teardown) | Delete with **`teardown-amd64.sh`**; partial rollback in [UNDEPLOY-amd64.en.md](./UNDEPLOY-amd64.en.md) |
 | [How to change the size](#how-to-change-the-size) / [If something goes wrong](#if-something-goes-wrong) | Scaling up or down, and fixing failures |
 
@@ -61,7 +62,8 @@ The deploy reads the files below. Both `deploy-amd64.sh` and the kind config liv
 | Cluster | `kind-weko-cluster.yaml` (this directory; 3 nodes: control-plane + WEKO + DATA) |
 | Backends (YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-minio.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
 | HTTPS (optional) | `61-tls-ca.yaml` (the cert-manager root CA; deployed by the default `WEKO_TLS_ISSUER=weko-ca-issuer`)<br>`HTTPS-letsencrypt.en.md` (switching to Let's Encrypt on a public domain) |
-
+| Shibboleth (optional) | `70-shibboleth-idp.yaml` `71-shibboleth-map.yaml` (a test IdP and the mAP-equivalent attribute authority)<br>`shib-idp-build/` (the IdP image: official tarball + Tomcat 10.1)<br>`shib-sp-template/` `provision-shib.sh` `check-shib-login.py` `list-shib-users.py`<br>`SHIBBOLETH-IDP.en.md` (how to enable it with `WEKO_SHIB=yes`) |
+| Getting in | `ACCESS-kubectl.en.md` (kubectl commands for PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / the IdP) |
 | Tenant tooling | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
 | Configuration | `tenants.txt` (tenant definitions; edit the administrator address and password here) |
 
@@ -341,6 +343,13 @@ KIND_CONFIG=kind-weko-cluster.yaml \
 | `WEKO_TLS_ISSUER` | ClusterIssuer that auto-issues the HTTPS certificates ([HTTPS certificates](#https-certificates)) | **`weko-ca-issuer`** (empty disables it) |
 | `WEKO_TLS_SECRET` | TLS Secret name (when you provide the certificate yourself) | empty (`<tenant>-tls` when an issuer is set) |
 | `WEKO_SSL_REDIRECT` | Whether to redirect HTTP to HTTPS | `yes` |
+| `WEKO_SHIB` | Deploy the Shibboleth IdP and enable the WEKO3 Shibboleth login ([Shibboleth login](#shibboleth-login-optional)) | `no` |
+| `WEKO_IDP_IMAGE` | Prebuilt Shibboleth IdP image | build from `shib-idp-build/` |
+| `WEKO_IDP_HOST` | Ingress host of the IdP | `idp.localhost` |
+| `WEKO_SHIB_LOGIN_ONLY` | Make `/login` itself go to the IdP (Shibboleth-only login); see SHIBBOLETH-IDP.en.md for the side effects | `no` |
+| `WEKO_SHIB_MAP` | How the GakuNin mAP integration (isMemberOf → roles) is reproduced: `no`/`sso`/`aggregation` | `no` |
+| `WEKO_MAP_IMAGE` | Prebuilt attribute authority image | build from `shib-idp-build/` |
+| `WEKO_MAP_HOST` | Ingress host of the attribute authority | `map.localhost` |
 
 > **With all four images prebuilt the weko source is never used for a build** (step 0 still clones/pulls).
 >
@@ -483,7 +492,32 @@ echo | openssl s_client -connect localhost:443 -servername tenant1.localhost 2>/
 curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: tenant1.localhost' https://localhost/
 ```
 
+## Shibboleth login (optional)
+Stand up a **real Shibboleth IdP (5.2.3)** inside the cluster and exercise the GakuNin-equivalent login
+path with no external dependencies.
+
+```bash
+WEKO_SHIB=yes bash deploy-amd64.sh
+python3 check-shib-login.py            # walks the whole flow the way a browser would
+```
+
+The entry point is `https://tenant1.localhost/weko/shib/sp/login`. The demo users are
+`admin`/`admin123` (System Administrator), `libadmin`/`libadmin123` and `teacher`/`teacher123`.
+
+The IdP image is built here from the official tarball (pure Java) and Tomcat 10.1 - identical to the
+arm64 variant. `provision-shib.sh` establishes the trust between the SP (the shibd bundled in nginx)
+and the IdP using local files only. Note that **turning HTTPS off breaks SAML** (shibd would build the
+ACS URL over http).
+
+Adding `WEKO_SHIB_LOGIN_ONLY=yes` makes `/login` itself go to the IdP (a Shibboleth-only login), but the
+local login form disappears, so a stopped IdP locks you out of the browser. See SHIBBOLETH-IDP.en.md for
+the side effects.
+
+→ **[SHIBBOLETH-IDP.en.md](./SHIBBOLETH-IDP.en.md)**
+
 ## Day-to-day operation and teardown
+Commands for getting into each component are collected in **[ACCESS-kubectl.en.md](./ACCESS-kubectl.en.md)**.
+
 ```bash
 kubectl get pods -n weko3                 # check the state
 kubectl logs -n weko3 <pod> -c web        # weko logs

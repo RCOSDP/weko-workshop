@@ -362,7 +362,12 @@ bash set-s3-location.sh                              # makes the weko-<tenant> b
 
 ### What is still different from production (things you could add next)
 - PostgreSQL HA (postgres-operator/Spilo + pgpool) is added in the current full setup (Appendix D / `deploy-*.sh`). pgbouncer is still not used.
-- F5 NGINX App Protect (WAF), Shibboleth / GakuNin login, fluentd log collection, and Prometheus monitoring are not deployed.
+- Shibboleth authentication **can be enabled optionally** (`WEKO_SHIB=yes bash deploy-*.sh`). It stands up
+  a real Shibboleth IdP 5 inside the cluster, and the GakuNin-equivalent path through the SP (shibd) and
+  `/secure/login.py` works end to end. The IdP is a single fixed instance, the metadata is a local file
+  and authentication is htpasswd, so it still differs from the GakuNin federation (DS/WAYF, signed
+  metadata, LDAP). → `k8s-weko/SHIBBOLETH-IDP.en.md`
+- F5 NGINX App Protect (WAF), fluentd log collection, and Prometheus monitoring are not deployed.
 - Per-tenant TLS certificates on the Ingress (now it uses the Ingress default self-signed certificate).
 
 ---
