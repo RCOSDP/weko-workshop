@@ -1,0 +1,80 @@
+# COAR Notify の inbox / the COAR Notify inbox.
+#
+# WEKO3 の weko-notifications は COAR Notify の「送信」と「閲覧」しか実装しておらず、inbox 本体は
+# 外部サービスである。既定値が
+#   WEKO_NOTIFICATIONS_INBOX_ADDRESS  = "http://inbox:8080"
+#   WEKO_NOTIFICATIONS_INBOX_ENDPOINT = "/inbox"
+# なので、Service を "inbox" という名前で weko3 名前空間に置けば、WEKO 側は無設定のまま届く。
+#
+# weko-notifications implements only the sending and reading sides of COAR Notify; the inbox itself
+# is an external service. Its defaults are
+#   WEKO_NOTIFICATIONS_INBOX_ADDRESS  = "http://inbox:8080"
+#   WEKO_NOTIFICATIONS_INBOX_ENDPOINT = "/inbox"
+# so naming the Service "inbox" in the weko3 namespace makes it reachable with no WEKO-side config.
+#
+# 中身は coar-notify-inbox/inbox.py。ConfigMap coar-notify-inbox-src は deploy スクリプトが
+#   kubectl create configmap coar-notify-inbox-src --from-file=inbox.py=coar-notify-inbox/inbox.py
+# で作るので、このファイルには含めていない (同じコードを 2 か所に持たないため)。
+#
+# The code lives in coar-notify-inbox/inbox.py. The ConfigMap coar-notify-inbox-src is created by the
+# deploy script with
+#   kubectl create configmap coar-notify-inbox-src --from-file=inbox.py=coar-notify-inbox/inbox.py
+# and is deliberately not inlined here, to avoid keeping the same code in two places.
+#
+# 検証用なので通知はメモリ上にしか持たない (Pod が再起動すると消える)。本番の inbox は
+# 永続化・認証・署名検証を備えた別実装になる。
+# This is for verification only, so notifications live in memory and are lost when the Pod restarts.
+# A production inbox is a different implementation with persistence, authentication and signature
+# verification.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coar-notify-inbox
+  namespace: weko3
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coar-notify-inbox } }
+  strategy: { type: Recreate }
+  template:
+    metadata: { labels: { app: coar-notify-inbox } }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: inbox
+        image: python:3.12-alpine
+        imagePullPolicy: Never
+        command: ["python", "-u", "/app/inbox.py"]
+        env:
+        # 通知 IRI の組み立てに使う。WEKO の WEKO_NOTIFICATIONS_INBOX_ADDRESS + _ENDPOINT と
+        # 完全に一致させること (views.py が文字列置換で外部 URL に直すため)。
+        # Used to build the notification IRIs. It must match WEKO's WEKO_NOTIFICATIONS_INBOX_ADDRESS
+        # + _ENDPOINT exactly, because views.py rewrites them to the external URL by string replace.
+        - { name: INBOX_BASE_URL, value: "http://inbox:8080/inbox" }
+        ports: [ { containerPort: 8080 } ]
+        resources: { requests: { memory: "64Mi", cpu: "10m" }, limits: { memory: "256Mi", cpu: "500m" } }
+        volumeMounts:
+        - { name: src, mountPath: /app }
+        readinessProbe:
+          httpGet: { path: /health, port: 8080 }
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /health, port: 8080 }
+          periodSeconds: 30
+          failureThreshold: 5
+      volumes:
+      - name: src
+        configMap:
+          name: coar-notify-inbox-src
+---
+# Service 名が "inbox" であることが要件。weko-notifications の既定値がこのホスト名を指している。
+# The Service must be named "inbox": that is the host name weko-notifications defaults to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: inbox
+  namespace: weko3
+spec:
+  selector: { app: coar-notify-inbox }
+  ports:
+  - { name: http, port: 8080, targetPort: 8080 }

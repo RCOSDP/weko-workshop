@@ -57,6 +57,7 @@ arm64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | バックエンド(YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-minio.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
 | HTTPS(任意) | `61-tls-ca.yaml`（cert-manager のルートCA。既定 `WEKO_TLS_ISSUER=weko-ca-issuer` で展開）<br>`HTTPS-letsencrypt.md`（公開ドメインで Let's Encrypt に切り替える手順） |
 | Shibboleth(任意) | `70-shibboleth-idp.yaml` `71-shibboleth-map.yaml`（クラスタ内テスト IdP と学認mAP 相当の属性認証局）<br>`shib-idp-build/`（IdP イメージ。公式 tarball + Tomcat 10.1）<br>`shib-sp-template/` `provision-shib.sh` `check-shib-login.py` `list-shib-users.py`<br>`SHIBBOLETH-IDP.md`（`WEKO_SHIB=yes` で有効化する手順） |
+| COAR Notify(任意) | `72-coar-notify-inbox.yaml`（LDN の inbox）<br>`coar-notify-inbox/inbox.py`（inbox 本体。Python 標準ライブラリのみ）<br>`COAR-NOTIFY.md`（`WEKO_COAR_NOTIFY=yes` で有効化する手順） |
 | pgpool イメージビルド | `pgpool-build/`（`Dockerfile.arm64` + `entrypoint.sh` + `start.sh`。`weko-pgpool:4.2.2-arm64` を生成） |
 | アクセス方法 | `ACCESS-kubectl.md`（kubectl で PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / IdP に入るコマンド集） |
 | テナント関連 | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
@@ -331,6 +332,7 @@ KIND_CONFIG=../kind-weko-cluster.yaml \
 | `WEKO_IDP_IMAGE` | Shibboleth IdP の既成イメージ | `shib-idp-build/` からビルド |
 | `WEKO_IDP_HOST` | IdP の Ingress ホスト | `idp.localhost` |
 | `WEKO_SHIB_LOGIN_ONLY` | `/login` 自体を IdP へ飛ばす Shibboleth 専用ログインにする（副作用は SHIBBOLETH-IDP.md 参照） | `no` |
+| `WEKO_COAR_NOTIFY` | COAR Notify の inbox も立てる（詳細は COAR-NOTIFY.md 参照） | `no` |
 | `WEKO_SHIB_MAP` | 学認mAP 連携（isMemberOf → ロール）の再現方法。`no`/`sso`/`aggregation` | `no` |
 | `WEKO_MAP_IMAGE` | 属性認証局の既成イメージ | `shib-idp-build/` からビルド |
 | `WEKO_MAP_HOST` | 属性認証局の Ingress ホスト | `map.localhost` |

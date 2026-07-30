@@ -194,6 +194,30 @@ if [ "$WEKO_SHIB" = "yes" ]; then
 "
 fi
 
+# COAR Notify (LDN)。yes のとき、通知の宛先を invenio.cfg に明示する。
+# weko-notifications の既定値がそもそも http://inbox:8080 + /inbox なので、72-coar-notify-inbox.yaml の
+# Service 名 (inbox) と一致していれば無設定でも届く。それでも書き出しているのは、
+#   - どこへ送っているかが invenio.cfg を見れば分かるようにするため
+#   - WEKO_INBOX_ADDRESS で別の inbox (外部サービス) に差し替えられるようにするため
+# の 2 点による。
+#
+# COAR Notify (LDN). With yes, the notification target is written into invenio.cfg explicitly.
+# weko-notifications already defaults to http://inbox:8080 + /inbox, so as long as that matches the
+# Service name (inbox) in 72-coar-notify-inbox.yaml it works with no configuration at all. It is still
+# written out so that
+#   - invenio.cfg alone shows where notifications are being sent, and
+#   - WEKO_INBOX_ADDRESS can point at a different (external) inbox.
+WEKO_COAR_NOTIFY="${WEKO_COAR_NOTIFY:-no}"
+WEKO_INBOX_ADDRESS="${WEKO_INBOX_ADDRESS:-http://inbox:8080}"
+COAR_CFG_APPEND=""
+if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
+  COAR_CFG_APPEND="          # ---- COAR Notify (WEKO_COAR_NOTIFY=yes) ----
+          echo \"WEKO_NOTIFICATIONS = True\"                                           >> /conf/invenio.cfg
+          echo \"WEKO_NOTIFICATIONS_INBOX_ADDRESS = \\\"$WEKO_INBOX_ADDRESS\\\"\"        >> /conf/invenio.cfg
+          echo \"WEKO_NOTIFICATIONS_INBOX_ENDPOINT = \\\"/inbox\\\"\"                    >> /conf/invenio.cfg
+"
+fi
+
 # Seed for the application secret keys. Per-tenant keys are derived from it and the seed is persisted
 # in .secret-seed so regeneration yields the same keys. It can also be given via WEKO_SECRET_SEED.
 SEED_FILE="${WEKO_SECRET_SEED_FILE:-.secret-seed}"
@@ -427,7 +451,7 @@ spec:
           jinja2 /code/scripts/instance.cfg > /conf/invenio.cfg
           # App-layer fix: disable the non-idempotent template override causing infinite recursion on /login
           echo "OAUTHCLIENT_TEMPLATE_KEY = None" >> /conf/invenio.cfg
-$SHIB_CFG_APPEND        envFrom:
+$SHIB_CFG_APPEND$COAR_CFG_APPEND        envFrom:
         - { configMapRef: { name: $NAME-config } }
         - { secretRef: { name: $NAME-secret } }
         volumeMounts:

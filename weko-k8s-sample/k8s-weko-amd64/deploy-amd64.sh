@@ -34,6 +34,9 @@
 #                     is reproduced (default no). See SHIBBOLETH-IDP.md.
 #   WEKO_MAP_IMAGE    same as WEKO_IMAGE, for the mAP-equivalent attribute authority image
 #   WEKO_MAP_HOST     Ingress host of the attribute authority (default map.localhost)
+#   WEKO_COAR_NOTIFY  yes = also deploy the COAR Notify (LDN) inbox that weko-notifications posts to
+#                     (default no). See COAR-NOTIFY.md.
+#   WEKO_INBOX_IMAGE  base image for the inbox                   (default python:3.12-alpine)
 set -uo pipefail
 cd "$(dirname "$0")"
 WEKO_SRC="${WEKO_SRC:-$HOME/weko}"
@@ -76,6 +79,25 @@ export WEKO_SHIB_MAP="${WEKO_SHIB_MAP:-no}"
 # The attribute authority (GakuNin mAP equivalent); only deployed with WEKO_SHIB_MAP=aggregation.
 export WEKO_MAP_HOST="${WEKO_MAP_HOST:-map.localhost}"
 export WEKO_MAP_IMAGE="${WEKO_MAP_IMAGE:-weko3-shib-map:$IMG_TAG}"
+# COAR Notify のデモ。yes にすると LDN の inbox (72-coar-notify-inbox.yaml) を立てる。
+# WEKO3 の weko-notifications は「送信」と「閲覧」しか持たず inbox 本体は外部サービスなので、
+# 既定の宛先 http://inbox:8080/inbox に一致する Service をクラスタ内に用意する、というだけ。
+#
+# no (既定) のときの挙動は従来どおり: 通知の送信は試みられるが接続に失敗し、weko-workflow の
+# _notify_about_activity_wiht_case が Exception を握ってログに残すだけでワークフローは通る。
+#
+# The COAR Notify demo. With yes the LDN inbox (72-coar-notify-inbox.yaml) is deployed.
+# weko-notifications only implements the sending and reading sides - the inbox itself is an external
+# service - so this simply provides a Service inside the cluster matching its default target
+# http://inbox:8080/inbox.
+#
+# With no (the default) nothing changes from before: sending is attempted, the connection fails, and
+# weko-workflow's _notify_about_activity_wiht_case swallows the exception and logs it, so the
+# workflow itself still completes.
+export WEKO_COAR_NOTIFY="${WEKO_COAR_NOTIFY:-no}"
+# inbox のベースイメージ。inbox.py は Python 標準ライブラリだけで動くので、素の python イメージでよい。
+# The inbox base image. inbox.py only uses the Python standard library, so a stock python image is enough.
+export WEKO_INBOX_IMAGE="${WEKO_INBOX_IMAGE:-python:3.12-alpine}"
 KIND_CONFIG="${KIND_CONFIG:-kind-weko-cluster.yaml}"
 # kind cluster name (default weko3; override it e.g. for a parallel verification run)
 CLUSTER_NAME="${CLUSTER_NAME:-weko3}"
@@ -254,6 +276,13 @@ if [ "$WEKO_SHIB" = "yes" ]; then
     kind load docker-image "$WEKO_MAP_IMAGE" --name "$CLUSTER_NAME"
   fi
 fi
+# COAR Notify の inbox はビルド不要 (素の python イメージ + ConfigMap の inbox.py)。
+# The COAR Notify inbox needs no build: a stock python image plus inbox.py from a ConfigMap.
+if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
+  echo "-- pulling WEKO_INBOX_IMAGE=$WEKO_INBOX_IMAGE --"
+  docker pull "$WEKO_INBOX_IMAGE"
+  kind load docker-image "$WEKO_INBOX_IMAGE" --name "$CLUSTER_NAME"
+fi
 
 echo "########## 3) operators (cert-manager / rabbitmq / postgres) ##########"
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
@@ -376,6 +405,18 @@ if [ "$WEKO_SHIB" = "yes" ]; then
         -e "s#map\.localhost#$WEKO_MAP_HOST#g" 71-shibboleth-map.yaml | kubectl apply -f -
   fi
 fi
+# COAR Notify の inbox。inbox.py は ConfigMap 経由で渡す (同じコードを manifest 側に複製しないため)。
+# テナントの Pod より先に立てておくと、初回のワークフロー操作から通知が届く。
+# The COAR Notify inbox. inbox.py is handed over through a ConfigMap so the same code is not duplicated
+# into the manifest. Bringing it up before the tenant Pods means notifications land from the very first
+# workflow action.
+if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
+  kubectl create configmap coar-notify-inbox-src -n weko3 \
+    --from-file=inbox.py=coar-notify-inbox/inbox.py --dry-run=client -o yaml | kubectl apply -f - \
+    || { echo "ERROR: failed to apply the ConfigMap coar-notify-inbox-src"; exit 1; }
+  sed -e "s#image: python:3.12-alpine#image: $WEKO_INBOX_IMAGE#" \
+      72-coar-notify-inbox.yaml | kubectl apply -f -
+fi
 # Applying the whole generated/ directory also applies stale manifests of tenants that were removed
 # from tenants.txt, creating orphan tenants that are never provisioned or initialized (and whose PVs
 # are Retain, so they linger). Apply only what tenants.txt lists, and just warn about leftovers.
@@ -474,6 +515,19 @@ if [ "$WEKO_SHIB" = "yes" ]; then
             "https://localhost/idp/status" --max-time 60)
   echo "  $WEKO_IDP_HOST/idp/status -> https:$ICODE"
 fi
+if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
+  echo "-- COAR Notify inbox --"
+  kubectl -n weko3 rollout status deploy/coar-notify-inbox --timeout=300s \
+    || echo "WARNING: the COAR Notify inbox did not become ready"
+  # テナントの nginx が /inbox を中継できているかまで見る。weko-notifications が返す通知 IRI は
+  # この URL なので、ここが 200 でないと通知一覧のリンクが開けない。
+  # Check that the tenant's nginx really relays /inbox: the notification IRIs weko-notifications hands
+  # out are these URLs, so anything other than 200 here means the links in the list cannot be opened.
+  NHOST=$(grep -vE '^\s*#|^\s*$' tenants.txt | awk 'NR==1{print $3}')
+  NCODE=$(curl -sk -o /dev/null -w '%{http_code}' -H 'accept: application/ld+json' \
+            -H "Host: $NHOST" "https://localhost/inbox" --max-time 60)
+  echo "  https://$NHOST/inbox -> $NCODE (200 = nginx が inbox に到達 / nginx reaches the inbox)"
+fi
 if [ -n "$WEKO_TLS_ISSUER" ]; then
   echo "-- certificate ($WEKO_TLS_ISSUER) --"
   echo | openssl s_client -connect localhost:443 \
@@ -488,4 +542,8 @@ if [ "$WEKO_SHIB" = "yes" ]; then
     echo "shibboleth login: https://<tenant>.localhost/weko/shib/sp/login"
   fi
   echo "  IdP demo users: admin/admin123  libadmin/libadmin123  teacher/teacher123 (see SHIBBOLETH-IDP.md)"
+fi
+if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
+  echo "coar notify inbox: https://<tenant>.localhost/inbox (browser: 受信一覧 / the received list)"
+  echo "  kubectl -n weko3 logs -f deploy/coar-notify-inbox   # 受信した通知がそのまま出る / dumps each notification"
 fi

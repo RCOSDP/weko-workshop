@@ -26,6 +26,37 @@ data:
             add_header Content-Type text/plain;
         }
 
+        # COAR Notify の inbox。weko-notifications は通知 IRI を
+        # THEME_SITEURL + "/inbox/..." (= inbox_url(_external=True)) として返すので、
+        # その URL を実際に配信するには、テナントの /inbox をクラスタ内の inbox Service に
+        # 中継する必要がある。72-coar-notify-inbox.yaml をデプロイしていないときは
+        # 502 になるだけで、他の経路には影響しない。
+        #
+        # The COAR Notify inbox. weko-notifications hands out notification IRIs as
+        # THEME_SITEURL + "/inbox/..." (that is, inbox_url(_external=True)), so serving those URLs
+        # for real means relaying the tenant's /inbox to the in-cluster inbox Service. Without
+        # 72-coar-notify-inbox.yaml deployed this simply answers 502 and affects nothing else.
+        location /inbox {
+            # proxy_pass にホスト名を直書きすると nginx は起動時に名前解決を試み、inbox Service が
+            # 無い構成では nginx ごと起動に失敗する。変数経由にするとリクエスト時解決になるので、
+            # 既定 (inbox なし) の構成でも従来どおり起動する。
+            # Spelling the host name directly into proxy_pass makes nginx resolve it at startup, so
+            # nginx itself would fail to start when the inbox Service is absent. Going through a
+            # variable defers resolution to request time, so the default (no inbox) setup still
+            # starts exactly as before.
+            # nginx の resolver は /etc/resolv.conf の search サフィックスを使わないので、
+            # WEKO 側の設定 (http://inbox:8080) と違い FQDN で書く必要がある。
+            # 短縮名のままだと "inbox could not be resolved (2: Server failure)" で 502 になる。
+            # nginx's resolver does not apply the search suffixes from /etc/resolv.conf, so unlike
+            # WEKO's own setting (http://inbox:8080) this has to be the FQDN. The short name gives
+            # "inbox could not be resolved (2: Server failure)" and a 502.
+            resolver 10.96.0.10 valid=30s ipv6=off;
+            set $coar_inbox http://inbox.weko3.svc.cluster.local:8080;
+            proxy_pass $coar_inbox$request_uri;
+            proxy_set_header Host $host;
+            proxy_connect_timeout 5s;
+        }
+
         location / {
             include uwsgi_params;
             uwsgi_pass 127.0.0.1:5000;
@@ -134,6 +165,26 @@ data:
         location = /ping {
             return 200 'ok';
             add_header Content-Type text/plain;
+        }
+
+        # COAR Notify の inbox (default.conf と同じ。理由はそちらのコメントを参照)。
+        # Shibboleth を通す必要はない: inbox は機械同士の LDN エンドポイントであり、
+        # WEKO 自身がサーバ側から取りに行く。
+        # The COAR Notify inbox (identical to default.conf; see the comment there for why).
+        # It deliberately does not go through Shibboleth: the inbox is a machine-to-machine LDN
+        # endpoint that WEKO itself fetches server-side.
+        location /inbox {
+            # nginx の resolver は /etc/resolv.conf の search サフィックスを使わないので、
+            # WEKO 側の設定 (http://inbox:8080) と違い FQDN で書く必要がある。
+            # 短縮名のままだと "inbox could not be resolved (2: Server failure)" で 502 になる。
+            # nginx's resolver does not apply the search suffixes from /etc/resolv.conf, so unlike
+            # WEKO's own setting (http://inbox:8080) this has to be the FQDN. The short name gives
+            # "inbox could not be resolved (2: Server failure)" and a 502.
+            resolver 10.96.0.10 valid=30s ipv6=off;
+            set $coar_inbox http://inbox.weko3.svc.cluster.local:8080;
+            proxy_pass $coar_inbox$request_uri;
+            proxy_set_header Host $host;
+            proxy_connect_timeout 5s;
         }
 
         # shibd の FastCGI authorizer。shib_request から内部的に呼ばれる。

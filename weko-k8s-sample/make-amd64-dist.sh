@@ -80,9 +80,18 @@ SHIB=(
   shib-sp-template/map-metadata-provider.xml
 )
 CORE+=( "${SHIB[@]}" )
+# COAR Notify の inbox 一式(任意機能: WEKO_COAR_NOTIFY=yes)。
+#   inbox.py は Python 標準ライブラリのみで、鍵も資格情報も持たない。
+# The COAR Notify inbox set (the optional WEKO_COAR_NOTIFY=yes feature).
+#   inbox.py uses only the Python standard library and carries no keys or credentials.
+COAR=(
+  72-coar-notify-inbox.yaml
+  coar-notify-inbox/inbox.py
+)
+CORE+=( "${COAR[@]}" )
 # 言語別ドキュメント / per-language docs
-DOCS_EN=( README-amd64.en.md UNDEPLOY-amd64.en.md HTTPS-letsencrypt.en.md TARGET-deploy1-capacity8-64gb.en.md SHIBBOLETH-IDP.en.md ACCESS-kubectl.en.md )
-DOCS_JA=( README-amd64.md    UNDEPLOY-amd64.md    HTTPS-letsencrypt.md    TARGET-deploy1-capacity8-64gb.md    SHIBBOLETH-IDP.md    ACCESS-kubectl.md )
+DOCS_EN=( README-amd64.en.md UNDEPLOY-amd64.en.md HTTPS-letsencrypt.en.md TARGET-deploy1-capacity8-64gb.en.md SHIBBOLETH-IDP.en.md ACCESS-kubectl.en.md COAR-NOTIFY.en.md )
+DOCS_JA=( README-amd64.md    UNDEPLOY-amd64.md    HTTPS-letsencrypt.md    TARGET-deploy1-capacity8-64gb.md    SHIBBOLETH-IDP.md    ACCESS-kubectl.md    COAR-NOTIFY.md )
 
 FILES=( "${CORE[@]}" )
 case "$LANG_ONLY" in

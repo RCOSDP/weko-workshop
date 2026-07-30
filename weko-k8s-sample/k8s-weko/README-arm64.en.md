@@ -65,6 +65,7 @@ level up.
 | Backends (YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-minio.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
 | HTTPS (optional) | `61-tls-ca.yaml` (the cert-manager root CA; deployed by the default `WEKO_TLS_ISSUER=weko-ca-issuer`)<br>`HTTPS-letsencrypt.en.md` (switching to Let's Encrypt on a public domain) |
 | Shibboleth (optional) | `70-shibboleth-idp.yaml` `71-shibboleth-map.yaml` (a test IdP and the mAP-equivalent attribute authority)<br>`shib-idp-build/` (the IdP image: official tarball + Tomcat 10.1)<br>`shib-sp-template/` `provision-shib.sh` `check-shib-login.py` `list-shib-users.py`<br>`SHIBBOLETH-IDP.en.md` (how to enable it with `WEKO_SHIB=yes`) |
+| COAR Notify (optional) | `72-coar-notify-inbox.yaml` (the LDN inbox)<br>`coar-notify-inbox/inbox.py` (the inbox itself; Python standard library only)<br>`COAR-NOTIFY.en.md` (how to enable it with `WEKO_COAR_NOTIFY=yes`) |
 | pgpool image build | `pgpool-build/` (`Dockerfile.arm64` + `entrypoint.sh` + `start.sh`; produces `weko-pgpool:4.2.2-arm64`) |
 | Getting in | `ACCESS-kubectl.en.md` (kubectl commands for PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / the IdP) |
 | Tenant tooling | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
@@ -350,6 +351,7 @@ KIND_CONFIG=../kind-weko-cluster.yaml \
 | `WEKO_IDP_IMAGE` | Prebuilt Shibboleth IdP image | build from `shib-idp-build/` |
 | `WEKO_IDP_HOST` | Ingress host of the IdP | `idp.localhost` |
 | `WEKO_SHIB_LOGIN_ONLY` | Make `/login` itself go to the IdP (Shibboleth-only login); see SHIBBOLETH-IDP.en.md for the side effects | `no` |
+| `WEKO_COAR_NOTIFY` | Also deploy the COAR Notify inbox; see COAR-NOTIFY.en.md | `no` |
 | `WEKO_SHIB_MAP` | How the GakuNin mAP integration (isMemberOf → roles) is reproduced: `no`/`sso`/`aggregation` | `no` |
 | `WEKO_MAP_IMAGE` | Prebuilt attribute authority image | build from `shib-idp-build/` |
 | `WEKO_MAP_HOST` | Ingress host of the attribute authority | `map.localhost` |
