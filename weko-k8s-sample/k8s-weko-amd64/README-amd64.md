@@ -19,7 +19,7 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 |---|---|
 | [本構成のポイント](#本構成のポイント) / [この一式の中身](#この一式の中身readme-と一緒に配布するファイル) | 何が build/deploy されるか、同梱ファイル |
 | [0. 前提・事前準備](#0-前提事前準備ツール導入) | ツール判定と導入。**まず `check-prereq-amd64.sh`** |
-| [デプロイ](#デプロイ) | `bash deploy-amd64.sh`。手順0〜9の内訳、[作成されるユーザ](#作成されるユーザ重要) |
+| [デプロイ](#デプロイ) | `bash deploy-amd64.sh`。手順0〜9の内訳、[任意機能を全部入れる例](#任意機能をすべて有効にする場合)、[作成されるユーザ](#作成されるユーザ重要) |
 | [イメージの差し替え](#weko--pgpool-イメージの差し替え) | 既成イメージを使う場合。環境変数一覧もここ |
 | [HTTPS 証明書の指定](#https-証明書の指定) | 既定は自動発行。持ち込み証明書／Let's Encrypt |
 | [Shibboleth ログイン](#shibboleth-ログイン任意) | `WEKO_SHIB=yes` でクラスタ内に IdP を立てて学認相当の経路を試す |
@@ -199,6 +199,50 @@ bash deploy-amd64.sh
 # 既存クラスタへ再実行し INIT 列に従わせたい時: FORCE_INIT=no bash deploy-amd64.sh
 # HTTPS を使わない(ingress内蔵の自己署名に戻す)時: WEKO_TLS_ISSUER= bash deploy-amd64.sh
 ```
+### 任意機能をすべて有効にする場合
+
+既定で `no` になっている任意機能は 4 つある。全部入れるとこうなる。
+
+```bash
+WEKO_SHIB=yes \
+WEKO_SHIB_MAP=aggregation \
+WEKO_SHIB_LOGIN_ONLY=yes \
+WEKO_COAR_NOTIFY=yes \
+bash deploy-amd64.sh
+```
+
+| 環境変数 | 入るもの |
+|---|---|
+| `WEKO_SHIB=yes` | クラスタ内に Shibboleth IdP（`idp.localhost`）。学認相当の SAML ログイン経路 |
+| `WEKO_SHIB_MAP=aggregation` | 学認mAP 相当の属性認証局（`map.localhost`）。SP が SimpleAggregation で `isMemberOf` を取りに行き、グループがロールに反映される |
+| `WEKO_SHIB_LOGIN_ONLY=yes` | `/login` 自体を IdP へ直行させる（Shibboleth 専用ログイン） |
+| `WEKO_COAR_NOTIFY=yes` | COAR Notify の inbox（`inbox` Service）と、テナントの `/inbox` 中継 |
+
+有効化後に増えるエンドポイント:
+
+| URL | 内容 |
+|---|---|
+| `https://<tenant>.localhost/weko/shib/sp/login` | Shibboleth ログインの入口 |
+| `https://idp.localhost/idp/status` | IdP の稼働確認（200 なら設定の読み込みまで成功） |
+| `https://<tenant>.localhost/inbox` | 受信した COAR Notify 通知の一覧 |
+
+> **`WEKO_SHIB_LOGIN_ONLY=yes` は副作用が大きい。** `/login` からローカルのログインフォームが消えるため、
+> **IdP を止めるとブラウザから一切ログインできなくなる**（`tenants.txt` の管理者も含む）。
+> 検証中に IdP を落とすことがあるなら、ここだけ外して残り 3 つで始めるのが扱いやすい:
+>
+> ```bash
+> WEKO_SHIB=yes WEKO_SHIB_MAP=aggregation WEKO_COAR_NOTIFY=yes bash deploy-amd64.sh
+> ```
+>
+> この 3 つの組み合わせは実機で確認済み。詳細は [SHIBBOLETH-IDP.md](./SHIBBOLETH-IDP.md) と
+> [COAR-NOTIFY.md](./COAR-NOTIFY.md)。
+
+> **`WEKO_NGINX_SHIB` は含めない。** これは本番の `weko.conf` をそのまま使うモードで `WEKO_SHIB` と
+> 排他であり、両方 `yes` にすると `WEKO_SHIB` が優先されて警告が出るだけである。
+>
+> **ビルド時間が延びる。** IdP と属性認証局のイメージビルドが加わるため、初回は既定構成より
+> 数分〜十数分長くかかる（2 回目以降は Docker のキャッシュが効く）。
+
 `deploy-amd64.sh` の流れ:
 0. **weko ソースの取得/更新**（`git clone` / `git pull`。`WEKO_REPO`/`WEKO_BRANCH`/`WEKO_SRC_UPDATE` で制御）
 1. kind クラスタ + ingress-nginx（**binfmt無し**）

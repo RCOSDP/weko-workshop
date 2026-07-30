@@ -23,7 +23,7 @@ open `https://tenant1.localhost/`
 |---|---|
 | [What this set uses](#what-this-set-uses) / [Files in this set](#files-in-this-set-ship-these-with-this-readme) | What gets built and deployed, and what ships here |
 | [0. Before you start](#0-before-you-start-installing-the-tools) | Tool check and installation. **Start with `check-prereq-amd64.sh`** |
-| [Deploy](#deploy) | `bash deploy-amd64.sh`, the breakdown of steps 0-9, [users that get created](#users-that-get-created-important) |
+| [Deploy](#deploy) | `bash deploy-amd64.sh`, the breakdown of steps 0-9, [turning every optional feature on](#enabling-every-optional-feature), [users that get created](#users-that-get-created-important) |
 | [Building a specific version](#building-a-specific-version-tag) | Pin a release with `WEKO_TAG` |
 | [Using different images](#using-different-weko--pgpool-images) | Prebuilt images; the full environment-variable list is here |
 | [HTTPS certificates](#https-certificates) | Automatic issuance by default; bring your own or use Let's Encrypt |
@@ -211,6 +211,52 @@ bash deploy-amd64.sh
 # Re-run on an existing cluster and honour the INIT column: FORCE_INIT=no bash deploy-amd64.sh
 # No HTTPS (back to the ingress built-in self-signed cert): WEKO_TLS_ISSUER= bash deploy-amd64.sh
 ```
+### Enabling every optional feature
+
+There are four features that default to `no`. Turning all of them on looks like this:
+
+```bash
+WEKO_SHIB=yes \
+WEKO_SHIB_MAP=aggregation \
+WEKO_SHIB_LOGIN_ONLY=yes \
+WEKO_COAR_NOTIFY=yes \
+bash deploy-amd64.sh
+```
+
+| Variable | What it adds |
+|---|---|
+| `WEKO_SHIB=yes` | A Shibboleth IdP inside the cluster (`idp.localhost`) - the GakuNin-equivalent SAML login path |
+| `WEKO_SHIB_MAP=aggregation` | The mAP-equivalent attribute authority (`map.localhost`); the SP fetches `isMemberOf` over SimpleAggregation and the groups become WEKO roles |
+| `WEKO_SHIB_LOGIN_ONLY=yes` | Sends `/login` itself straight to the IdP (Shibboleth-only login) |
+| `WEKO_COAR_NOTIFY=yes` | The COAR Notify inbox (the `inbox` Service) and the tenant's `/inbox` relay |
+
+The endpoints this adds:
+
+| URL | Contents |
+|---|---|
+| `https://<tenant>.localhost/weko/shib/sp/login` | The Shibboleth login entry point |
+| `https://idp.localhost/idp/status` | IdP health (200 means the configuration loaded) |
+| `https://<tenant>.localhost/inbox` | The COAR Notify notifications received |
+
+> **`WEKO_SHIB_LOGIN_ONLY=yes` has a real side effect.** The local login form disappears from
+> `/login`, so **stopping the IdP locks you out of the browser entirely** - including the
+> administrator from `tenants.txt`. If the IdP may go down during testing, leave this one out and
+> start with the other three:
+>
+> ```bash
+> WEKO_SHIB=yes WEKO_SHIB_MAP=aggregation WEKO_COAR_NOTIFY=yes bash deploy-amd64.sh
+> ```
+>
+> That combination is verified on a running cluster. See [SHIBBOLETH-IDP.en.md](./SHIBBOLETH-IDP.en.md)
+> and [COAR-NOTIFY.en.md](./COAR-NOTIFY.en.md) for the details.
+
+> **`WEKO_NGINX_SHIB` is deliberately absent.** It is the mode that uses production's `weko.conf`
+> verbatim and is mutually exclusive with `WEKO_SHIB`; setting both to `yes` simply lets `WEKO_SHIB`
+> win, with a warning.
+>
+> **The build takes longer.** Building the IdP and attribute authority images adds several to
+> fifteen minutes on the first run; later runs hit the Docker cache.
+
 What `deploy-amd64.sh` does:
 0. **Fetch/update the weko source** (`git clone` / `git pull`; controlled by `WEKO_REPO` / `WEKO_BRANCH` / `WEKO_TAG` / `WEKO_SRC_UPDATE`)
 1. kind cluster + ingress-nginx (**no binfmt**)
