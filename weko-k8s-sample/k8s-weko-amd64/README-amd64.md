@@ -12,13 +12,13 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 > イメージが使えるため pgpool をビルドせず pull する点。）
 
 ## 目次
-**最短手順**: [§0 事前準備](#0-前提事前準備ツール導入) → [tenants.txt を編集](#デプロイ前に-tenantstxt-を編集) →
+**最短手順**: [事前準備](#前提事前準備ツール導入) → [tenants.txt を編集](#デプロイ前に-tenantstxt-を編集) →
 [デプロイ](#デプロイ) → ブラウザで `https://tenant1.localhost/`
 
 | 節 | 内容 |
 |---|---|
 | [本構成のポイント](#本構成のポイント) / [この一式の中身](#この一式の中身readme-と一緒に配布するファイル) | 何が build/deploy されるか、同梱ファイル |
-| [0. 前提・事前準備](#0-前提事前準備ツール導入) | ツール判定と導入。**まず `check-prereq-amd64.sh`** |
+| [前提・事前準備](#前提事前準備ツール導入) | ツール判定と導入。**まず `check-prereq-amd64.sh`** |
 | [デプロイ](#デプロイ) | `bash deploy-amd64.sh`。手順0〜9の内訳、[任意機能を全部入れる例](#任意機能をすべて有効にする場合)、[作成されるユーザ](#作成されるユーザ重要) |
 | [イメージの差し替え](#weko--pgpool-イメージの差し替え) | 既成イメージを使う場合。環境変数一覧もここ |
 | [HTTPS 証明書の指定](#https-証明書の指定) | 既定は自動発行。持ち込み証明書／Let's Encrypt |
@@ -68,7 +68,7 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 実行時に生成される（配布不要）: `generated/`（テナント別マニフェスト）と `.secret-seed`
 （アプリ秘密鍵のシード。初回実行で作成。再実行で鍵を固定したい場合は保持）。
 
-## 0. 前提・事前準備（ツール導入）
+## 前提・事前準備（ツール導入）
 
 要件: **amd64 Linux ／ RAM 64GB 以上 ／ 十分な空きディスク**。一括は `sudo bash prereq-amd64.sh`
 （Docker / kubectl / kind / カーネル設定 / weko ソース取得をまとめて実施。要 root）。手動なら以下。
@@ -680,7 +680,7 @@ bash teardown-amd64.sh
   これに失敗すると共通バケット `weko-backup` / `weko-content` / **`weko-esbackup`** が作られない。
   `weko-esbackup` は Elasticsearch の `repository-s3`（スナップショット先）が参照するため、影響が出る。
   デプロイ中に見かけた場合は上のコマンドを単体で実行すれば復旧する。作成済みでも `mc mb -p` は冪等。
-- **ES pod が `CrashLoopBackOff` /「max virtual memory areas」** → `vm.max_map_count` 未適用。§0(c) を再実行。
+- **ES pod が `CrashLoopBackOff` /「max virtual memory areas」** → `vm.max_map_count` 未適用。[事前準備](#前提事前準備ツール導入)の (c) を再実行。
 - **`docker: permission denied`** → docker グループがシェルに未反映。再ログインか `newgrp docker`。
 - **`deploy-amd64.sh` が別パスをビルド対象にする** → 既定は `$HOME/weko`。別の場所のソースを使うなら
   `WEKO_SRC` で明示する。`sudo` 付きで実行すると `$HOME` が `/root` になる点に注意（`deploy-amd64.sh`

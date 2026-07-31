@@ -15,14 +15,14 @@ has 20 cores and 121 GB RAM).
 > runs two nodes and that pgpool is pulled rather than built, because an official amd64 image exists.)
 
 ## Table of contents
-**Shortest path**: [§0 Before you start](#0-before-you-start-installing-the-tools) →
+**Shortest path**: [Before you start](#before-you-start-installing-the-tools) →
 [edit tenants.txt](#edit-tenantstxt-before-deploying) → [Deploy](#deploy) →
 open `https://tenant1.localhost/`
 
 | Section | Contents |
 |---|---|
 | [What this set uses](#what-this-set-uses) / [Files in this set](#files-in-this-set-ship-these-with-this-readme) | What gets built and deployed, and what ships here |
-| [0. Before you start](#0-before-you-start-installing-the-tools) | Tool check and installation. **Start with `check-prereq-amd64.sh`** |
+| [Before you start](#before-you-start-installing-the-tools) | Tool check and installation. **Start with `check-prereq-amd64.sh`** |
 | [Deploy](#deploy) | `bash deploy-amd64.sh`, the breakdown of steps 0-9, [turning every optional feature on](#enabling-every-optional-feature), [users that get created](#users-that-get-created-important) |
 | [Building a specific version](#building-a-specific-version-tag) | Pin a release with `WEKO_TAG` |
 | [Using different images](#using-different-weko--pgpool-images) | Prebuilt images; the full environment-variable list is here |
@@ -75,7 +75,7 @@ The deploy reads the files below. Both `deploy-amd64.sh` and the kind config liv
 Created at run time (no need to ship): `generated/` (the per-tenant manifests) and `.secret-seed`
 (the seed for the application secret keys, created on the first run; keep it to keep the keys stable).
 
-## 0. Before you start (installing the tools)
+## Before you start (installing the tools)
 
 Requirements: **amd64 Linux / 64 GB RAM or more / plenty of free disk**. `sudo bash prereq-amd64.sh`
 does everything at once (Docker / kubectl / kind / kernel settings / fetching the weko source; needs
@@ -708,7 +708,7 @@ To undo specific steps while keeping the cluster (rebuild one tenant, replace an
   created. `weko-esbackup` is what Elasticsearch's `repository-s3` (snapshot target) uses, so it
   matters. If you see it during a deploy, run the command above on its own; `mc mb -p` is idempotent.
 - **ES pod says `CrashLoopBackOff` or `max virtual memory areas`** → `vm.max_map_count` is not set.
-  Run §0(c) again.
+  Run (c) of [Before you start](#before-you-start-installing-the-tools) again.
 - **`docker: permission denied`** → the docker group is not active in your shell yet. Log in again or
   run `newgrp docker`.
 - **`deploy-amd64.sh` builds from the wrong path** → the default is `$HOME/weko`. Set `WEKO_SRC`
