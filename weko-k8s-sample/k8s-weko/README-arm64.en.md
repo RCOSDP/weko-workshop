@@ -25,6 +25,7 @@ open `https://tenant1.localhost/`
 | [What this set uses](#what-this-set-uses) / [Files in this set](#files-in-this-set-ship-these-with-this-readme) | What gets built and deployed, and what ships here |
 | [0. Before you start](#0-before-you-start-installing-the-tools) | Tool check and installation. **Start with `check-prereq-arm64.sh`** |
 | [Deploy](#deploy) | `bash deploy-arm64.sh`, the breakdown of steps 0-9, [turning every optional feature on](#enabling-every-optional-feature), [users that get created](#users-that-get-created-important) |
+| [System architecture after deploy](#system-architecture-after-deploy) | Overall picture, optional features, request path, and where the data lives (mermaid) |
 | [Building a specific version](#building-a-specific-version-tag) | Pin a release with `WEKO_TAG` |
 | [Using different images](#using-different-weko--pgpool-images) | Prebuilt images; the full environment-variable list is here |
 | [HTTPS certificates](#https-certificates) | Automatic issuance by default; bring your own or use Let's Encrypt |
@@ -70,6 +71,7 @@ level up.
 | Getting in | `ACCESS-kubectl.en.md` (kubectl commands for PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / the IdP) |
 | Tenant tooling | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
 | Configuration | `tenants.txt` (tenant definitions; edit the administrator address and password here) |
+| Diagrams | `images/` (PNG versions of [the architecture diagrams](#system-architecture-after-deploy), for viewers that do not render mermaid)<br>`images/README.md` (how to regenerate them) |
 
 > `10-postgresql.yaml` / `11-redis.yaml` / `12-rabbitmq.yaml` / `20-weko-config.yaml` / `30-weko-web.yaml` /
 > `Dockerfile.es` belong to the single-tenant tutorial in §1-9 of `README.md`. The full deploy
@@ -315,6 +317,199 @@ when building with `install.sh`.
 > `/api/records/` 200. PG master + 2 replicas / RabbitMQ 3/3 / ES green with 3 nodes /
 > Redis Sentinel 6/6 / MinIO running, and `files_location.type=s3` (`uri=s3://weko-<tenant>`).
 > Host memory usage is around 18 GiB.
+
+## System architecture after deploy
+The diagrams below show the state right after `bash deploy-arm64.sh` finishes successfully. They use
+`tenant1` (host `tenant1.localhost`), the default entry in `tenants.txt`, as the example tenant. There are
+three namespaces: `weko3`, `weko3re` and `nfs-system`.
+
+### The base architecture
+
+```mermaid
+flowchart TB
+  browser["Browser<br/>https://tenant1.localhost/"]
+  ing["ingress-nginx<br/>ns: ingress-nginx / :80 :443<br/>TLS terminates here (tenant1-tls)"]
+
+  subgraph weko3["namespace: weko3"]
+    svc["Service tenant1-nginx:80"]
+    subgraph pod["Deployment tenant1-web (one per tenant)"]
+      nginx["nginx<br/>:80"]
+      web["web / uwsgi<br/>127.0.0.1:5000"]
+      worker["worker<br/>celery -B -c 1"]
+    end
+    pgpool["pgpool:5432<br/>pooling + read load-balancing"]
+    pg[("PostgreSQL Patroni ×3<br/>weko-postgresql / -repl")]
+    es[("Elasticsearch ×3<br/>elasticsearch:9200 headless")]
+    mq[("RabbitMQ ×3<br/>weko-rabbitmq:5672")]
+    minio[("MinIO<br/>minio:9000 / console :9001")]
+  end
+
+  subgraph weko3re["namespace: weko3re"]
+    redis[("Redis master + 2 replicas<br/>redis:6379 headless")]
+    sent["sentinel ×3<br/>weko-sentinel-service:26379"]
+  end
+
+  subgraph nfssys["namespace: nfs-system"]
+    nfs["nfs-provisioner<br/>10.96.0.99:2049 (RWX)"]
+  end
+
+  browser --> ing --> svc --> nginx --> web
+  web --> pgpool
+  worker --> pgpool
+  pgpool --> pg
+  web --> es
+  worker --> es
+  web --> mq
+  worker --> mq
+  web --> redis
+  worker --> redis
+  web --> minio
+  sent -.->|"monitoring and failover"| redis
+  nfs -.->|"conf / data / shib / nginx config mounted RWX"| pod
+```
+
+<details><summary>If mermaid is not rendered, see the PNG</summary>
+
+![The base architecture](./images/arch-base.en.png)
+
+</details>
+
+Things to note:
+
+- Tenants are separated **by Deployment, not by namespace**. One tenant = the `tenant1-web` Deployment
+  (three containers: `nginx` / `web` / `worker`) plus the `tenant1-nginx` Service and the `tenant1-ingress`
+  Ingress. Add a line to `tenants.txt` to add another.
+- WEKO never talks to PostgreSQL directly: it always goes through **pgpool**, which sends writes to the
+  Patroni primary and spreads reads over the replicas.
+- Celery is not a separate Deployment; it is the **third container in the same Pod**, and `-B` means beat
+  runs inside it too.
+- `elasticsearch` and `redis` in `weko3re` are headless Services (no ClusterIP): they resolve to the Pod
+  DNS names.
+- The shared platform (PG / ES / RabbitMQ / Redis / MinIO / NFS) is shared by every tenant; tenants are kept
+  apart by database name, index prefix, vhost, Redis DB number and bucket name.
+
+### With the optional features enabled
+The dashed parts are the [optional features](#enabling-every-optional-feature), which are not deployed by default.
+
+```mermaid
+flowchart TB
+  browser["Browser"]
+  ing["ingress-nginx<br/>TLS terminates here"]
+
+  subgraph weko3["namespace: weko3"]
+    subgraph pod["Deployment tenant1-web"]
+      nginx["nginx<br/>supervisord: shibd /<br/>shibauthorizer / shibresponder"]
+      web["web / uwsgi :5000"]
+    end
+    base[("PG / pgpool / ES / RabbitMQ<br/>Redis / MinIO / NFS<br/>(same as the base architecture)")]
+    idp["weko-shib-idp:8080<br/>Ingress: idp.localhost<br/>WEKO_SHIB=yes"]
+    shibmap["weko-shib-map 10.96.0.98<br/>:8080 http / :8443 SOAP<br/>WEKO_SHIB_MAP=aggregation"]
+    inbox["inbox:8080<br/>COAR Notify inbox<br/>WEKO_COAR_NOTIFY=yes"]
+  end
+
+  browser --> ing --> nginx --> web --> base
+  ing -.->|"idp.localhost (its own Ingress)"| idp
+  nginx -.->|"shibd validates SAML"| idp
+  nginx -.->|"attribute query (SOAP, direct to ClusterIP)"| shibmap
+  nginx -.->|"location /inbox is proxied<br/>(reading notifications)"| inbox
+  web -.->|"POST /inbox (sending notifications)"| inbox
+
+  classDef opt stroke-dasharray:4 3
+  class idp,shibmap,inbox opt
+```
+
+<details><summary>If mermaid is not rendered, see the PNG</summary>
+
+![With the optional features enabled](./images/arch-optional.en.png)
+
+</details>
+
+- With `WEKO_SHIB=yes` the tenant nginx container switches to running supervisord, and shibd lives inside
+  that same container (it is not a separate Pod). See [SHIBBOLETH-IDP.en.md](./SHIBBOLETH-IDP.en.md).
+- The attribute query to the attribute authority is SOAP that never passes through the browser; its
+  ClusterIP is pinned to `10.96.0.98` so that the name matches the back-channel certificate.
+- The COAR Notify inbox keeps notifications in memory only (no PVC). See [COAR-NOTIFY.en.md](./COAR-NOTIFY.en.md).
+
+### The request path
+
+```mermaid
+flowchart LR
+  b["Browser<br/>https://tenant1.localhost/"]
+  ing["ingress-nginx :443<br/>TLS terminates / routed by Host header<br/>:80 returns 308"]
+  svc["Service tenant1-nginx:80"]
+  ng["nginx container :80"]
+  ping["= /ping → 200 ok<br/>readinessProbe"]
+  uw["web / uwsgi<br/>127.0.0.1:5000"]
+  inbox["inbox:8080 (optional)"]
+  shib["shibauthorizer / shibresponder<br/>unix socket (optional)"]
+  pgpool["pgpool:5432"]
+  es["elasticsearch:9200"]
+  redis["redis:6379<br/>(weko3re)"]
+  mq["weko-rabbitmq:5672"]
+  minio["minio:9000"]
+
+  b --> ing --> svc --> ng
+  ng --> ping
+  ng -->|"location /"| uw
+  ng -.->|"location /inbox"| inbox
+  ng -.->|"/Shibboleth.sso, /secure/"| shib
+  uw --> pgpool
+  uw --> es
+  uw --> redis
+  uw --> mq
+  uw --> minio
+```
+
+<details><summary>If mermaid is not rendered, see the PNG</summary>
+
+![The request path](./images/arch-request.en.png)
+
+</details>
+
+ingress-nginx is the only place TLS is terminated; everything past it is plaintext inside the cluster. nginx
+hands the request to uwsgi over **`127.0.0.1:5000` inside the Pod**, not through a Service, so there is no
+route that reaches the `web` container from outside. Only when certificates are disabled with
+`WEKO_TLS_ISSUER=` does `:80` answer 200 directly.
+
+### Where the data lives
+
+```mermaid
+flowchart LR
+  subgraph kind["Kind of data"]
+    meta["Metadata / workflows"]
+    idx["Search index"]
+    file["The item files themselves"]
+    sess["Sessions / cache / celery results"]
+    job["Async job queue"]
+    conf["Theme conf and data / SP config / nginx config"]
+  end
+
+  pg[("PostgreSQL Patroni ×3 / 10Gi ×3<br/>split by database name")]
+  es[("Elasticsearch ×3 / 10Gi ×3<br/>split by index prefix")]
+  minio[("MinIO / 10Gi<br/>split by bucket weko-tenant1")]
+  redis[("Redis Sentinel / 2Gi ×3<br/>split by DB number 0/1/2")]
+  mq[("RabbitMQ ×3 / 5Gi ×3<br/>split by vhost tenant1")]
+  nfs[("NFS RWX / 4 PVCs<br/>backed by nfs-export 30Gi")]
+
+  meta --> pg
+  idx --> es
+  file --> minio
+  sess --> redis
+  job --> mq
+  conf --> nfs
+```
+
+<details><summary>If mermaid is not rendered, see the PNG</summary>
+
+![Where the data lives](./images/arch-storage.en.png)
+
+</details>
+
+The item files themselves do not go to NFS but into a **per-tenant MinIO bucket** — step 8 runs
+`set-s3-location.sh`, which switches `files_location` to `s3://weko-<tenant>`. Besides the per-tenant buckets
+there are the shared `weko-backup`, `weko-content` and `weko-esbackup` (for ES snapshots). NFS (RWX) only holds
+the four kinds of configuration and data above, and `static` is an emptyDir that is recreated from the image on
+every Pod start.
 
 ## Building a specific version (tag)
 By default the latest commit of `WEKO_REPO`'s default branch is built. To **pin a release**, set

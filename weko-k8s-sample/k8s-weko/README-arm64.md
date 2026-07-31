@@ -20,6 +20,7 @@ arm64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | [本構成のポイント](#本構成のポイント) / [この一式の中身](#この一式の中身readme-と一緒に配布するファイル) | 何が build/deploy されるか、同梱ファイル |
 | [0. 前提・事前準備](#0-前提事前準備ツール導入) | ツール判定と導入。**まず `check-prereq-arm64.sh`** |
 | [デプロイ](#デプロイ) | `bash deploy-arm64.sh`。手順0〜9の内訳、[任意機能を全部入れる例](#任意機能をすべて有効にする場合)、[作成されるユーザ](#作成されるユーザ重要) |
+| [デプロイ後のシステム構成](#デプロイ後のシステム構成) | 全体図／任意機能あり／リクエスト経路／データの置き場所（mermaid） |
 | [イメージの差し替え](#weko--pgpool-イメージの差し替え) | 既成イメージを使う場合。環境変数一覧もここ |
 | [HTTPS 証明書の指定](#https-証明書の指定) | 既定は自動発行。持ち込み証明書／Let's Encrypt |
 | [Shibboleth ログイン](#shibboleth-ログイン任意) | `WEKO_SHIB=yes` でクラスタ内に IdP を立てて学認相当の経路を試す |
@@ -62,6 +63,7 @@ arm64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | アクセス方法 | `ACCESS-kubectl.md`（kubectl で PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / IdP に入るコマンド集） |
 | テナント関連 | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
 | 設定 | `tenants.txt`（テナント定義。管理者メール/パスワードはここで編集） |
+| 構成図 | `images/`（[デプロイ後のシステム構成](#デプロイ後のシステム構成)の PNG。mermaid が描画されない環境向け）<br>`images/README.md`（再生成の手順） |
 
 > `10-postgresql.yaml` / `11-redis.yaml` / `12-rabbitmq.yaml` / `20-weko-config.yaml` / `30-weko-web.yaml` /
 > `Dockerfile.es` は §1〜9（`README.md`）の単一テナント学習用。フルデプロイ（`deploy-arm64.sh`）では使わない。
@@ -297,6 +299,191 @@ bash deploy-arm64.sh
 > `/admin/` 302・`/api/records/` 200、
 > PG master+replica×2 / RabbitMQ 3/3 / ES green・3ノード / Redis Sentinel 6/6 / MinIO 稼働、
 > `files_location.type=s3`（`uri=s3://weko-<tenant>`）。ホストメモリ ~18GiB。
+
+## デプロイ後のシステム構成
+`bash deploy-arm64.sh` が正常終了した直後の状態を図にする。テナントは `tenants.txt` の既定である
+`tenant1`（ホスト名 `tenant1.localhost`）を例にした。namespace は `weko3` / `weko3re` / `nfs-system` の3つ。
+
+### 基本構成（全体図）
+
+```mermaid
+flowchart TB
+  browser["ブラウザ<br/>https://tenant1.localhost/"]
+  ing["ingress-nginx<br/>ns: ingress-nginx / :80 :443<br/>TLS 終端（tenant1-tls）"]
+
+  subgraph weko3["namespace: weko3"]
+    svc["Service tenant1-nginx:80"]
+    subgraph pod["Deployment tenant1-web（テナントごとに 1 つ）"]
+      nginx["nginx<br/>:80"]
+      web["web / uwsgi<br/>127.0.0.1:5000"]
+      worker["worker<br/>celery -B -c 1"]
+    end
+    pgpool["pgpool:5432<br/>コネクションプール＋参照分散"]
+    pg[("PostgreSQL Patroni ×3<br/>weko-postgresql / -repl")]
+    es[("Elasticsearch ×3<br/>elasticsearch:9200 headless")]
+    mq[("RabbitMQ ×3<br/>weko-rabbitmq:5672")]
+    minio[("MinIO<br/>minio:9000 / コンソール :9001")]
+  end
+
+  subgraph weko3re["namespace: weko3re"]
+    redis[("Redis master + replica×2<br/>redis:6379 headless")]
+    sent["sentinel ×3<br/>weko-sentinel-service:26379"]
+  end
+
+  subgraph nfssys["namespace: nfs-system"]
+    nfs["nfs-provisioner<br/>10.96.0.99:2049（RWX）"]
+  end
+
+  browser --> ing --> svc --> nginx --> web
+  web --> pgpool
+  worker --> pgpool
+  pgpool --> pg
+  web --> es
+  worker --> es
+  web --> mq
+  worker --> mq
+  web --> redis
+  worker --> redis
+  web --> minio
+  sent -.->|"監視・自動フェイルオーバ"| redis
+  nfs -.->|"conf / data / shib / nginx 設定を RWX でマウント"| pod
+```
+
+<details><summary>mermaid が描画されない場合はこちら（PNG）</summary>
+
+![基本構成](./images/arch-base.png)
+
+</details>
+
+要点:
+- テナントは **namespace ではなく Deployment 単位**で分ける。1テナント = `tenant1-web` Deployment
+  （コンテナ3つ `nginx` / `web` / `worker`）＋ `tenant1-nginx` Service ＋ `tenant1-ingress`。増やすには `tenants.txt` に行を足す。
+- WEKO は PostgreSQL に直接つながず、必ず **pgpool** を経由する（書きは Patroni の primary、読みは replica 側へ分散）。
+- celery は独立した Deployment ではなく**同じ Pod の3つ目のコンテナ**。`-B` 付きなので beat も同居する。
+- `elasticsearch` と `weko3re` の `redis` は headless Service（ClusterIP 無し）で、Pod の DNS 名に解決される。
+- 共有基盤（PG / ES / RabbitMQ / Redis / MinIO / NFS）は全テナントで共用し、DB 名・index prefix・vhost・
+  Redis の DB 番号・バケット名でテナントを分離する。
+
+### 任意機能を有効にした場合
+点線が [任意機能](#任意機能をすべて有効にする場合)（既定では立たない）。
+
+```mermaid
+flowchart TB
+  browser["ブラウザ"]
+  ing["ingress-nginx<br/>TLS 終端"]
+
+  subgraph weko3["namespace: weko3"]
+    subgraph pod["Deployment tenant1-web"]
+      nginx["nginx<br/>supervisord: shibd /<br/>shibauthorizer / shibresponder"]
+      web["web / uwsgi :5000"]
+    end
+    base[("PG / pgpool / ES / RabbitMQ<br/>Redis / MinIO / NFS<br/>（基本構成と同じ）")]
+    idp["weko-shib-idp:8080<br/>Ingress: idp.localhost<br/>WEKO_SHIB=yes"]
+    shibmap["weko-shib-map 10.96.0.98<br/>:8080 http / :8443 SOAP<br/>WEKO_SHIB_MAP=aggregation"]
+    inbox["inbox:8080<br/>COAR Notify の受信箱<br/>WEKO_COAR_NOTIFY=yes"]
+  end
+
+  browser --> ing --> nginx --> web --> base
+  ing -.->|"idp.localhost（別 Ingress）"| idp
+  nginx -.->|"shibd が SAML 検証"| idp
+  nginx -.->|"属性照会（SOAP, ClusterIP 直）"| shibmap
+  nginx -.->|"location /inbox を proxy_pass<br/>（通知の閲覧）"| inbox
+  web -.->|"POST /inbox（通知の送信）"| inbox
+
+  classDef opt stroke-dasharray:4 3
+  class idp,shibmap,inbox opt
+```
+
+<details><summary>mermaid が描画されない場合はこちら（PNG）</summary>
+
+![任意機能を有効にした場合](./images/arch-optional.png)
+
+</details>
+
+- `WEKO_SHIB=yes` のとき、tenant nginx のコンテナは supervisord 起動に切り替わり、shibd が同居する（別 Pod にはならない）。
+  詳細は [SHIBBOLETH-IDP.md](./SHIBBOLETH-IDP.md)。
+- 属性認証局への back-channel はブラウザを経由しない SOAP 通信で、証明書の CN と一致させるために
+  ClusterIP を `10.96.0.98` に固定してある。
+- COAR Notify の受信箱はメモリ保持のみ（PVC 無し）。詳細は [COAR-NOTIFY.md](./COAR-NOTIFY.md)。
+
+### リクエスト経路
+
+```mermaid
+flowchart LR
+  b["ブラウザ<br/>https://tenant1.localhost/"]
+  ing["ingress-nginx :443<br/>TLS 終端 / Host ヘッダで振り分け<br/>:80 は 308 リダイレクト"]
+  svc["Service tenant1-nginx:80"]
+  ng["nginx コンテナ :80"]
+  ping["= /ping → 200 ok<br/>readinessProbe"]
+  uw["web / uwsgi<br/>127.0.0.1:5000"]
+  inbox["inbox:8080（任意）"]
+  shib["shibauthorizer / shibresponder<br/>unix socket（任意）"]
+  pgpool["pgpool:5432"]
+  es["elasticsearch:9200"]
+  redis["redis:6379<br/>(weko3re)"]
+  mq["weko-rabbitmq:5672"]
+  minio["minio:9000"]
+
+  b --> ing --> svc --> ng
+  ng --> ping
+  ng -->|"location /"| uw
+  ng -.->|"location /inbox"| inbox
+  ng -.->|"/Shibboleth.sso, /secure/"| shib
+  uw --> pgpool
+  uw --> es
+  uw --> redis
+  uw --> mq
+  uw --> minio
+```
+
+<details><summary>mermaid が描画されない場合はこちら（PNG）</summary>
+
+![リクエスト経路](./images/arch-request.png)
+
+</details>
+
+TLS を終端するのは ingress-nginx だけで、そこから先はクラスタ内平文。nginx から uwsgi へは Service を経由せず
+**Pod 内の `127.0.0.1:5000`** に渡すので、`web` コンテナに外から直接到達する経路は無い。
+`WEKO_TLS_ISSUER=` で証明書を無効化した場合のみ `:80` がそのまま 200 を返す。
+
+### データの置き場所
+
+```mermaid
+flowchart LR
+  subgraph kind["データの種類"]
+    meta["メタデータ / ワークフロー"]
+    idx["検索インデックス"]
+    file["アイテムの実ファイル"]
+    sess["セッション / キャッシュ / celery result"]
+    job["非同期ジョブのキュー"]
+    conf["テーマ conf・data / SP 設定 / nginx 設定"]
+  end
+
+  pg[("PostgreSQL Patroni ×3 / 10Gi ×3<br/>DB 名で分離")]
+  es[("Elasticsearch ×3 / 10Gi ×3<br/>index prefix で分離")]
+  minio[("MinIO / 10Gi<br/>バケット weko-tenant1 で分離")]
+  redis[("Redis Sentinel / 2Gi ×3<br/>DB 番号 0/1/2 で分離")]
+  mq[("RabbitMQ ×3 / 5Gi ×3<br/>vhost tenant1 で分離")]
+  nfs[("NFS RWX / PVC 4本<br/>実体は nfs-export 30Gi")]
+
+  meta --> pg
+  idx --> es
+  file --> minio
+  sess --> redis
+  job --> mq
+  conf --> nfs
+```
+
+<details><summary>mermaid が描画されない場合はこちら（PNG）</summary>
+
+![データの置き場所](./images/arch-storage.png)
+
+</details>
+
+アイテムの実ファイルは NFS ではなく **MinIO のテナント別バケット**に入る（手順8の `set-s3-location.sh` が
+`files_location` を `s3://weko-<tenant>` に切り替えるため）。テナント別バケットのほかに、共通の
+`weko-backup` / `weko-content` / `weko-esbackup`（ES スナップショット用）がある。NFS(RWX) を使うのは上の4種類の
+設定・データのみで、`static` は emptyDir（Pod 起動のたびにイメージから再生成）。
 
 ## 特定バージョン（タグ）をビルドする
 既定は `WEKO_REPO` の既定ブランチの最新をビルドする。**リリースを固定したい**場合は `WEKO_TAG` を指定する。
