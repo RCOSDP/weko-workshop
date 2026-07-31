@@ -189,12 +189,36 @@ git clone https://github.com/RCOSDP/weko.git "$HOME/weko"
 `NAME  DBNAME  HOST  ADMIN_EMAIL  ADMIN_PASS  INIT  CACHE_DB SESSION_DB CELERY_DB`。
 素からの構築では `deploy-arm64.sh` が全テナントを初期化する（既定 `FORCE_INIT=yes`。`INIT` 列が `no` でも初期化）。
 
+```bash
+$EDITOR tenants.txt
+```
+
+既定は `tenant1` の1行だけが有効になっている。最低限、`ADMIN_EMAIL` と `ADMIN_PASS` を書き換える:
+
+```
+# 既定（このままデプロイしない）
+tenant1  wekodb   tenant1.localhost  admin@example.org  adminpass123  no  0 1 2
+# 書き換えたあと（例）
+tenant1  wekodb   tenant1.localhost  admin@example.jp   <自分で決めたパスワード>  no  0 1 2
+```
+
+- テナントを増やすときは `tenant2` の行のコメントを外す（または同じ形式で追記する）。`NAME` `DBNAME` `HOST` と
+  Redis の DB 番号3つは**テナント間で重複させない**。DB 番号は `3` と `4` が予約済みなので避ける。
+- `HOST` を `*.localhost` にしておけばループバックに解決されるので、`/etc/hosts` の設定は要らない。
+  独自ドメインを使う場合は名前解決とルーティングを別途用意する。
+- 編集を忘れて実行してしまった場合は、[作成されるユーザ](#作成されるユーザ重要)の手順で不要なユーザを無効化し、
+  パスワードは管理画面から変更する。
+
 > `ADMIN_PASS` は管理者だけでなく、初期化時に作られる**テストユーザ4件にも同じ値が設定される**。
 > 詳細は[作成されるユーザ](#作成されるユーザ重要)を参照。
 
 ## デプロイ
+実行する前に **`tenants.txt` を編集する**。管理者メールとパスワードが既定値のままデプロイされ、
+初期化後に変えるには DB を触ることになるため、先に直しておく（→[デプロイ前に `tenants.txt` を編集](#デプロイ前に-tenantstxt-を編集)）。
+
 ```bash
 cd k8s-weko                          # このディレクトリ
+$EDITOR tenants.txt                  # 管理者メール/パスワードを変更。テナントを増やすならここで行を追加
 bash deploy-arm64.sh
 # 1)クラスタ→9)疎通 まで一括。weko/ES/nginx/pgpool の arm64 ビルドを含む。
 # 各テナント初期化は並列で数十分。weko ソースは既定 $HOME/weko に自動取得される。

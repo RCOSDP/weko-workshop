@@ -202,12 +202,37 @@ Put a real administrator address in it and **change the default password** for e
 A from-scratch build initializes every tenant (`FORCE_INIT=yes` by default, which overrides an `INIT`
 column of `no`).
 
+```bash
+$EDITOR tenants.txt
+```
+
+Only the single `tenant1` line is active by default. At a minimum, replace `ADMIN_EMAIL` and `ADMIN_PASS`:
+
+```
+# the default (do not deploy this as it is)
+tenant1  wekodb   tenant1.localhost  admin@example.org  adminpass123  no  0 1 2
+# after editing (example)
+tenant1  wekodb   tenant1.localhost  admin@example.jp   <a password of your own>  no  0 1 2
+```
+
+- To add a tenant, uncomment the `tenant2` line (or add one in the same format). `NAME`, `DBNAME`, `HOST` and
+  the three Redis DB numbers **must not be shared between tenants**, and `3` and `4` are reserved, so avoid them.
+- A `HOST` under `*.localhost` resolves to the loopback address, so no `/etc/hosts` entry is needed. A domain
+  of your own needs name resolution and routing arranged separately.
+- If you deployed before editing the file, disable the unwanted users as described in
+  [Users that get created](#users-that-get-created-important) and change the password from the admin screen.
+
 > `ADMIN_PASS` is not only the administrator's password: **the four test users created during
 > initialization get the same value**. See [Users that get created](#users-that-get-created-important).
 
 ## Deploy
+**Edit `tenants.txt` before running this.** Otherwise the environment is deployed with the default
+administrator address and password, and changing them afterwards means touching the database
+(→ [Edit `tenants.txt` before deploying](#edit-tenantstxt-before-deploying)).
+
 ```bash
 cd k8s-weko                          # this directory
+$EDITOR tenants.txt                  # change the administrator address/password; add a line per extra tenant
 bash deploy-arm64.sh
 # Runs step 1 (cluster) through step 9 (connectivity) in one go, including the arm64 builds of
 # weko / ES / nginx / pgpool. Tenant initialization runs in parallel and takes tens of minutes.
