@@ -227,7 +227,7 @@ administrator address and password, and changing them afterwards means touching 
 (→ [Edit `tenants.txt` before deploying](#edit-tenantstxt-before-deploying)).
 
 ```bash
-cd k8s-weko                          # this directory
+cd k8s-weko-amd64                    # this directory
 $EDITOR tenants.txt                  # change the administrator address/password; add a line per extra tenant
 bash deploy-amd64.sh
 # Runs step 1 (cluster) through step 9 (connectivity) in one go, including the amd64 builds of

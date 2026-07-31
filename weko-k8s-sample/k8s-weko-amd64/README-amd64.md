@@ -215,7 +215,7 @@ tenant1   tenant1   tenant1.localhost   admin@example.jp        <自分で決め
 初期化後に変えるには DB を触ることになるため、先に直しておく（→[デプロイ前に `tenants.txt` を編集](#デプロイ前に-tenantstxt-を編集)）。
 
 ```bash
-cd k8s-weko                          # このディレクトリ
+cd k8s-weko-amd64                    # このディレクトリ
 $EDITOR tenants.txt                  # 管理者メール/パスワードを変更。テナントを増やすならここで行を追加
 bash deploy-amd64.sh
 # 1)クラスタ→9)疎通 まで一括。weko/ES/nginx/pgpool の amd64 ビルドを含む。
