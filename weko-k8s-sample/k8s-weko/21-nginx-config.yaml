@@ -15,6 +15,13 @@ metadata:
   namespace: weko3
 data:
   default.conf: |
+    # X-Forwarded-Proto が無い場合 (Pod 内からの直接アクセス) は実際のスキームにフォールバックする。
+    # Without X-Forwarded-Proto (a direct in-Pod request) fall back to the real scheme.
+    map $http_x_forwarded_proto $weko_scheme {
+        default $http_x_forwarded_proto;
+        ""      $scheme;
+    }
+
     server {
         listen 80 default_server;
         server_name _;
@@ -60,7 +67,22 @@ data:
         location / {
             include uwsgi_params;
             uwsgi_pass 127.0.0.1:5000;
-            uwsgi_param HTTP_X_FORWARDED_PROTO http;
+            uwsgi_param HTTP_X_FORWARDED_PROTO $weko_scheme;
+            # weko3 は ProxyFix を入れていないので、Flask の request.url_root は uwsgi が決める
+            # wsgi.url_scheme に従う。UWSGI_SCHEME を渡さないと url_root が http:// になり、
+            # invenio が _external=True で組み立てる URL (例: 新規アイテムの links.bucket =
+            # http://<host>/api/files/<bucket>/) も http になる。HTTPS のページから見ると
+            # スキームが違うぶん別オリジン扱いになり、ファイルアップロードの PUT が CORS
+            # プリフライトを起こす。その OPTIONS を Ingress が 308 で https へ飛ばすが、
+            # ブラウザはプリフライトのリダイレクトを追わないので、アップロードが "Error" になる。
+            # weko3 does not install ProxyFix, so Flask's request.url_root follows the wsgi.url_scheme
+            # that uwsgi decides. Without UWSGI_SCHEME the url_root would be http://, and so would every
+            # URL invenio builds with _external=True (e.g. a new item's links.bucket =
+            # http://<host>/api/files/<bucket>/). Seen from an HTTPS page the differing scheme makes
+            # that a separate origin, so the upload PUT triggers a CORS preflight; the Ingress answers
+            # that OPTIONS with a 308 to https, and browsers do not follow redirects on a preflight,
+            # so the upload fails with "Error".
+            uwsgi_param UWSGI_SCHEME $weko_scheme;
             uwsgi_read_timeout 3600s;
             uwsgi_send_timeout 3600s;
             uwsgi_buffer_size 32k;

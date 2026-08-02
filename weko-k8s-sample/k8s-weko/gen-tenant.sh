@@ -36,6 +36,13 @@ WEKO_TLS_ISSUER="${WEKO_TLS_ISSUER-weko-ca-issuer}"
 WEKO_SSL_REDIRECT="${WEKO_SSL_REDIRECT:-yes}"
 # When an issuer is set but no Secret name is given, default to a per-tenant name for the issued cert.
 [ -n "$WEKO_TLS_ISSUER" ] && [ -z "$WEKO_TLS_SECRET" ] && WEKO_TLS_SECRET='%s-tls'
+# instance.cfg の THEME_SITEURL は "$INVENIO_WEB_PROTOCOL://$INVENIO_WEB_HOST_NAME"。これは
+# リクエストコンテキスト外 (Celery タスク / COAR Notify の通知 IRI / メール本文) で使われるので、
+# TLS を張っているならスキームも合わせておく。
+# instance.cfg builds THEME_SITEURL as "$INVENIO_WEB_PROTOCOL://$INVENIO_WEB_HOST_NAME". That is what
+# gets used outside a request context (Celery tasks, COAR Notify IRIs, e-mail bodies), so keep the
+# scheme in step with whether TLS is actually terminated in front.
+if [ -n "$WEKO_TLS_SECRET" ]; then WEKO_WEB_PROTOCOL=https; else WEKO_WEB_PROTOCOL=http; fi
 # WEKO application image (swappable: override with WEKO_IMAGE=<repo>/<name>:<tag>)
 WEKO_IMAGE="${WEKO_IMAGE:-weko3-web:arm64}"
 # The WEKO nginx image: it embeds the Shibboleth SP (shibd + the nginx-http-shibboleth module) and is
@@ -271,7 +278,7 @@ data:
   INVENIO_WEB_HOST_NAME: "$HOST"
   INVENIO_WEB_INSTANCE: invenio
   INVENIO_WEB_VENV: invenio
-  INVENIO_WEB_PROTOCOL: http
+  INVENIO_WEB_PROTOCOL: $WEKO_WEB_PROTOCOL
   INVENIO_WORKER_HOST: "127.0.0.1"
   INVENIO_FILES_LOCATION_NAME: local
   INVENIO_FILES_LOCATION_URI: /home/invenio/.virtualenvs/invenio/var/instance/data/files
