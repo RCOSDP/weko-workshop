@@ -773,7 +773,8 @@ python3 check-shib-login.py            # walks the whole flow the way a browser 
 ```
 
 The entry point is `https://tenant1.localhost/weko/shib/sp/login`. The demo users are
-`admin`/`admin123` (System Administrator), `libadmin`/`libadmin123` and `teacher`/`teacher123`.
+`admin`/`admin123` (System Administrator), `libadmin`/`libadmin123`, `teacher`/`teacher123` and
+`commadmin`/`commadmin123` (Community Administrator - a role that only appears with `WEKO_SHIB_MAP`).
 
 The prebuilt IdP images are amd64-only, so the image is built here from the official tarball (pure Java)
 and Tomcat 10.1. `provision-shib.sh` establishes the trust between the SP (the shibd bundled in nginx)

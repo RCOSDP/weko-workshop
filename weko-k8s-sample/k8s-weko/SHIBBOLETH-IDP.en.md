@@ -17,6 +17,12 @@ To make `/login` itself go to the IdP, use `WEKO_SHIB_LOGIN_ONLY=yes` (see below
 | `admin` | `admin123` | 管理者 | System Administrator |
 | `libadmin` | `libadmin123` | 図書館員 | Repository Administrator |
 | `teacher` | `teacher123` | 教員 | Contributor |
+| `commadmin` | `commadmin123` | 教員 | Contributor + **Community Administrator** |
+
+Only `commadmin` ends up with two roles. `WEKO_ACCOUNTS_SHIB_ROLE_RELATION` knows just four words
+(管理者/図書館員/教員/教官) and none of them yields Community Administrator, so that role can only
+arrive through a GakuNin mAP group (`jc_<FQDN>_ro_cadm`). With `WEKO_SHIB_MAP=no`, `commadmin` is
+just a Contributor.
 
 The e-mail address is `<login id>@example.org` (the IdP's `idp.scope`). The administrator in
 `tenants.txt` is `admin@example.org`, so logging in as `admin` links straight to the default tenant
@@ -121,8 +127,11 @@ Rebuilding the IdP image changes its signing key, so **always re-run `provision-
 
 Per-user values come from the login id rather than from LDAP
 (`shib-idp-build/idp-conf/conf/attribute-resolver.xml`). The role comes from a `Mapped` attribute
-definition: `admin` → 管理者, `libadmin` → 図書館員, everyone else → 教員 (the default value).
-To add users or roles, edit that file and `demo.htpasswd`.
+definition: `admin` → 管理者, `libadmin` → 図書館員, everyone else → 教員 (the default value, which
+`commadmin` also takes).
+To add users or roles, edit that file and `demo.htpasswd`. GakuNin mAP groups live in the same file,
+under `mapRoleGroup` / `mapOrgGroup` / `mapOrgAdminGroup`. All of it is baked into the image, so a
+rebuild is needed after any change (the image-build step of `deploy-arm64.sh`).
 
 ---
 
@@ -259,7 +268,29 @@ bakes the **institutional** IdP's FQDN into the group names, not its own (`IDP_G
 |---|---|---|
 | `admin` | `/gakunin/idp_localhost/jc_roles_sysadm` | System Administrator |
 | `libadmin` | `/gakunin/idp_localhost/jc_idp_localhost_ro_radm` | Repository Administrator |
+| `commadmin` | `/gakunin/idp_localhost/jc_idp_localhost_ro_cadm` | Community Administrator |
 | `teacher` | `/gakunin/idp_localhost/jc_idp_localhost_ro_cont` | Contributor |
+
+Every one of the four forms `WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT` understands has a demo user of
+its own, so the SimpleAggregation path can be verified one role at a time.
+
+Non-role groups are provisioned by default as well. None of them matches a role name, so they grant no
+role; they exist purely to tell apart which values reach which user.
+
+| group | demo users in it | purpose |
+|---|---|---|
+| `all_users` | everyone (the Static data connector) | the common group |
+| `research-project-a` | `libadmin`, `teacher` | a research-project-like group |
+| `research-project-a/admin` | `libadmin` | the admin flavour (skipped) |
+| `lib-staff` | `libadmin` | a department-like group |
+| `test-group-1` | `admin`, `libadmin` | several users in one group |
+| `test-group-1/admin` | `admin` | the admin flavour (skipped) |
+| `test-group-2` | `teacher`, `commadmin` | a different combination |
+| `test-group-3` | `commadmin` | a single member |
+
+Values ending in `/admin` and values containing `/sp/` are skipped by `_assign_roles_to_user()`. Both
+`admin` and `libadmin` receive a member value and an admin value, so that behaviour can be observed
+directly.
 
 ### Syncing the role table (`sync_shib_gakunin_map_groups`)
 
@@ -420,6 +451,8 @@ So **the host part does not matter**. This set builds the values from `__MAP_BAS
 #### Writing the definitions
 
 Define each category separately and bundle them with a `Simple` definition.
+The snippet below shows the shape; it is not the default set itself (that lives in
+`shib-idp-build/idp-conf/conf/attribute-resolver.xml`, and the two tables above list it).
 
 ```xml
 <!-- (1) decides the role (one per user) -->
@@ -428,6 +461,8 @@ Define each category separately and bundle them with a `Simple` definition.
     <DefaultValue passThru="false">__MAP_BASE__/jc___IDP_FQDN___ro_cont</DefaultValue>
     <ValueMap><ReturnValue>__MAP_BASE__/jc_roles_sysadm</ReturnValue>
               <SourceValue>admin</SourceValue></ValueMap>
+    <ValueMap><ReturnValue>__MAP_BASE__/jc___IDP_FQDN___ro_cadm</ReturnValue>
+              <SourceValue>commadmin</SourceValue></ValueMap>
 </AttributeDefinition>
 
 <!-- (2) ordinary groups such as research projects (several may match; SourceValue is a regex) -->
@@ -437,6 +472,8 @@ Define each category separately and bundle them with a `Simple` definition.
               <SourceValue>libadmin|teacher</SourceValue></ValueMap>
     <ValueMap><ReturnValue>__MAP_BASE__/lib-staff</ReturnValue>
               <SourceValue>libadmin</SourceValue></ValueMap>
+    <ValueMap><ReturnValue>__MAP_BASE__/test-group-1</ReturnValue>
+              <SourceValue>admin|libadmin</SourceValue></ValueMap>
 </AttributeDefinition>
 
 <!-- (3) the "administrator of that group" flavour; mAP sends it alongside the membership value -->

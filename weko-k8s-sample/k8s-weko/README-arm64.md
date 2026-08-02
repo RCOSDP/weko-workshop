@@ -746,7 +746,8 @@ python3 check-shib-login.py            # ブラウザの代わりに一通りた
 ```
 
 入口は `https://tenant1.localhost/weko/shib/sp/login`。デモユーザは
-`admin`/`admin123`（System Administrator）、`libadmin`/`libadmin123`、`teacher`/`teacher123`。
+`admin`/`admin123`（System Administrator）、`libadmin`/`libadmin123`、`teacher`/`teacher123`、
+`commadmin`/`commadmin123`（Community Administrator。`WEKO_SHIB_MAP` 有効時のみ付くロール）。
 
 既製の IdP イメージは amd64 専用なので、公式 tarball（純 Java）と Tomcat 10.1 から自前でビルドしている。
 SP（nginx 同梱の shibd）と IdP の信頼関係は `provision-shib.sh` がローカルファイルだけで張る。

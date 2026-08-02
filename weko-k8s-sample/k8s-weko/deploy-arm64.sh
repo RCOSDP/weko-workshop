@@ -548,7 +548,7 @@ if [ "$WEKO_SHIB" = "yes" ]; then
   else
     echo "shibboleth login: https://<tenant>.localhost/weko/shib/sp/login"
   fi
-  echo "  IdP demo users: admin/admin123  libadmin/libadmin123  teacher/teacher123 (see SHIBBOLETH-IDP.md)"
+  echo "  IdP demo users: admin/admin123  libadmin/libadmin123  teacher/teacher123  commadmin/commadmin123 (see SHIBBOLETH-IDP.md)"
 fi
 if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
   echo "coar notify inbox: https://<tenant>.localhost/inbox (browser: 受信一覧 / the received list)"
