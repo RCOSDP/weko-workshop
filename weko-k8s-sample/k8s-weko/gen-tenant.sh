@@ -185,7 +185,27 @@ if [ "$WEKO_SHIB" = "yes" ]; then
     SHIB_CFG_APPEND="${SHIB_CFG_APPEND}          # ---- GakuNin mAP (WEKO_SHIB_MAP=$WEKO_SHIB_MAP) ----
           echo \"WEKO_ACCOUNTS_SHIB_BIND_GAKUNIN_MAP_GROUPS = True\"                   >> /conf/invenio.cfg
           echo \"WEKO_ACCOUNTS_IDP_ENTITY_ID = \\\"$WEKO_IDP_ENTITYID\\\"\"               >> /conf/invenio.cfg
-          echo \"WEKO_ACCOUNTS_ATTRIBUTE_MAP = {\\\"shib_eppn\\\": \\\"eppn\\\", \\\"shib_role_authority_name\\\": \\\"HTTP_WEKOSOCIETYAFFILIATION\\\", \\\"shib_mail\\\": \\\"mail\\\", \\\"shib_user_name\\\": \\\"DisplayName\\\", \\\"shib_is_member_of\\\": \\\"isMemberOf\\\"}\" >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_ATTRIBUTE_MAP = {\\\"shib_eppn\\\": \\\"eppn\\\", \\\"shib_role_authority_name\\\": \\\"HTTP_WEKOSOCIETYAFFILIATION\\\", \\\"shib_mail\\\": \\\"mail\\\", \\\"shib_user_name\\\": \\\"DisplayName\\\", \\\"shib_is_member_of\\\": \\\"isMemberOf\\\", \\\"shib_organization\\\": \\\"o\\\"}\" >> /conf/invenio.cfg
+          # 機関外の学認 IdP / Orthros から来たユーザのロール。組織名 (o = urn:oid:2.5.4.10) で決まる。
+          # 既定の instance.cfg では organizationName が全部空リストなので、_find_organization_name()
+          # は絶対に一致せず、この経路は死んだままになっている。デモ用に値を入れて生かす。
+          # 一致するとグループ経路は丸ごとスキップされる (check_in() の
+          #   if not self._find_organization_name(): self._assign_roles_to_user(...)
+          # という構造) ので、この 3 種のユーザはロールがちょうど 1 つになる。
+          # 注意: この文字列は二重引用符の中に入るので、バッククォートは書かないこと
+          # (コマンド置換として解釈されて gen-tenant.sh が構文エラーになる)。
+          # Roles for users arriving from an out-of-institution GakuNin IdP or from Orthros, decided by
+          # the organization name (o = urn:oid:2.5.4.10). In the stock instance.cfg every
+          # organizationName list is empty, so _find_organization_name() can never match and the whole
+          # path is dead; these values bring it to life for the demo. On a match the group path is
+          # skipped entirely - check_in() reads
+          #   if not self._find_organization_name(): self._assign_roles_to_user(...)
+          # - so these three kinds of user end up with exactly one role.
+          # NOTE: this text sits inside a double-quoted string, so never write a backtick here; it
+          # would be taken as command substitution and break gen-tenant.sh with a syntax error.
+          echo \"WEKO_ACCOUNTS_GAKUNIN_ROLE = {\\\"organizationName\\\": [\\\"学認テスト機関\\\"], \\\"defaultRole\\\": \\\"Contributor\\\"}\" >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_ORTHROS_INSIDE_ROLE = {\\\"organizationName\\\": [\\\"Orthros内部\\\"], \\\"defaultRole\\\": \\\"Repository Administrator\\\"}\" >> /conf/invenio.cfg
+          echo \"WEKO_ACCOUNTS_ORTHROS_OUTSIDE_ROLE = {\\\"organizationName\\\": [\\\"Orthros外部\\\"], \\\"defaultRole\\\": \\\"Community Administrator\\\"}\" >> /conf/invenio.cfg
 "
   fi
   SHIB_INIT_CONTAINER="      - name: seed-shib

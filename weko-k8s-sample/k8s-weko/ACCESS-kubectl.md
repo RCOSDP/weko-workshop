@@ -254,7 +254,7 @@ docker exec -it weko3-worker2 bash         # nodeType=DATA   (PG/ES/Redis/Rabbit
 | RabbitMQ | `weko` | `weko` | 同上 |
 | MinIO | `wekominio` | `wekominio-secret-key` | `40-minio.yaml` |
 | WEKO 管理者 | `admin@example.org` | `adminpass123` | `tenants.txt` |
-| Shibboleth IdP デモユーザ | `admin` / `libadmin` / `teacher` / `commadmin` | `admin123` / `libadmin123` / `teacher123` / `commadmin123` | `shib-idp-build/idp-conf/credentials/demo.htpasswd` |
+| Shibboleth IdP デモユーザ（機関） | `admin` / `libadmin` / `teacher` / `commadmin` | `<ログインID>123` | `shib-idp-build/idp-conf/credentials/demo.htpasswd` |
 
 Secret から直接取り出す:
 

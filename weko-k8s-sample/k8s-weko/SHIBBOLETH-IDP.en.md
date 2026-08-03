@@ -24,6 +24,33 @@ Only `commadmin` ends up with two roles. `WEKO_ACCOUNTS_SHIB_ROLE_RELATION` know
 arrive through a GakuNin mAP group (`jc_<FQDN>_ro_cadm`). With `WEKO_SHIB_MAP=no`, `commadmin` is
 just a Contributor.
 
+### Users who arrive with GakuNin authentication alone
+
+A user coming from an out-of-institution GakuNin IdP, or through Orthros, carries neither the
+WEKO-specific attribute (`wekoSocietyAffiliation`) nor any GakuNin mAP group. **The organization name
+`o` (`urn:oid:2.5.4.10`) alone** decides the role.
+
+| demo user | password | organization `o` | config consulted | WEKO role |
+|---|---|---|---|---|
+| `gakunin` | `gakunin123` | `学認テスト機関` | `WEKO_ACCOUNTS_GAKUNIN_ROLE` | Contributor |
+| `orthrosin` | `orthrosin123` | `Orthros内部` | `WEKO_ACCOUNTS_ORTHROS_INSIDE_ROLE` | Repository Administrator |
+| `orthrosout` | `orthrosout123` | `Orthros外部` | `WEKO_ACCOUNTS_ORTHROS_OUTSIDE_ROLE` | Community Administrator |
+
+These three end up with **exactly one role**, because `check_in()` is shaped like
+
+```python
+roles_add = self._get_roles_to_add()
+if not self._find_organization_name():      # a matching organization skips the group path entirely
+    self._assign_roles_to_user(roles_add)
+```
+
+so a match on the organization name bypasses the GakuNin mAP group path altogether.
+
+In the stock `instance.cfg` all three settings have an empty `organizationName` list, so
+`_find_organization_name()` can never match and the path is dead. `gen-tenant.sh` fills in values when
+`WEKO_SHIB_MAP` is enabled to bring it to life. `WEKO_ACCOUNTS_ATTRIBUTE_MAP` also needs
+`"shib_organization": "o"`, otherwise the attribute arrives and is discarded.
+
 The e-mail address is `<login id>@example.org` (the IdP's `idp.scope`). The administrator in
 `tenants.txt` is `admin@example.org`, so logging in as `admin` links straight to the default tenant
 administrator.

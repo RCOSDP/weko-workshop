@@ -21,6 +21,12 @@
         <AttributeRule attributeID="displayName"            permitAny="true" />
         <AttributeRule attributeID="wekoId"                 permitAny="true" />
         <AttributeRule attributeID="wekoSocietyAffiliation" permitAny="true" />
+        <!-- 組織名 (urn:oid:2.5.4.10)。機関外の学認 IdP / Orthros 経由のユーザのロールを決める。
+             公開しないと weko-accounts の _find_organization_name() が何も受け取れない。
+             The organization name (urn:oid:2.5.4.10), which decides the role for users arriving via an
+             out-of-institution GakuNin IdP or Orthros. Without releasing it, weko-accounts'
+             _find_organization_name() receives nothing. -->
+        <AttributeRule attributeID="o"                      permitAny="true" />
         <!-- SimpleAggregation の AttributeQuery で返す属性。SSO アサーションにも同じものが載る
              (WEKO_SHIB_MAP=sso のときはそちらだけを使う)。
              The attribute returned by the SimpleAggregation AttributeQuery. The same one also rides the

@@ -427,6 +427,39 @@ if [ "$WEKO_SHIB" = "yes" ]; then
   if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then
     kubectl -n weko3 rollout restart deploy/weko-shib-map
   fi
+  # 学認mAP のグループ一覧を Redis に投入する。weko-accounts の sync_shib_gakunin_map_groups() は
+  # ログインのたびにこのハッシュを読み、載っている名前と同名の Role を作る。そして
+  # _assign_roles_to_user() の最後の分岐が「グループ名と同名の Role があれば付与する」ので、
+  # ここに入れておかないとグループに所属していてもロールが 1 つも付かない。本番では別のバッチが
+  # 書き込む前提で weko-accounts 自身は書かないため、デモではデプロイ時に入れておく。
+  #
+  # 一覧は属性認証局の定義そのものから作る (手で二重管理するとすぐズレるため)。
+  # "/admin" で終わる値は _assign_roles_to_user() が読み飛ばすので Role にしない。
+  # update_roles() が削除するのは "jc_" で始まる Role だけなので、System Administrator などの
+  # コアロールがこの操作で消えることはない。
+  #
+  # Seed the GakuNin mAP group list into Redis. weko-accounts' sync_shib_gakunin_map_groups() reads this
+  # hash on every login and creates a Role for each name in it; the final branch of
+  # _assign_roles_to_user() then assigns a Role whose name equals the group name. Without this, being a
+  # member of a group grants no role at all. weko-accounts never writes the hash itself (in production a
+  # separate batch does), so the demo seeds it at deploy time.
+  #
+  # The list is derived from the attribute authority's own definitions, because maintaining it by hand
+  # in two places drifts immediately. Values ending in "/admin" are skipped by _assign_roles_to_user(),
+  # so they are not turned into Roles. update_roles() only ever deletes Roles whose name starts with
+  # "jc_", so core roles such as System Administrator are never removed by this.
+  if [ "$WEKO_SHIB_MAP" != "no" ]; then
+    IDP_FQDN_KEY=$(echo "$WEKO_IDP_HOST" | tr '.-' '__')
+    MAP_GROUPS=$(grep -oE '__MAP_BASE__/[A-Za-z0-9_/-]+' shib-idp-build/idp-conf/conf/attribute-resolver.xml \
+                   | sed -e 's#^__MAP_BASE__/##' -e "s/__IDP_FQDN__/${IDP_FQDN_KEY}/g" \
+                   | grep -v '/admin$' | sort -u | paste -sd, -)
+    if [ -n "$MAP_GROUPS" ]; then
+      echo "-- seeding mAP group list: ${IDP_FQDN_KEY}_gakunin_groups = $MAP_GROUPS --"
+      kubectl exec -n weko3re redis-0 -- redis-cli -n 4 \
+        hset "${IDP_FQDN_KEY}_gakunin_groups" groups "$MAP_GROUPS" >/dev/null \
+        || echo "WARNING: could not seed the mAP group list (group roles will not be assigned)"
+    fi
+  fi
 fi
 # COAR Notify の inbox。inbox.py は ConfigMap 経由で渡す (同じコードを manifest 側に複製しないため)。
 # テナントの Pod より先に立てておくと、初回のワークフロー操作から通知が届く。
@@ -564,7 +597,9 @@ if [ "$WEKO_SHIB" = "yes" ]; then
   else
     echo "shibboleth login: https://<tenant>.localhost/weko/shib/sp/login"
   fi
-  echo "  IdP demo users: admin/admin123  libadmin/libadmin123  teacher/teacher123  commadmin/commadmin123 (see SHIBBOLETH-IDP.md)"
+  echo "  IdP demo users (institutional): admin/admin123  libadmin/libadmin123  teacher/teacher123  commadmin/commadmin123"
+  echo "  IdP demo users (GakuNin only)  : gakunin/gakunin123  orthrosin/orthrosin123  orthrosout/orthrosout123"
+  echo "  (see SHIBBOLETH-IDP.md)"
 fi
 if [ "$WEKO_COAR_NOTIFY" = "yes" ]; then
   echo "coar notify inbox: https://<tenant>.localhost/inbox (browser: 受信一覧 / the received list)"

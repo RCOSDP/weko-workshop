@@ -24,6 +24,32 @@ python3 check-shib-login.py
 （`jc_<FQDN>_ro_cadm`）経由でしか付かない。`WEKO_SHIB_MAP=no` のときは `commadmin` は Contributor
 だけになる。
 
+### 学認認証だけで入ってくるユーザ
+
+機関外の学認 IdP や Orthros から来るユーザは、WEKO 独自属性（`wekoSocietyAffiliation`）も
+学認mAP のグループも持たない。**組織名 `o`（`urn:oid:2.5.4.10`）だけ**でロールが決まる。
+
+| デモユーザ | パスワード | 組織名 `o` | 参照される設定 | WEKO ロール |
+|---|---|---|---|---|
+| `gakunin` | `gakunin123` | `学認テスト機関` | `WEKO_ACCOUNTS_GAKUNIN_ROLE` | Contributor |
+| `orthrosin` | `orthrosin123` | `Orthros内部` | `WEKO_ACCOUNTS_ORTHROS_INSIDE_ROLE` | Repository Administrator |
+| `orthrosout` | `orthrosout123` | `Orthros外部` | `WEKO_ACCOUNTS_ORTHROS_OUTSIDE_ROLE` | Community Administrator |
+
+この 3 人は **ロールがちょうど 1 つ**になる。`check_in()` が
+
+```python
+roles_add = self._get_roles_to_add()
+if not self._find_organization_name():      # 組織名が一致したらグループ経路は丸ごと飛ばす
+    self._assign_roles_to_user(roles_add)
+```
+
+という構造で、組織名が一致した時点で学認mAP のグループ経路をスキップするため。
+
+素の `instance.cfg` では上記 3 設定の `organizationName` がすべて空リストで、`_find_organization_name()`
+は絶対に一致しない（＝この経路が死んでいる）。`gen-tenant.sh` が `WEKO_SHIB_MAP` 有効時に値を入れて
+生かしている。あわせて `WEKO_ACCOUNTS_ATTRIBUTE_MAP` に `"shib_organization": "o"` を足さないと、
+属性が届いても捨てられる。
+
 メールアドレスは `<ログインID>@example.org`（IdP の `idp.scope`）になる。`tenants.txt` の管理者が
 `admin@example.org` なので、`admin` でログインすると既定のテナント管理者とそのまま結び付く。
 
