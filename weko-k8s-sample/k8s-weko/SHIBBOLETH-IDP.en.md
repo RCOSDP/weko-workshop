@@ -274,8 +274,14 @@ bakes the **institutional** IdP's FQDN into the group names, not its own (`IDP_G
 Every one of the four forms `WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT` understands has a demo user of
 its own, so the SimpleAggregation path can be verified one role at a time.
 
-Non-role groups are provisioned by default as well. None of them matches a role name, so they grant no
-role; they exist purely to tell apart which values reach which user.
+Non-role groups are provisioned by default as well. They exist to tell apart which values reach which
+user, and none of them matches the `WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT` pattern.
+
+They do **not** grant no role unconditionally, though. `_assign_roles_to_user()` ends with a branch
+that also assigns a Role whose name equals the group name, if such a Role exists. Seeding the Redis
+group list for `sync_shib_gakunin_map_groups` (below) auto-creates a Role for every name in that list,
+so from then on the identically named role is granted. Leave a group out of the list and no Role
+exists, so nothing is granted - which is the default here, as the test groups are not in the list.
 
 | group | demo users in it | purpose |
 |---|---|---|
@@ -300,7 +306,7 @@ production), so you can seed it by hand.
 
 ```bash
 kubectl exec -n weko3re redis-0 -- redis-cli -n 4 hset idp_localhost_gakunin_groups \
-  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cont,jc_roles_sysadm"
+  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cadm,jc_idp_localhost_ro_cont,jc_roles_sysadm"
 ```
 
 After seeding it, logging in grants the role named after the group itself in addition to the one from
@@ -557,7 +563,7 @@ The roles named after the groups come from the Redis group list, so add any new 
 
 ```bash
 kubectl exec -n weko3re redis-0 -- redis-cli -n 4 hset idp_localhost_gakunin_groups \
-  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cont,jc_roles_sysadm,research-project-a,lib-staff,all_users"
+  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cadm,jc_idp_localhost_ro_cont,jc_roles_sysadm,research-project-a,lib-staff,all_users"
 ```
 
 Note that roles starting with `jc_` that are missing from the list are **deleted** on the next login.

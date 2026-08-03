@@ -411,6 +411,22 @@ if [ "$WEKO_SHIB" = "yes" ]; then
     sed -e "s#image: weko3-shib-map:arm64#image: $WEKO_MAP_IMAGE#" \
         -e "s#map\.localhost#$WEKO_MAP_HOST#g" 71-shibboleth-map.yaml | kubectl apply -f -
   fi
+  # イメージタグが固定 (weko3-shib-idp:arm64) で imagePullPolicy: Never なので、既存クラスタに
+  # 再デプロイすると Deployment の spec が 1 バイトも変わらない。すると kubectl apply は
+  # "unchanged" を返して Pod を作り直さず、kind に読み込んだ新しいイメージが使われないまま
+  # 古い Pod が動き続ける。attribute-resolver.xml や demo.htpasswd はイメージに焼き込まれるので、
+  # デモユーザやグループを増やしても反映されない (この後の rollout status は変更が無ければ
+  # 即座に成功を返すため、ログ上は正常に見えてしまう)。明示的に作り直す。
+  # The image tag is fixed (weko3-shib-idp:arm64) and imagePullPolicy is Never, so redeploying onto an
+  # existing cluster leaves the Deployment spec byte-for-byte identical. kubectl apply then reports
+  # "unchanged", no Pod is recreated, and the freshly loaded image is never used - the old Pod keeps
+  # running. Since attribute-resolver.xml and demo.htpasswd are baked into the image, added demo users
+  # or groups simply do not appear (and the later rollout status returns success immediately when
+  # nothing changed, so the log still looks clean). Force the recreation.
+  kubectl -n weko3 rollout restart deploy/weko-shib-idp
+  if [ "$WEKO_SHIB_MAP" = "aggregation" ]; then
+    kubectl -n weko3 rollout restart deploy/weko-shib-map
+  fi
 fi
 # COAR Notify の inbox。inbox.py は ConfigMap 経由で渡す (同じコードを manifest 側に複製しないため)。
 # テナントの Pod より先に立てておくと、初回のワークフロー操作から通知が届く。
