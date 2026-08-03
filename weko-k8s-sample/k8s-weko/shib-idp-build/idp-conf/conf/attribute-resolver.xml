@@ -100,7 +100,15 @@
          in "/admin" and values containing "/sp/" are skipped by _assign_roles_to_user(). -->
 
     <!-- ① ロール決定用のグループ。ユーザごとに 1 つ。
-         Group that decides the WEKO role; one per user. -->
+         WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT が解釈できる 4 種類すべてに、対応するデモユーザを
+         1 人ずつ割り当ててある。SimpleAggregation 経路をロール単位で切り分けて検証できるようにするため。
+           admin     -> jc_roles_sysadm         -> System Administrator     (sysadm_group、FQDN 無し)
+           libadmin  -> jc_<FQDN>_ro_radm       -> Repository Administrator
+           commadmin -> jc_<FQDN>_ro_cadm       -> Community Administrator
+           teacher   -> jc_<FQDN>_ro_cont       -> Contributor              (DefaultValue)
+         Group that decides the WEKO role; one per user. Every one of the four forms that
+         WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT understands has a demo user of its own, so the
+         SimpleAggregation path can be verified one role at a time. -->
     <AttributeDefinition id="mapRoleGroup" xsi:type="Mapped">
         <InputAttributeDefinition ref="uid" />
         <DefaultValue passThru="false">__MAP_BASE__/jc___IDP_FQDN___ro_cont</DefaultValue>
@@ -111,6 +119,16 @@
         <ValueMap>
             <ReturnValue>__MAP_BASE__/jc___IDP_FQDN___ro_radm</ReturnValue>
             <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+        <!-- Community Administrator は wekoSocietyAffiliation では絶対に付かない
+             (WEKO_ACCOUNTS_SHIB_ROLE_RELATION に該当する語が無い)。このグループ経由だけで付くので、
+             mAP 連携が効いているかどうかの一番はっきりした試金石になる。
+             Community Administrator can never come from wekoSocietyAffiliation - no word in
+             WEKO_ACCOUNTS_SHIB_ROLE_RELATION maps to it. It arrives only through this group, which
+             makes it the clearest litmus test that the mAP integration is working. -->
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/jc___IDP_FQDN___ro_cadm</ReturnValue>
+            <SourceValue>commadmin</SourceValue>
         </ValueMap>
     </AttributeDefinition>
 
@@ -128,6 +146,28 @@
             <ReturnValue>__MAP_BASE__/lib-staff</ReturnValue>
             <SourceValue>libadmin</SourceValue>
         </ValueMap>
+        <!-- ここから下は検証用のグループ。ロール名にはマッチしないので、付いてもロールは増えない
+             (weko-accounts はパターンに合わない値を素通りさせる)。所属パターンをわざとずらしてあり、
+             SimpleAggregation で「誰にどの値が返るか」を切り分けられるようにしてある。
+               test-group-1 … admin と libadmin の 2 人      (複数ユーザが同じグループ)
+               test-group-2 … teacher と commadmin の 2 人   (別の組み合わせ)
+               test-group-3 … commadmin だけ                 (単独所属)
+             The groups below are for verification only. They match no role name, so they add no role
+             (weko-accounts simply passes over values that fit no pattern). The membership patterns are
+             deliberately staggered so that "who gets which value" can be told apart over
+             SimpleAggregation. -->
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/test-group-1</ReturnValue>
+            <SourceValue>admin|libadmin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/test-group-2</ReturnValue>
+            <SourceValue>teacher|commadmin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/test-group-3</ReturnValue>
+            <SourceValue>commadmin</SourceValue>
+        </ValueMap>
     </AttributeDefinition>
 
     <!-- ③ グループの管理者であることを表す "/admin" 付きの値。mAP はメンバーとしての値と
@@ -141,6 +181,15 @@
         <ValueMap>
             <ReturnValue>__MAP_BASE__/research-project-a/admin</ReturnValue>
             <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+        <!-- 読み飛ばしの確認用。admin は test-group-1 のメンバー値と管理者値の両方を受け取るので、
+             _assign_roles_to_user() が "/admin" で終わる値だけを捨てていることを確かめられる。
+             For checking the skip rule: admin receives both the member value and the admin value for
+             test-group-1, which shows _assign_roles_to_user() discarding only the one ending in
+             "/admin". -->
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/test-group-1/admin</ReturnValue>
+            <SourceValue>admin</SourceValue>
         </ValueMap>
     </AttributeDefinition>
 

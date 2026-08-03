@@ -17,6 +17,12 @@ python3 check-shib-login.py
 | `admin` | `admin123` | 管理者 | System Administrator |
 | `libadmin` | `libadmin123` | 図書館員 | Repository Administrator |
 | `teacher` | `teacher123` | 教員 | Contributor |
+| `commadmin` | `commadmin123` | 教員 | Contributor + **Community Administrator** |
+
+`commadmin` だけロールが 2 つ付く。`WEKO_ACCOUNTS_SHIB_ROLE_RELATION` は 管理者/図書館員/教員/教官 の
+4 語しか持たず Community Administrator を返す語が無いので、このロールは学認mAP のグループ
+（`jc_<FQDN>_ro_cadm`）経由でしか付かない。`WEKO_SHIB_MAP=no` のときは `commadmin` は Contributor
+だけになる。
 
 メールアドレスは `<ログインID>@example.org`（IdP の `idp.scope`）になる。`tenants.txt` の管理者が
 `admin@example.org` なので、`admin` でログインすると既定のテナント管理者とそのまま結び付く。
@@ -119,8 +125,11 @@ IdP イメージを作り直すと署名鍵が変わるので、**`provision-shi
 
 ユーザごとの値は LDAP ではなく、ログイン ID から導出している
 （`shib-idp-build/idp-conf/conf/attribute-resolver.xml`）。ロールは `Mapped` 属性定義で
-`admin` → 管理者、`libadmin` → 図書館員、それ以外 → 教員（既定値）としている。
-ユーザやロールを増やすときはこのファイルと `demo.htpasswd` の 2 つを直す。
+`admin` → 管理者、`libadmin` → 図書館員、それ以外 → 教員（既定値）としている
+（`commadmin` も既定値の教員）。
+ユーザやロールを増やすときはこのファイルと `demo.htpasswd` の 2 つを直す。学認mAP のグループを
+増やすときも同じファイルの `mapRoleGroup` / `mapOrgGroup` / `mapOrgAdminGroup` を直す。
+いずれもイメージに焼き込まれるので、変更後は再ビルドが必要（`deploy-arm64.sh` のイメージビルド段）。
 
 ---
 
@@ -255,7 +264,28 @@ WEKO_ACCOUNTS_ATTRIBUTE_MAP = {..., "shib_is_member_of": "isMemberOf"}
 |---|---|---|
 | `admin` | `/gakunin/idp_localhost/jc_roles_sysadm` | System Administrator |
 | `libadmin` | `/gakunin/idp_localhost/jc_idp_localhost_ro_radm` | Repository Administrator |
+| `commadmin` | `/gakunin/idp_localhost/jc_idp_localhost_ro_cadm` | Community Administrator |
 | `teacher` | `/gakunin/idp_localhost/jc_idp_localhost_ro_cont` | Contributor |
+
+`WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT` が解釈できる 4 種類すべてに、デモユーザを 1 人ずつ
+割り当ててある。SimpleAggregation 経路をロール単位で切り分けて確かめられるようにするため。
+
+ロール以外のグループも既定で入れてある。いずれもロール名にはマッチしないのでロールは増えず、
+「どのユーザにどの値が返るか」を切り分けるためだけのもの。
+
+| グループ | 所属するデモユーザ | 用途 |
+|---|---|---|
+| `all_users` | 全員（Static データコネクタ） | 共通グループ |
+| `research-project-a` | `libadmin`, `teacher` | 研究プロジェクト相当 |
+| `research-project-a/admin` | `libadmin` | 管理者フレーバ（読み飛ばされる） |
+| `lib-staff` | `libadmin` | 部署相当 |
+| `test-group-1` | `admin`, `libadmin` | 複数ユーザが同じグループ |
+| `test-group-1/admin` | `admin` | 管理者フレーバ（読み飛ばされる） |
+| `test-group-2` | `teacher`, `commadmin` | 別の組み合わせ |
+| `test-group-3` | `commadmin` | 単独所属 |
+
+`/admin` で終わる値と `/sp/` を含む値は `_assign_roles_to_user()` が読み飛ばす。`admin` と `libadmin`
+はメンバー値と管理者値の両方を受け取るので、その挙動をそのまま確認できる。
 
 ### ロール表の同期（`sync_shib_gakunin_map_groups`）
 
@@ -411,6 +441,8 @@ weko-accounts の `_assign_roles_to_user()` は、
 #### 定義の書き方
 
 種類ごとに分けて定義し、`Simple` 属性定義で束ねるのが素直。
+以下は書き方を示すための抜粋で、既定の定義そのものではない（実物は
+`shib-idp-build/idp-conf/conf/attribute-resolver.xml`。上の 2 つの表がその既定値の一覧）。
 
 ```xml
 <!-- ① ロール決定用（ユーザごとに 1 つ） -->
@@ -419,6 +451,8 @@ weko-accounts の `_assign_roles_to_user()` は、
     <DefaultValue passThru="false">__MAP_BASE__/jc___IDP_FQDN___ro_cont</DefaultValue>
     <ValueMap><ReturnValue>__MAP_BASE__/jc_roles_sysadm</ReturnValue>
               <SourceValue>admin</SourceValue></ValueMap>
+    <ValueMap><ReturnValue>__MAP_BASE__/jc___IDP_FQDN___ro_cadm</ReturnValue>
+              <SourceValue>commadmin</SourceValue></ValueMap>
 </AttributeDefinition>
 
 <!-- ② 研究プロジェクトなどの一般グループ（同じユーザに複数マッチしてよい。SourceValue は正規表現） -->
@@ -428,6 +462,8 @@ weko-accounts の `_assign_roles_to_user()` は、
               <SourceValue>libadmin|teacher</SourceValue></ValueMap>
     <ValueMap><ReturnValue>__MAP_BASE__/lib-staff</ReturnValue>
               <SourceValue>libadmin</SourceValue></ValueMap>
+    <ValueMap><ReturnValue>__MAP_BASE__/test-group-1</ReturnValue>
+              <SourceValue>admin|libadmin</SourceValue></ValueMap>
 </AttributeDefinition>
 
 <!-- ③ そのグループの管理者であることを表す値。mAP はメンバーの値とセットで返す -->
