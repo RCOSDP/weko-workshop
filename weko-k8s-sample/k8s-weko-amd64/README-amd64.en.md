@@ -28,7 +28,7 @@ open `https://tenant1.localhost/`
 | [Using different images](#using-different-weko--pgpool-images) | Prebuilt images; the full environment-variable list is here |
 | [HTTPS certificates](#https-certificates) | Automatic issuance by default; bring your own or use Let's Encrypt |
 | [Shibboleth login](#shibboleth-login-optional) | `WEKO_SHIB=yes` stands up an in-cluster IdP to exercise the GakuNin-equivalent path |
-| [Day-to-day operation and teardown](#day-to-day-operation-and-teardown) | Delete with **`teardown-amd64.sh`**; partial rollback in [UNDEPLOY-amd64.en.md](./UNDEPLOY-amd64.en.md) |
+| [Day-to-day operation and teardown](#day-to-day-operation-and-teardown) | Delete with **`teardown-amd64.sh`**; stop without deleting in [Suspending and resuming](#suspending-and-resuming-stopping-without-losing-the-data); partial rollback in [UNDEPLOY-amd64.en.md](./UNDEPLOY-amd64.en.md) |
 | [How to change the size](#how-to-change-the-size) / [If something goes wrong](#if-something-goes-wrong) | Scaling up or down, and fixing failures |
 
 > **When in trouble**: read the **first item** of the troubleshooting section (ARP collision caused by
@@ -652,6 +652,46 @@ bash teardown-amd64.sh
 - **If the deletion fails** (`could not kill container: ... did not receive an exit event`) →
   recover with `sudo bash unwedge-amd64.sh`; details in
   [UNDEPLOY-amd64.en.md](./UNDEPLOY-amd64.en.md#recovering-from-a-failed-deletion-nfs-hang---orphaned-veth).
+
+### Suspending and resuming (stopping without losing the data)
+If you only want to stop the cluster rather than delete it, the kind nodes are docker containers, so
+`docker stop` / `docker start` is enough. But **stopping a node while NFS is still mounted can hang in the
+same D state as a failed deletion**, so scale the tenant Pods (web/nginx/worker) down first. They are the only
+ones that mount NFS; the StatefulSets (PG / ES / RabbitMQ / Redis) and the NFS server can be left alone.
+
+```bash
+# 1) scale down only the tenant Pods that mount NFS (the Deployments themselves stay)
+kubectl scale deploy -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+
+# 2) wait until the Pods are actually gone (skipping this is what hangs on the NFS RPC wait)
+kubectl wait --for=delete pod -n weko3 -l tenant --timeout=180s
+
+# 3) stop the node containers, giving kubelet/containerd room to shut down
+docker stop -t 60 weko3-worker weko3-worker2 weko3-control-plane
+```
+
+To resume:
+```bash
+docker start weko3-control-plane weko3-worker weko3-worker2
+kubectl wait --for=condition=Ready node --all --timeout=300s
+kubectl scale deploy -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl get pods -n weko3 -w     # Patroni re-elects a leader and ES recovers; this takes a few minutes
+```
+
+- kind creates the nodes with `--restart=on-failure:1`, so they **do not come back on their own after a host
+  reboot**. You have to run `docker start` every time.
+- The `80/443` mappings and `6443 → 127.0.0.1:<random port>` are stored on the container, so `~/.kube/config`
+  keeps working as is.
+- Attaching another container to the `kind` network (`172.19.0.0/16`) while the cluster is stopped can shuffle
+  the node IPs and break the cluster. Leave that network alone while it is down, and after resuming confirm
+  the address is unchanged with
+  `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' weko3-control-plane`.
+- Stopping frees the host memory (around 18 GiB). To free the memory but keep the cluster up, run steps 1 and
+  2 only and skip the `docker stop`.
+- **If you skipped steps 1 and 2 and the containers never reach `Exited` after the 60 second wait**: that is
+  the same D-state hang as a failed deletion, caused by stopping the node while NFS was still mounted.
+  `sudo bash unwedge-amd64.sh` recovers the host, but **it `docker rm -f`s the node containers, so the data
+  does not come back** - you start over from `deploy-amd64.sh`. Do not skip steps 1 and 2.
 
 ### Rolling back part of the deployment
 To undo specific steps while keeping the cluster (rebuild one tenant, replace an operator, ...)

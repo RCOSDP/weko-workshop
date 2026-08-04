@@ -886,6 +886,10 @@ kubectl get pods -n weko3 -w     # Patroni re-elects a leader and ES recovers; t
   `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' weko3-control-plane`.
 - Stopping frees the host memory (around 18 GiB). To free the memory but keep the cluster up, run steps 1 and
   2 only and skip the `docker stop`.
+- **If you skipped steps 1 and 2 and the containers never reach `Exited` after the 60 second wait**: that is
+  the same D-state hang as a failed deletion, caused by stopping the node while NFS was still mounted.
+  `sudo bash unwedge-arm64.sh` recovers the host, but **it `docker rm -f`s the node containers, so the data
+  does not come back** - you start over from `deploy-arm64.sh`. Do not skip steps 1 and 2.
 
 ### Rolling back part of the deployment
 To undo specific steps while keeping the cluster (rebuild one tenant, replace an operator, ...)
