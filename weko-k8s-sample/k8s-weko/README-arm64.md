@@ -826,7 +826,7 @@ StatefulSet（PG / ES / RabbitMQ / Redis）と NFS サーバは触らなくて�
 
 ```bash
 # 1) NFS をマウントしているテナント Pod だけ 0 にする（Deployment 定義は残る）
-kubectl scale deploy -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl scale -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
 
 # 2) Pod が実際に消えるまで待つ（ここを省くと NFS の RPC 待ちで固まる）
 kubectl wait --for=delete pod -n weko3 -l tenant --timeout=180s
@@ -839,7 +839,7 @@ docker stop -t 60 weko3-worker weko3-worker2 weko3-control-plane
 ```bash
 docker start weko3-control-plane weko3-worker weko3-worker2
 kubectl wait --for=condition=Ready node --all --timeout=300s
-kubectl scale deploy -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl scale -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
 kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリカバリに数分かかる
 ```
 

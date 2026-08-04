@@ -859,7 +859,7 @@ ones that mount NFS; the StatefulSets (PG / ES / RabbitMQ / Redis) and the NFS s
 
 ```bash
 # 1) scale down only the tenant Pods that mount NFS (the Deployments themselves stay)
-kubectl scale deploy -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl scale -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
 
 # 2) wait until the Pods are actually gone (skipping this is what hangs on the NFS RPC wait)
 kubectl wait --for=delete pod -n weko3 -l tenant --timeout=180s
@@ -872,7 +872,7 @@ To resume:
 ```bash
 docker start weko3-control-plane weko3-worker weko3-worker2
 kubectl wait --for=condition=Ready node --all --timeout=300s
-kubectl scale deploy -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl scale -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
 kubectl get pods -n weko3 -w     # Patroni re-elects a leader and ES recovers; this takes a few minutes
 ```
 
