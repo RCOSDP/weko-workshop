@@ -23,7 +23,7 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | [イメージの差し替え](#weko--pgpool-イメージの差し替え) | 既成イメージを使う場合。環境変数一覧もここ |
 | [HTTPS 証明書の指定](#https-証明書の指定) | 既定は自動発行。持ち込み証明書／Let's Encrypt |
 | [Shibboleth ログイン](#shibboleth-ログイン任意) | `WEKO_SHIB=yes` でクラスタ内に IdP を立てて学認相当の経路を試す |
-| [運用・後始末](#運用後始末) | 削除は **`teardown-amd64.sh`**。一部だけ巻き戻すなら [UNDEPLOY-amd64.md](./UNDEPLOY-amd64.md) |
+| [運用・後始末](#運用後始末) | 削除は **`teardown-amd64.sh`**。消さずに止めるなら [一時停止と再開](#一時停止と再開データを残したまま止める)、一部だけ巻き戻すなら [UNDEPLOY-amd64.md](./UNDEPLOY-amd64.md) |
 | [調整ポイント](#調整ポイント) / [トラブルシュート](#トラブルシュート) | 規模の増減、不具合対応 |
 
 > **困ったら**: トラブルシュートの**最初の項目**（孤児 veth による ARP 衝突）を先に読む。
@@ -629,6 +629,46 @@ bash teardown-amd64.sh
 - **削除に失敗する**（`could not kill container: ... did not receive an exit event`）→
   `sudo bash unwedge-amd64.sh` で復旧する。詳細は
   [UNDEPLOY-amd64.md](./UNDEPLOY-amd64.md#削除に失敗したときの復旧nfs-ハング--孤児-veth)。
+
+### 一時停止と再開（データを残したまま止める）
+消さずに止めたいだけなら、kind のノードは docker コンテナなので `docker stop` / `docker start` でよい。
+ただし **NFS を掴んだままノードを落とすと、削除失敗と同じ D状態ハングになり得る**ので、
+先にテナントの Pod（web/nginx/worker）だけ落としてから止める。掴んでいるのはこの Deployment だけで、
+StatefulSet（PG / ES / RabbitMQ / Redis）と NFS サーバは触らなくてよい。
+
+```bash
+# 1) NFS をマウントしているテナント Pod だけ 0 にする（Deployment 定義は残る）
+kubectl scale -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+
+# 2) Pod が実際に消えるまで待つ（ここを省くと NFS の RPC 待ちで固まる）
+kubectl wait --for=delete pod -n weko3 -l tenant --timeout=180s
+
+# 3) ノードコンテナを停止（kubelet/containerd の停止に余裕を持たせる）
+docker stop -t 60 weko3-worker weko3-worker2 weko3-control-plane
+```
+
+再開:
+```bash
+docker start weko3-control-plane weko3-worker weko3-worker2
+kubectl wait --for=condition=Ready node --all --timeout=300s
+kubectl scale -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリカバリに数分かかる
+```
+
+- kind のノードは `--restart=on-failure:1` で作られるため、**ホストを再起動しても自動では上がらない**。
+  毎回 `docker start` が要る。
+- `80/443` と `6443 → 127.0.0.1:<ランダムポート>` のマッピングはコンテナ側に保存されるので、
+  `~/.kube/config` はそのまま使える。
+- 停止中に別のコンテナを `kind` ネットワーク（`172.19.0.0/16`）に繋ぐとノードの IP が入れ替わり、
+  クラスタが壊れることがある。停止中はこのネットワークを触らない。再開後に
+  `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' weko3-control-plane` で
+  停止前と同じ IP か確認しておくと確実。
+- 停止するとホストメモリ（~18GiB）が解放される。クラスタは残すがメモリだけ空けたい場合は、
+  上の手順1と2だけ実行して `docker stop` を省く。
+- **手順1・2を飛ばして `docker stop` した結果、60秒待ってもコンテナが `Exited` にならない** →
+  NFS を掴んだまま止めた場合に起きる、削除失敗と同じ D状態ハング。`sudo bash unwedge-amd64.sh` で
+  復旧するが、**このスクリプトはノードコンテナごと `docker rm -f` するのでデータは戻らない**
+  （復旧後は `deploy-amd64.sh` からやり直しになる）。手順1・2を飛ばさないこと。
 
 ### 一部だけ巻き戻す
 クラスタは残したまま特定の手順だけ元に戻す場合（テナント1つだけ作り直す、operator を入れ替える等）は

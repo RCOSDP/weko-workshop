@@ -24,6 +24,32 @@ python3 check-shib-login.py
 （`jc_<FQDN>_ro_cadm`）経由でしか付かない。`WEKO_SHIB_MAP=no` のときは `commadmin` は Contributor
 だけになる。
 
+### 学認認証だけで入ってくるユーザ
+
+機関外の学認 IdP や Orthros から来るユーザは、WEKO 独自属性（`wekoSocietyAffiliation`）も
+学認mAP のグループも持たない。**組織名 `o`（`urn:oid:2.5.4.10`）だけ**でロールが決まる。
+
+| デモユーザ | パスワード | 組織名 `o` | 参照される設定 | WEKO ロール |
+|---|---|---|---|---|
+| `gakunin` | `gakunin123` | `学認テスト機関` | `WEKO_ACCOUNTS_GAKUNIN_ROLE` | Contributor |
+| `orthrosin` | `orthrosin123` | `Orthros内部` | `WEKO_ACCOUNTS_ORTHROS_INSIDE_ROLE` | Repository Administrator |
+| `orthrosout` | `orthrosout123` | `Orthros外部` | `WEKO_ACCOUNTS_ORTHROS_OUTSIDE_ROLE` | Community Administrator |
+
+この 3 人は **ロールがちょうど 1 つ**になる。`check_in()` が
+
+```python
+roles_add = self._get_roles_to_add()
+if not self._find_organization_name():      # 組織名が一致したらグループ経路は丸ごと飛ばす
+    self._assign_roles_to_user(roles_add)
+```
+
+という構造で、組織名が一致した時点で学認mAP のグループ経路をスキップするため。
+
+素の `instance.cfg` では上記 3 設定の `organizationName` がすべて空リストで、`_find_organization_name()`
+は絶対に一致しない（＝この経路が死んでいる）。`gen-tenant.sh` が `WEKO_SHIB_MAP` 有効時に値を入れて
+生かしている。あわせて `WEKO_ACCOUNTS_ATTRIBUTE_MAP` に `"shib_organization": "o"` を足さないと、
+属性が届いても捨てられる。
+
 メールアドレスは `<ログインID>@example.org`（IdP の `idp.scope`）になる。`tenants.txt` の管理者が
 `admin@example.org` なので、`admin` でログインすると既定のテナント管理者とそのまま結び付く。
 
@@ -270,8 +296,14 @@ WEKO_ACCOUNTS_ATTRIBUTE_MAP = {..., "shib_is_member_of": "isMemberOf"}
 `WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT` が解釈できる 4 種類すべてに、デモユーザを 1 人ずつ
 割り当ててある。SimpleAggregation 経路をロール単位で切り分けて確かめられるようにするため。
 
-ロール以外のグループも既定で入れてある。いずれもロール名にはマッチしないのでロールは増えず、
-「どのユーザにどの値が返るか」を切り分けるためだけのもの。
+ロール以外のグループも既定で入れてある。「どのユーザにどの値が返るか」を切り分けるためのもので、
+`WEKO_ACCOUNTS_GAKUNIN_GROUP_PATTERN_DICT` のパターンには一致しない。
+
+ただし**ロールがまったく増えないわけではない**。`_assign_roles_to_user()` は最後に
+「グループ名と同名の Role が Role テーブルにあれば、それも付与する」という分岐を持つ。後述の
+`sync_shib_gakunin_map_groups` で Redis のグループ一覧を投入すると、その一覧に載せた名前が
+そのまま Role として自動作成されるため、以後は同名ロールが付く。逆に一覧に載せなければ
+Role が存在せず、ロールは増えない。既定ではテスト用グループを一覧に入れていないので後者になる。
 
 | グループ | 所属するデモユーザ | 用途 |
 |---|---|---|
@@ -295,7 +327,7 @@ mAP のグループ一覧は Redis DB 4 のハッシュ `<FQDN>_gakunin_groups` 
 
 ```bash
 kubectl exec -n weko3re redis-0 -- redis-cli -n 4 hset idp_localhost_gakunin_groups \
-  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cont,jc_roles_sysadm"
+  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cadm,jc_idp_localhost_ro_cont,jc_roles_sysadm"
 ```
 
 投入後にログインすると、パターン一致によるロールに加えてグループ名そのもののロールも付く:
@@ -547,7 +579,7 @@ Role テーブルに用意した状態で試しても付かないので、`/admi
 
 ```bash
 kubectl exec -n weko3re redis-0 -- redis-cli -n 4 hset idp_localhost_gakunin_groups \
-  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cont,jc_roles_sysadm,research-project-a,lib-staff,all_users"
+  groups "jc_idp_localhost_ro_radm,jc_idp_localhost_ro_cadm,jc_idp_localhost_ro_cont,jc_roles_sysadm,research-project-a,lib-staff,all_users"
 ```
 
 一覧から外したロール（`jc_` で始まるもの）は次回ログイン時に**削除される**ので注意。

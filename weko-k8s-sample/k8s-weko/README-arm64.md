@@ -826,7 +826,7 @@ StatefulSet（PG / ES / RabbitMQ / Redis）と NFS サーバは触らなくて�
 
 ```bash
 # 1) NFS をマウントしているテナント Pod だけ 0 にする（Deployment 定義は残る）
-kubectl scale deploy -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl scale -n weko3 --replicas=0 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
 
 # 2) Pod が実際に消えるまで待つ（ここを省くと NFS の RPC 待ちで固まる）
 kubectl wait --for=delete pod -n weko3 -l tenant --timeout=180s
@@ -839,7 +839,7 @@ docker stop -t 60 weko3-worker weko3-worker2 weko3-control-plane
 ```bash
 docker start weko3-control-plane weko3-worker weko3-worker2
 kubectl wait --for=condition=Ready node --all --timeout=300s
-kubectl scale deploy -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
+kubectl scale -n weko3 --replicas=1 $(kubectl get deploy -n weko3 -o name | grep -- '-web$')
 kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリカバリに数分かかる
 ```
 
@@ -853,6 +853,10 @@ kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリ
   停止前と同じ IP か確認しておくと確実。
 - 停止するとホストメモリ（~18GiB）が解放される。クラスタは残すがメモリだけ空けたい場合は、
   上の手順1と2だけ実行して `docker stop` を省く。
+- **手順1・2を飛ばして `docker stop` した結果、60秒待ってもコンテナが `Exited` にならない** →
+  NFS を掴んだまま止めた場合に起きる、削除失敗と同じ D状態ハング。`sudo bash unwedge-arm64.sh` で
+  復旧するが、**このスクリプトはノードコンテナごと `docker rm -f` するのでデータは戻らない**
+  （復旧後は `deploy-arm64.sh` からやり直しになる）。手順1・2を飛ばさないこと。
 
 ### 一部だけ巻き戻す
 クラスタは残したまま特定の手順だけ元に戻す場合（テナント1つだけ作り直す、operator を入れ替える等）は

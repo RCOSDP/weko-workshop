@@ -56,9 +56,22 @@
          WEKO's role is decided from the wekoSocietyAffiliation string (weko-accounts'
          WEKO_ACCOUNTS_SHIB_ROLE_RELATION: 管理者/図書館員/教員/教官). Here it is assigned statically
          from the login id. -->
+    <!-- DefaultValue はあえて置いていない。wekoSocietyAffiliation は WEKO 独自の拡張属性なので、
+         機関外の学認 IdP や Orthros はそもそも送ってこない。その状況を再現するため、下の
+         gakunin / orthrosin / orthrosout には値を出さない (Mapped は一致しなければ何も返さない)。
+         属性が無くても weko-accounts の assign_user_role() は素通りするだけで、ログインは通る
+         (nginx が NO_CHECK_WEKOSOCIETYAFFILIATION=TRUE を渡しているため)。
+         ここにユーザを足すと wekoSocietyAffiliation 由来のロールは付かなくなるので、機関ユーザを
+         増やすときは ValueMap も併せて足すこと。
+         There is deliberately no DefaultValue. wekoSocietyAffiliation is a WEKO-specific extension
+         attribute, so an out-of-institution GakuNin IdP or Orthros never sends it. To reproduce that,
+         gakunin / orthrosin / orthrosout below get no value (a Mapped definition returns nothing when
+         no ValueMap matches). Login still succeeds without it - weko-accounts' assign_user_role()
+         simply falls through, because nginx passes NO_CHECK_WEKOSOCIETYAFFILIATION=TRUE.
+         A new user added here therefore gets no wekoSocietyAffiliation-derived role, so add a ValueMap
+         alongside when the user is meant to be an institutional one. -->
     <AttributeDefinition id="wekoSocietyAffiliation" xsi:type="Mapped">
         <InputAttributeDefinition ref="uid" />
-        <DefaultValue passThru="false">教員</DefaultValue>
         <ValueMap>
             <ReturnValue>管理者</ReturnValue>
             <SourceValue>admin</SourceValue>
@@ -66,6 +79,48 @@
         <ValueMap>
             <ReturnValue>図書館員</ReturnValue>
             <SourceValue>libadmin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>教員</ReturnValue>
+            <SourceValue>teacher|commadmin</SourceValue>
+        </ValueMap>
+    </AttributeDefinition>
+
+    <!-- 機関外の学認 IdP / Orthros 経由のユーザを表す組織名 (urn:oid:2.5.4.10)。
+         weko-accounts はこれを shib_organization として受け取り、_find_organization_name() が
+         WEKO_ACCOUNTS_GAKUNIN_ROLE / _ORTHROS_INSIDE_ROLE / _ORTHROS_OUTSIDE_ROLE / _EXTRA_ROLE の
+         organizationName と突き合わせて defaultRole を付ける。
+         重要: この経路が一致すると check_in() は学認mAP のグループ経路を丸ごとスキップする
+         (`if not self._find_organization_name(): self._assign_roles_to_user(...)`)。
+         つまり「学認認証だけで入ってくるユーザ」はグループではなく組織名でロールが決まる。
+         id=o は IdP 5 標準の属性レジストリ (conf/attributes/inetOrgPerson.xml) に登録済みなので、
+         custom の .properties は要らない。SP 側も同梱の attribute-map.xml が urn:oid:2.5.4.10 -> o を
+         持っており、nginx の shib_fastcgi_params が fastcgi_param o として素通しする。
+
+         The organization name (urn:oid:2.5.4.10) identifying a user who arrives through an
+         out-of-institution GakuNin IdP or through Orthros. weko-accounts receives it as
+         shib_organization, and _find_organization_name() matches it against the organizationName lists
+         of WEKO_ACCOUNTS_GAKUNIN_ROLE / _ORTHROS_INSIDE_ROLE / _ORTHROS_OUTSIDE_ROLE / _EXTRA_ROLE to
+         assign the corresponding defaultRole.
+         Important: when this path matches, check_in() skips the GakuNin mAP group path entirely
+         (`if not self._find_organization_name(): self._assign_roles_to_user(...)`), so a user who logs
+         in with GakuNin authentication alone gets a role from the organization name, not from groups.
+         id=o is already in IdP 5's stock attribute registry (conf/attributes/inetOrgPerson.xml), so no
+         custom .properties file is needed. The SP side likewise maps urn:oid:2.5.4.10 -> o in the
+         bundled attribute-map.xml, and nginx's shib_fastcgi_params forwards it as fastcgi_param o. -->
+    <AttributeDefinition id="o" xsi:type="Mapped">
+        <InputAttributeDefinition ref="uid" />
+        <ValueMap>
+            <ReturnValue>学認テスト機関</ReturnValue>
+            <SourceValue>gakunin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>Orthros内部</ReturnValue>
+            <SourceValue>orthrosin</SourceValue>
+        </ValueMap>
+        <ValueMap>
+            <ReturnValue>Orthros外部</ReturnValue>
+            <SourceValue>orthrosout</SourceValue>
         </ValueMap>
     </AttributeDefinition>
 
@@ -111,7 +166,16 @@
          SimpleAggregation path can be verified one role at a time. -->
     <AttributeDefinition id="mapRoleGroup" xsi:type="Mapped">
         <InputAttributeDefinition ref="uid" />
-        <DefaultValue passThru="false">__MAP_BASE__/jc___IDP_FQDN___ro_cont</DefaultValue>
+        <!-- DefaultValue は置かない。置くと学認 / Orthros のユーザ (gakunin / orthrosin / orthrosout)
+             にもロールグループが付いてしまい、あの 3 人が「組織名だけでロールが決まる」ことを
+             示せなくなる。機関ユーザは 1 人ずつ明示する。
+             No DefaultValue: it would hand a role group to the GakuNin / Orthros users
+             (gakunin / orthrosin / orthrosout) as well, obscuring the point that those three get their
+             role from the organization name alone. Institutional users are listed one by one. -->
+        <ValueMap>
+            <ReturnValue>__MAP_BASE__/jc___IDP_FQDN___ro_cont</ReturnValue>
+            <SourceValue>teacher</SourceValue>
+        </ValueMap>
         <ValueMap>
             <ReturnValue>__MAP_BASE__/jc_roles_sysadm</ReturnValue>
             <SourceValue>admin</SourceValue>
