@@ -559,6 +559,27 @@ $SHIB_EXTRA_MOUNTS        # As in production, the Shibboleth SP config comes fro
           INST=/home/invenio/.virtualenvs/invenio/var/instance
           # App-layer fix: avoid the KeyError on /api/records (applied on this container's filesystem)
           sed -i "s/aggs = data\['aggregations'\]/aggs = data.get('aggregations', {})/" /code/modules/weko-search-ui/weko_search_ui/utils.py 2>/dev/null || true
+          # App-layer fix: avoid the 500 on /api/index/. With an empty q, get_self_list('') compares the
+          # bigint index id against '' ("invalid input syntax for type bigint"). rest.py catches that,
+          # but pgpool load-balances the failing SELECT to one backend only, so the next SAVEPOINT hits
+          # "kind mismatch among backends" and pgpool kills the session. An empty q can never match an
+          # id, so skip the query instead.
+          # /api/index/ の 500 対策。q が空だと get_self_list('') が bigint の index id を '' と比較して
+          # SQL エラーになる。rest.py 側は例外を握るが、pgpool ではその SELECT が片方のバックエンドに
+          # だけ振られるため、続く SAVEPOINT で kind mismatch となり pgpool がセッションを切る。
+          # 空の q は id に一致し得ないので、そもそもクエリを投げない。
+          sed -i "s/paths = Indexes.get_self_list(q, community_id)/paths = Indexes.get_self_list(q, community_id) if q and str(q).isdigit() else []/" /code/modules/weko-search-ui/weko_search_ui/rest.py 2>/dev/null || true
+          # App-layer fix: the same KeyError on 'aggregations' as above, on /api/index/. When the index id
+          # in q does not exist, Elasticsearch returns no aggregations and rest.py raises KeyError -> 500.
+          # /api/index/ 側の 'aggregations' KeyError 対策（上の /api/records と同種）。q のインデックス ID が
+          # 存在しないと Elasticsearch が aggregations を返さず、rest.py が KeyError になり 500 になる。
+          sed -i 's/agp = rd\["aggregations"\]\["path"\]\["buckets"\]/rd.setdefault("aggregations", {}).setdefault("path", {}).setdefault("buckets", []); agp = rd["aggregations"]["path"]["buckets"]/' /code/modules/weko-search-ui/weko_search_ui/rest.py 2>/dev/null || true
+          # App-layer fix: avoid the 500 on /api/index/?q=<non-numeric>. The value is passed straight into a
+          # bigint column ("invalid input syntax for type bigint"), which through pgpool kills the session
+          # the same way as above. A non-numeric id can never match, so return an empty list.
+          # 非数値の q による 500 対策。値がそのまま bigint 列に渡されて SQL エラーになり、pgpool 経由では
+          # 上と同じくセッションごと切られる。数値でない ID は一致し得ないので空リストを返す。
+          sed -i 's/^    def get_child_list_recursive(cls, pid, with_deleted=False):/&\n        if not str(pid).isdigit():\n            return []/' /code/modules/weko-index-tree/weko_index_tree/api.py 2>/dev/null || true
           # populate static from static.org when empty
           mkdir -p \$INST/static \$INST/data/tmp
           if [ -z "\$(ls -A \$INST/static 2>/dev/null)" ] && [ -d \$INST/static.org ]; then
@@ -590,6 +611,10 @@ $SHIB_EXTRA_MOUNTS        # As in production, the Shibboleth SP config comes fro
           INST=/home/invenio/.virtualenvs/invenio/var/instance
           # App-layer fix: avoid the KeyError on /api/records
           sed -i "s/aggs = data\['aggregations'\]/aggs = data.get('aggregations', {})/" /code/modules/weko-search-ui/weko_search_ui/utils.py 2>/dev/null || true
+          # App-layer fix: same /api/index/ fixes as the web container, to keep both copies of the code identical
+          sed -i "s/paths = Indexes.get_self_list(q, community_id)/paths = Indexes.get_self_list(q, community_id) if q and str(q).isdigit() else []/" /code/modules/weko-search-ui/weko_search_ui/rest.py 2>/dev/null || true
+          sed -i 's/agp = rd\["aggregations"\]\["path"\]\["buckets"\]/rd.setdefault("aggregations", {}).setdefault("path", {}).setdefault("buckets", []); agp = rd["aggregations"]["path"]["buckets"]/' /code/modules/weko-search-ui/weko_search_ui/rest.py 2>/dev/null || true
+          sed -i 's/^    def get_child_list_recursive(cls, pid, with_deleted=False):/&\n        if not str(pid).isdigit():\n            return []/' /code/modules/weko-index-tree/weko_index_tree/api.py 2>/dev/null || true
           rm -f /home/invenio/celeryd.pid
           exec celery worker --pidfile /home/invenio/celeryd.pid \
             --schedule=/home/invenio/celerybeat-schedule \
