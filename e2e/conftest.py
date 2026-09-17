@@ -1,0 +1,280 @@
+"""Fixtures shared by the e2e suites.
+
+Everything here is session scoped on purpose.  A WEKO activity is locked to
+the session that opened it, so a flow split across browser contexts locks
+itself out; and the index, flow and workflow a run sets up are the ones
+every step of that run then works with.
+
+The run leaves its resources behind when it finishes, so that a failure can
+be looked at in the browser; ``./e2ectl clean`` -- or ``--clean-after`` --
+is what removes them.
+"""
+
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from weko_e2e.client import WekoClient, anonymous_session  # noqa: E402
+from weko_e2e.config import (E2E_DIR, OPTIONAL_SUITES,  # noqa: E402
+                             Settings, parse_suites)
+from weko_e2e.ledger import Ledger  # noqa: E402
+
+EVIDENCE = os.path.join(E2E_DIR, 'evidence', 'images')
+"""Where the screenshots each step leaves behind are written."""
+
+
+def pytest_addoption(parser):
+    """Add the options that pick the suites and the cleanup."""
+    group = parser.getgroup('weko-e2e')
+    group.addoption(
+        '--suite', action='append', default=[], metavar='NAME',
+        help='run this optional suite as well ({0}, or all); repeatable, '
+             'and the same thing as WEKO_E2E_SUITES'.format(
+                 ', '.join(OPTIONAL_SUITES)))
+    group.addoption(
+        '--clean-after', action='store_true', default=False,
+        help='delete what the run created when it finishes, pass or fail')
+    group.addoption(
+        '--clean-hard', action='store_true', default=False,
+        help='with --clean-after, also remove the rows WEKO only hides')
+
+
+def pytest_configure(config):
+    """Declare the marker the optional suites carry."""
+    config.addinivalue_line(
+        'markers',
+        'suite(name): part of an optional suite, run only when that suite '
+        'is asked for by --suite or WEKO_E2E_SUITES')
+
+
+def enabled_suites(config):
+    """Return the optional suites this run was asked for.
+
+    ``--suite`` adds to what the environment asked for rather than
+    replacing it, so a file that turns a suite on and a command line that
+    turns another on both take effect.
+    """
+    asked = set(Settings().suites)
+    asked.update(parse_suites(' '.join(config.getoption('--suite'))))
+    return tuple(name for name in OPTIONAL_SUITES if name in asked)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip the optional suites nobody asked for.
+
+    They are skipped rather than deselected so that a run says out loud
+    what it did not do, and how to ask for it.
+    """
+    wanted = enabled_suites(config)
+    for item in items:
+        marker = item.get_closest_marker('suite')
+        if not marker or not marker.args:
+            continue
+        name = marker.args[0]
+        if name not in wanted:
+            item.add_marker(pytest.mark.skip(
+                reason='optional suite {0!r} not enabled; '
+                       'run with --suite {0} or WEKO_E2E_SUITES={0}'.format(
+                           name)))
+
+
+_FAILED = {}
+"""The first step of each flow module that failed, keyed by module."""
+
+
+def pytest_runtest_makereport(item, call):
+    """Remember the first step of a flow that failed."""
+    if call.when == 'call' and call.excinfo is not None:
+        _FAILED.setdefault(item.module.__name__, item.name)
+
+
+def pytest_runtest_setup(item):
+    """Skip the rest of a flow once one of its steps has failed.
+
+    The tests of one module are a single flow cut into steps, so once a
+    step fails the ones after it cannot say anything useful; reporting
+    them as skipped rather than failed keeps the one real failure visible.
+    """
+    failed = _FAILED.get(item.module.__name__)
+    if failed:
+        pytest.skip('the flow stopped at {0}'.format(failed))
+
+
+@pytest.fixture(scope='session')
+def base_settings():
+    """Return the settings this run works with.
+
+    What the whole session shares: the instance, the account, the ledger.
+    A test wants :func:`settings` instead, which adds names of its own.
+    """
+    return Settings()
+
+
+def _suite_of(module):
+    """Return the optional suite a test module belongs to, or None.
+
+    ``pytestmark`` is one mark or a list of them, depending on how the
+    module spelled it.
+    """
+    marks = getattr(module, 'pytestmark', None) or []
+    if not isinstance(marks, (list, tuple)):
+        marks = [marks]
+    for mark in marks:
+        if getattr(mark, 'name', None) == 'suite' and mark.args:
+            return mark.args[0]
+    return None
+
+
+@pytest.fixture(scope='module')
+def settings(base_settings, request):
+    """Return the settings this module works with.
+
+    The same settings, with resource names that belong to this module
+    alone, so that several suites can run in one session without asking
+    WEKO for two flows of the same name.
+    """
+    return base_settings.scoped(_suite_of(request.module))
+
+
+@pytest.fixture(scope='session')
+def ledger(base_settings):
+    """Return the ledger, with this run opened in it."""
+    book = Ledger(base_settings.state_path)
+    book.start_run(base_settings.run_id, base_settings.base_url,
+                   base_settings.label)
+    print('\nrun {0} against {1}; ledger {2}'.format(
+        base_settings.run_id, base_settings.base_url, book.path))
+    return book
+
+
+@pytest.fixture(scope='session')
+def record(ledger, base_settings):
+    """Return a function recording one created resource in the ledger.
+
+    Every step calls this as soon as WEKO has created something, so that a
+    run which fails half way is still cleanable.
+
+    :return: ``record(kind, identifier, name=None)``
+    """
+    def note(kind, identifier, name=None):
+        """Write one resource to the ledger and return its identifier."""
+        ledger.add(base_settings.run_id, kind, identifier, name)
+        return identifier
+
+    return note
+
+
+@pytest.fixture(scope='session')
+def client(base_settings):
+    """Return a logged in HTTP client, for setup and for verification."""
+    return WekoClient(base_settings).login()
+
+
+@pytest.fixture(scope='session')
+def visitor(base_settings):
+    """Return a session that has not logged in."""
+    return anonymous_session(base_settings)
+
+
+@pytest.fixture(scope='session')
+def browser(base_settings):
+    """Return the one browser the whole run shares."""
+    from playwright.sync_api import sync_playwright
+
+    args = ['--host-resolver-rules={0}'.format(base_settings.host_map)] \
+        if base_settings.host_map else []
+    with sync_playwright() as playwright:
+        instance = playwright.chromium.launch(
+            headless=not base_settings.headed, args=args)
+        yield instance
+        instance.close()
+
+
+@pytest.fixture(scope='session')
+def page(browser, base_settings):
+    """Return the one page every step of the run shares."""
+    context = browser.new_context(
+        ignore_https_errors=True,
+        viewport={'width': 1440, 'height': 1000},
+        locale='en-US')
+    context.set_default_timeout(base_settings.timeout)
+    page = context.new_page()
+    yield page
+    context.close()
+
+
+@pytest.fixture(scope='session')
+def visitor_page(browser, base_settings):
+    """Return a page in a context that has never logged in.
+
+    Used to show what the item looks like to the public, which is the
+    whole point of the last steps; it has to be a separate context,
+    because the run's own page is logged in as an administrator.
+    """
+    context = browser.new_context(
+        ignore_https_errors=True,
+        viewport={'width': 1440, 'height': 1000},
+        locale='en-US')
+    context.set_default_timeout(base_settings.timeout)
+    page = context.new_page()
+    yield page
+    context.close()
+
+
+@pytest.fixture(scope='session')
+def shot():
+    """Return a function that writes a numbered screenshot.
+
+    The screenshots are the evidence of a run: every step leaves one
+    behind under ``e2e/evidence/images``, named so that re-running
+    replaces them in place and the report never drifts from the run.
+
+    :return: ``shot(page, name)``, writing
+        ``e2e/evidence/images/<name>.png``
+    """
+    if not os.path.isdir(EVIDENCE):
+        os.makedirs(EVIDENCE)
+
+    def take(page, name, full_page=True):
+        """Write one screenshot and return its path."""
+        path = os.path.join(EVIDENCE, '{0}.png'.format(name))
+        page.wait_for_timeout(500)
+        page.screenshot(path=path, full_page=full_page)
+        print('screenshot: {0}'.format(path))
+        return path
+
+    return take
+
+
+@pytest.fixture(scope='session')
+def flow_state():
+    """Return the dict the steps of one flow hand each other values in.
+
+    The steps are a single flow cut into tests, so what one learns -- the
+    index id, the activity id, the record id -- the next ones need.
+    """
+    return {}
+
+
+@pytest.fixture(scope='session', autouse=True)
+def cleanup(request, base_settings):
+    """Clean the run up at the end, when the run was asked to.
+
+    The tool does the deleting, so that what a test run cleans and what
+    ``./e2ectl clean`` cleans cannot drift apart.
+    """
+    yield
+    if not request.config.getoption('--clean-after'):
+        print('\nleft behind for inspection; remove with: '
+              './e2ectl clean --run {0}'.format(base_settings.run_id))
+        return
+    from weko_e2e.cli import main
+
+    argv = ['clean', '--run', base_settings.run_id]
+    if request.config.getoption('--clean-hard'):
+        argv.append('--hard')
+    print('\ncleaning up run {0}'.format(base_settings.run_id))
+    main(argv)
