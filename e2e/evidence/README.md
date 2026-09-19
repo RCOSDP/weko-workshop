@@ -1,19 +1,23 @@
-# E2E test run report (the base flow)
+# E2E test run report
 
 日本語版: [`README.ja.md`](README.ja.md)
 
-A record of running [`../tests/test_basic_publish.py`](../tests/test_basic_publish.py)
-against an instance brought up by `install.sh`. The test takes the
-screenshots itself as it goes, so re-running it refreshes them in place and
-this report cannot drift from the code.
+A record of running the suite against an instance brought up by
+`install.sh`. The tests take the screenshots themselves as they go, so
+re-running refreshes them in place and this report cannot drift from the
+code.
+
+This is the run, the base flow and the cleaning up. Each optional suite has
+a report of its own, [listed below](#the-optional-suites), beside the
+screenshots it is written from.
 
 ## Result
 
 | | |
 | --- | --- |
-| Run at | 2026-09-19 03:31:03 – 03:36:41 (UTC) |
-| Run id | `20260919-033104` |
-| Result | **37 passed, 2 skipped** (337.38 s) |
+| Run at | 2026-09-19 04:37:49 – 04:43:26 (UTC) |
+| Run id | `20260919-043749` |
+| Result | **37 passed, 2 skipped** (336.58 s) |
 | Against | `https://localhost` (`install.sh` / `docker-compose2.yml`) |
 | Suites | base, `ark` (against the stand-in ARK server), `coarnotify`, `crossref` |
 | Cleaned up with | `./e2ectl clean --hard`; the database, and the inbox, went back to how `install.sh` left them |
@@ -68,12 +72,13 @@ tests/test_crossref_doi.py::test_08_doi_is_published PASSED
 tests/test_crossref_doi.py::test_09_deposit_was_recorded SKIPPED
 tests/test_crossref_doi.py::test_10_deposit_reached_crossref SKIPPED
 
-============ 37 passed, 2 skipped, 20 warnings in 337.38s (0:05:37) ============
+============ 37 passed, 2 skipped, 20 warnings in 336.58s (0:05:36) ============
 ```
 
 The two skips are the Crossref deposit: this instance was given no
 Crossref account, so WEKO grants the DOI and sends nothing, which is the
-documented behaviour. The deposit path is verified separately, below.
+documented behaviour. The deposit path is verified separately; see
+[`crossref/README.md`](crossref/README.md).
 
 The warnings are all `InsecureRequestWarning` for the self signed
 certificate, and say nothing about the behaviour under test.
@@ -108,17 +113,17 @@ four suites can share one session:
 
 | Suite | index | flow / workflow | activity | item |
 | --- | --- | --- | --- | --- |
-| base | `1789788748142` | `80fe7b37…` / `3e1c6c93…` | `A-20260919-00010` | `2000049` |
-| `ark` | `1789788681275` | `b8003d70…` / `e10b1a8b…` | `A-20260919-00009` | `2000048` |
-| `coarnotify` | `1789788837713` | `a6419b6e…` / `ef72e531…` | `A-20260919-00011` | `2000050` |
-| `crossref` | `1789788922177` | `efd70637…` / `b3f63b3e…` | `A-20260919-00012` | `2000051` |
+| base | `1789792754033` | `3e5875f0…` / `04c12c39…` | `A-20260919-00014` | `2000053` |
+| `ark` | `1789792686782` | `a92947f8…` / `bcf6c81e…` | `A-20260919-00013` | `2000052` |
+| `coarnotify` | `1789792844096` | `41fb8d9f…` / `64c39c83…` | `A-20260919-00015` | `2000054` |
+| `crossref` | `1789792927666` | `a56e2f94…` / `fb89d190…` | `A-20260919-00016` | `2000055` |
 
 What the optional suites were after:
 
 | | |
 | --- | --- |
 | ARK minted | `ark:/99999/fk400002` |
-| Crossref DOI granted | `10.5555/0002000051` |
+| Crossref DOI granted | `10.5555/0002000055` |
 | COAR Notify sent | 5 notifications: one approval request per suite that registered an item, and the approval announcement the `coarnotify` suite asked for |
 
 ---
@@ -134,7 +139,7 @@ As the system administrator `wekosoftware@nii.ac.jp`.
 ### 02. Create the test index (test_02_create_index)
 
 Create the index and publish it. The admin Index Tree shows
-`E2E Index 20260919-033104` next to the shipped `Sample Index`.
+`E2E Index 20260919-043749` next to the shipped `Sample Index`.
 
 A newly created index is private, which is why this step publishes it;
 without that, step 12 fails.
@@ -175,7 +180,7 @@ Title and Resource Type.
 
 ### 07. Designate the index (test_07_designate_index)
 
-Tick `E2E Index 20260919-033104` in the index tree; DESIGNATE INDEX shows
+Tick `E2E Index 20260919-043749` in the index tree; DESIGNATE INDEX shows
 it.
 
 ![The index designated](images/08-index-designated.png)
@@ -208,7 +213,7 @@ published.
 
 ### 11. The item is registered (test_11_record_is_registered)
 
-`/records/2000049` exists and shows the title the run registered.
+`/records/2000053` exists and shows the title the run registered.
 
 ![The item page, as the administrator](images/13-record-page.png)
 
@@ -232,195 +237,21 @@ doing their job.
 
 ---
 
-## The `ark` suite
+## The optional suites
 
-Run against the stand-in ARK server -- `e2ectl ark-stub enable` -- because
-this instance has no ARK server of its own. The same suite run against a
-real one, configured with `e2ectl ark-account enable`, is what the
-"Other environments" table below records.
+Each has a report of its own, with the screenshots it is written from
+beside it -- the same split the suites have in the code, so a suite can be
+read, or added, without the others.
 
-### Register an item, granting no DOI (test_03)
+| Suite | Report | Result | What it checks |
+| --- | --- | --- | --- |
+| `ark` | [`ark/README.md`](ark/README.md) | 6 passed | an ARK is minted for the item and becomes its permalink |
+| `coarnotify` | [`coarnotify/README.md`](coarnotify/README.md) | 10 passed | the approval request and the approval are announced over COAR Notify, and reach the people they are meant to |
+| `crossref` | [`crossref/README.md`](crossref/README.md) | 8 passed, 2 skipped | a Crossref DOI is granted to the item and becomes its permalink |
 
-The ARK is minted on the way through, when Item Registration completes,
-so nothing on screen asks for one.
-
-![The approval screen of the ARK run](images/ark-02-approval.png)
-
-![After approval](images/ark-03-approved.png)
-
-### The item carries an ARK (test_04, test_05)
-
-The permalink of an item with no DOI and no CNRI is its ARK, so the
-record page is where a minted ARK shows up -- here `ark:/99999/fk400002`,
-under the NAAN this environment was configured for.
-
-![The record page, showing the ARK as its permalink](images/ark-04-record-page.png)
-
----
-
-## The `coarnotify` suite
-
-WEKO turns workflow events into COAR Notify messages and POSTs them to the
-LDN inbox -- the `inbox` container of this stack -- and reads them back
-for the person they were addressed to at `GET /api/notifications`.
-
-**Who receives what is the point.** WEKO leaves the person who acted out
-of the notification about their own action, so this suite uses two
-accounts: `wekosoftware@nii.ac.jp` registers, and
-`repoadmin@example.org` -- the repository administrator approval
-requests go to -- approves.
-
-### The site announces its inbox (test_02)
-
-```console
-$ curl -sI --insecure https://localhost/ | grep -i '^link:'
-Link: <https://weko3.example.org/inbox>; rel="http://www.w3.org/ns/ldp#inbox"
-```
-
-The URL is built from `THEME_SITEURL`, which is what the instance calls
-itself and need not be the address the run is testing -- so the suite
-fetches a notification by its *path* from the instance under test. WEKO
-adds the header to a HEAD of the top page and not to a GET, which is what
-the step asks for accordingly.
-
-A visitor who has not logged in gets a 401 from `/api/notifications`
-rather than somebody else's notifications (test_03).
-
-### The item goes to the approver (test_06, test_07)
-
-Moving on from the identifier grant puts the activity on the Approval
-action, which is where WEKO offers it to the approvers.
-
-![The activity waiting for approval](images/coarnotify-01-awaiting-approval.png)
-
-Read back as `repoadmin@example.org`, and then fetched from the inbox:
-
-```json
-{
-  "id": "urn:uuid:2d6758d5-ff84-44ba-a23d-2c3e8e3c3122",
-  "@context": ["https://www.w3.org/ns/activitystreams", "https://coar-notify.net"],
-  "type": ["Offer", "coar-notify:EndorsementAction"],
-  "origin": {"id": "https://localhost/", "inbox": "…/inbox", "type": "Service"},
-  "target": {"id": "https://weko3.example.org/users/2", "inbox": "…/inbox", "type": "Person"},
-  "object": {"id": "https://localhost/records/2000050",
-             "type": ["Page", "sorg:WebPage"],
-             "name": "E2E item 20260919-033104-coarnotify"},
-  "actor":  {"id": "https://weko3.example.org/users/1", "type": "Person"},
-  "context": {"id": "https://localhost/workflow/activity/detail/A-20260919-00011",
-              "type": ["Page", "sorg:WebPage"]}
-}
-```
-
-`context` is what ties a notification to one activity, and so the only
-thing in the payload that names *this* run's; the suite finds its own by
-it rather than by taking whatever arrived last.
-
-### The approver approves (test_08)
-
-The approver opens the activity in a browsing context of their own. WEKO
-holds an activity for the window that has it open, so the registrant
-moves off the screen first -- as a person handing work over would -- and
-the approver lets go of anything an earlier run left them holding.
-
-![The approval screen, as the approver](images/coarnotify-02-approver-screen.png)
-
-![After approval](images/coarnotify-03-approved.png)
-
-### The approval goes back to the registrant (test_09)
-
-```
-urn:uuid:fce8aee7-18a4-4e52-9ffc-7c5ce3c5d396
-  Announce+coar-notify:EndorsementAction
-  -> https://weko3.example.org/users/1
-  about 'E2E item 20260919-033104-coarnotify' (https://localhost/records/2000050)
-```
-
-`users/1` is the registrant, and the `actor` is `users/2` -- the account
-the offer was addressed to. The step checks exactly that: the person the
-item was offered to is the person the announcement names as having
-endorsed it, and the announcement did not go back to the person who made
-it.
-
-`./e2ectl inbox --run <run id>` shows both ends of the loop:
-
-```console
-$ ./e2ectl inbox --run 20260919-033104
-registrant: wekosoftware@nii.ac.jp
-  announced inbox: https://weko3.example.org/inbox
-  2026-09-19 03:35:00  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260919-033104-coarnotify'
-  1 of 1 notification(s) shown
-approver: repoadmin@example.org
-  2026-09-19 03:34:43  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-033104-coarnotify'
-  2026-09-19 03:36:10  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-033104-crossref'
-  2026-09-19 03:32:06  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-033104-ark'
-  2026-09-19 03:33:29  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-033104'
-  4 of 40 notification(s) shown
-```
-
-Four offers, because **every** suite that registers an item sends one --
-the base suite and the two identifier suites included. The announcement
-is the `coarnotify` suite's own, and the only one in this run, because it
-is the only suite that has somebody other than the registrant approve.
-
-### How the user asks to be told (test_10)
-
-![The notification settings screen](images/coarnotify-04-settings.png)
-
-Web push and Email, per user. The suite checks the screen offers both;
-turning web push on needs a browser notification permission and VAPID
-keys on the inbox container, which this stack does not have set.
-
----
-
-## The `crossref` suite
-
-### The prefix is configured (test_01)
-
-The suite turns the Crossref grant on and sets the prefix, and puts both
-back the way it found them when it is done.
-
-![The identifier settings with the prefix set](images/crossref-01-identifier-settings.png)
-
-### The metadata a deposit needs (test_03)
-
-Crossref will not take a journal article without the journal, its ISSN
-and the date it was issued, so the suite fills those in where the base
-flow does not.
-
-![The metadata form with the journal fields filled in](images/crossref-02-item-metadata.png)
-
-### The Crossref grant is offered, and taken (test_04)
-
-![The identifier grant screen offering the Crossref DOI](images/crossref-03-grant-chosen.png)
-
-### Approve, and read the DOI (test_05 to test_08)
-
-![The approval screen](images/crossref-04-approval.png)
-
-![After approval](images/crossref-05-approved.png)
-
-The item carries `10.5555/0002000051`, under the prefix the suite
-configured, and shows it as its permalink.
-
-![The record page, showing the DOI](images/crossref-06-record-page.png)
-
-### The deposit (test_09, test_10)
-
-Skipped here, for want of an account. Verified separately against a
-stand-in for Crossref, which is what showed the whole path works:
-
-```
-granted DOI: 10.5555/0002000032
-deposit: {'id': 1, 'agency': 'Crossref', 'status': 'submitted', 'attempt': 1,
-          'poll': 0, 'http': 200, 'tracking_id': 'weko-82309c1d…-20260917222135'}
-deposit: {'id': 1, 'agency': 'Crossref', 'status': 'success', 'attempt': 1,
-          'poll': 1, 'http': 200, 'error': 'Crossref registered the DOI.'}
-→ 10 passed
-```
-
-With `WEKO_E2E_CROSSREF_DEPOSIT` set and an account written into the
-instance by `e2ectl crossref-account enable`, those two steps wait for
-the worker to deposit and report what Crossref said.
+The two skips are the Crossref deposit, which this instance has no account
+for; `crossref/README.md` records the deposit path being verified
+separately.
 
 ---
 
@@ -431,41 +262,41 @@ looked at. The ledger says what is still there.
 
 ```console
 $ ./e2ectl status          # the run_id on the Settings line is this call's, not the run's
-Settings(base_url='https://localhost', run_id='20260919-033742', label='E2E')
+Settings(base_url='https://localhost', run_id='20260919-044426', label='E2E')
 ledger: /home/mhaya/weko-workshop/e2e/.e2e-state.json
-  run 20260919-033104  started 2026-09-19T03:31:21  20 resource(s)
-    index     1789788681275            E2E Index 20260919-033104-ark
-    flow      b8003d70-3c24-4c10-95e9-e6b3cc9a2829 E2E Flow 20260919-033104-ark
-    workflow  e10b1a8b-f5ce-4421-8601-18a876d7ec4e E2E Workflow 20260919-033104-ark
-    activity  A-20260919-00009         E2E Workflow 20260919-033104-ark
-    item      2000048                  E2E item 20260919-033104-ark
-    index     1789788748142            E2E Index 20260919-033104
+  run 20260919-043749  started 2026-09-19T04:38:06  20 resource(s)
+    index     1789792686782            E2E Index 20260919-043749-ark
+    flow      a92947f8-df56-4b86-a9d5-fe116b7677a8 E2E Flow 20260919-043749-ark
+    workflow  bcf6c81e-62b2-44dc-9624-d6eceb5d50a0 E2E Workflow 20260919-043749-ark
+    activity  A-20260919-00013         E2E Workflow 20260919-043749-ark
+    item      2000052                  E2E item 20260919-043749-ark
+    index     1789792754033            E2E Index 20260919-043749
     ...                                (the base suite's five)
-    index     1789788837713            E2E Index 20260919-033104-coarnotify
+    index     1789792844096            E2E Index 20260919-043749-coarnotify
     ...                                (the coarnotify suite's five)
-    index     1789788922177            E2E Index 20260919-033104-crossref
+    index     1789792927666            E2E Index 20260919-043749-crossref
     ...                                (the crossref suite's five)
 ```
 
 ```console
 $ ./e2ectl clean --hard
-deleted  item 2000048 E2E item 20260919-033104-ark
-deleted  item 2000049 E2E item 20260919-033104
-deleted  item 2000050 E2E item 20260919-033104-coarnotify
-deleted  item 2000051 E2E item 20260919-033104-crossref
-deleted  activity A-20260919-00009 ...
-deleted  workflow e10b1a8b-f5ce-4421-8601-18a876d7ec4e ...
-deleted  flow b8003d70-3c24-4c10-95e9-e6b3cc9a2829 ...
-deleted  index 1789788681275 E2E Index 20260919-033104-ark
-deleted  index 1789788748142 E2E Index 20260919-033104
-deleted  index 1789788837713 E2E Index 20260919-033104-coarnotify
-deleted  index 1789788922177 E2E Index 20260919-033104-crossref
+deleted  item 2000052 E2E item 20260919-043749-ark
+deleted  item 2000053 E2E item 20260919-043749
+deleted  item 2000054 E2E item 20260919-043749-coarnotify
+deleted  item 2000055 E2E item 20260919-043749-crossref
+deleted  activity A-20260919-00013 ...
+deleted  workflow bcf6c81e-62b2-44dc-9624-d6eceb5d50a0 ...
+deleted  flow a92947f8-df56-4b86-a9d5-fe116b7677a8 ...
+deleted  index 1789792686782 E2E Index 20260919-043749-ark
+deleted  index 1789792754033 E2E Index 20260919-043749
+deleted  index 1789792844096 E2E Index 20260919-043749-coarnotify
+deleted  index 1789792927666 E2E Index 20260919-043749-crossref
 hard purge: docker compose -f docker-compose2.yml exec -T web invenio shell /tmp/weko-e2e-purge.py /tmp/weko-e2e-purge.json
-purged items: 2000048, 2000049, 2000050, 2000051
-purged activities: A-20260919-00009, A-20260919-00010, A-20260919-00011, A-20260919-00012
-purged workflows: e10b1a8b-..., 3e1c6c93-..., ef72e531-..., b3f63b3e-...
-purged flows: b8003d70-..., 80fe7b37-..., a6419b6e-..., efd70637-...
-purged indexes: 1789788681275, 1789788748142, 1789788837713, 1789788922177
+purged items: 2000052, 2000053, 2000054, 2000055
+purged activities: A-20260919-00013, A-20260919-00014, A-20260919-00015, A-20260919-00016
+purged workflows: bcf6c81e-..., 04c12c39-..., 64c39c83-..., fb89d190-...
+purged flows: a92947f8-..., 3e5875f0-..., 41fb8d9f-..., a56e2f94-...
+purged indexes: 1789792686782, 1789792754033, 1789792844096, 1789792927666
 purged notifications: 5
 ```
 
@@ -496,7 +327,7 @@ included, and the inbox to the 36 notifications it held before the run.
 The item's page is gone too.
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000049
+$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000053
 404
 ```
 

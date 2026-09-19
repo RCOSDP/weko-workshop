@@ -23,8 +23,14 @@ from weko_e2e.config import (E2E_DIR, OPTIONAL_SUITES,  # noqa: E402
                              Settings, parse_suites)
 from weko_e2e.ledger import Ledger  # noqa: E402
 
-EVIDENCE = os.path.join(E2E_DIR, 'evidence', 'images')
-"""Where the screenshots each step leaves behind are written."""
+EVIDENCE = os.path.join(E2E_DIR, 'evidence')
+"""Where the report of a run and its screenshots are written.
+
+The base flow's report is ``evidence/README.md`` and its screenshots are
+``evidence/images/``; each optional suite has a folder of its own beside
+them, so that a suite's report and the screenshots it is written from
+travel together.
+"""
 
 
 def pytest_addoption(parser):
@@ -215,23 +221,31 @@ def visitor_page(browser, base_settings):
     page.context.close()
 
 
-@pytest.fixture(scope='session')
-def shot():
+@pytest.fixture(scope='module')
+def shot(request):
     """Return a function that writes a numbered screenshot.
 
     The screenshots are the evidence of a run: every step leaves one
-    behind under ``e2e/evidence/images``, named so that re-running
-    replaces them in place and the report never drifts from the run.
+    behind, named so that re-running replaces it in place and the report
+    never drifts from the run.
+
+    A module writes into the folder its own report is written from -- the
+    base flow into ``evidence/images``, an optional suite into
+    ``evidence/<suite>/images`` -- so a step names only itself and two
+    suites cannot overwrite each other's evidence.
 
     :return: ``shot(page, name)``, writing
-        ``e2e/evidence/images/<name>.png``
+        ``e2e/evidence/[<suite>/]images/<name>.png``
     """
-    if not os.path.isdir(EVIDENCE):
-        os.makedirs(EVIDENCE)
+    suite = _suite_of(request.module)
+    directory = os.path.join(EVIDENCE, suite, 'images') if suite \
+        else os.path.join(EVIDENCE, 'images')
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
 
     def take(page, name, full_page=True):
         """Write one screenshot and return its path."""
-        path = os.path.join(EVIDENCE, '{0}.png'.format(name))
+        path = os.path.join(directory, '{0}.png'.format(name))
         page.wait_for_timeout(500)
         page.screenshot(path=path, full_page=full_page)
         print('screenshot: {0}'.format(path))

@@ -62,10 +62,10 @@ def test_03_register_item(page, settings, record, flow_state, shot):
     flow.leave_item_link(page, settings)
     flow.choose_identifier_grant(page, settings, value='0')
 
-    shot(page, 'ark-02-approval')
+    shot(page, '02-approval')
     flow_state['recid'] = flow.approve(page)
     record('item', flow_state['recid'], settings.item_title)
-    shot(page, 'ark-03-approved')
+    shot(page, '03-approved')
 
 
 def test_04_ark_was_minted(client, settings, flow_state):
@@ -102,7 +102,7 @@ def test_05_ark_is_the_permalink(page, settings, flow_state, shot):
     page.goto(settings.url('/records/{0}'.format(recid)))
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(2000)
-    shot(page, 'ark-04-record-page')
+    shot(page, '04-record-page')
 
     permalink = page.locator("text=/{0}/".format(ARK_PREFIX)).locator(
         'visible=true')

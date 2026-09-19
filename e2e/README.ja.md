@@ -35,7 +35,7 @@ WEKO のチェックアウトの中ではなくこのリポジトリに置いて
 | `weko_e2e/inboxpurge.py` | 同じものの inbox コンテナ版（LDN Inbox の通知を消す） |
 | `weko_e2e/cli.py`, `e2ectl` | テストツール本体 |
 | `environments/` | コピーして使う環境ファイルの雛形 |
-| `evidence/` | 直近の実行記録とエビデンス画像 |
+| `evidence/` | 直近の実行記録とエビデンス画像。オプションスイートごとにフォルダが分かれる |
 
 ## 準備
 
@@ -561,6 +561,18 @@ DB から消すため、compose ファイルを持つ WEKO のチェックアウ
 
 ## 実行記録
 
-直近の実行記録とエビデンス画像は
-[`evidence/README.ja.md`](evidence/README.ja.md) にあります。画像はテスト自身が
-各ステップで撮るので、再実行すれば `evidence/images/` が丸ごと撮り直されます。
+[`evidence/README.ja.md`](evidence/README.ja.md) が実行全体・基本スイート・
+後始末です。オプションスイートはそれぞれ専用の記録を持ち、その記録が使う
+画像も隣にあります。
+
+```
+evidence/
+├── README.md, README.ja.md      実行全体と基本スイート
+├── images/                      基本スイートの画像
+├── ark/README.ja.md, images/    ark スイートとその画像
+├── coarnotify/README.ja.md, …
+└── crossref/README.ja.md, …
+```
+
+画像はテスト自身が固定の名前で撮るので、スイートを再実行すればそのスイートの
+フォルダだけが撮り直され、記録が実装から乖離しません。

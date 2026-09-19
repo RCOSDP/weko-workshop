@@ -130,7 +130,7 @@ def test_01_prefix_is_set(page, settings, shot):
     page.goto(settings.url('/admin/identifier/'))
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(1000)
-    shot(page, 'crossref-01-identifier-settings')
+    shot(page, '01-identifier-settings')
 
     row = page.locator('table tbody tr').first.inner_text()
     assert settings.crossref_prefix in row, \
@@ -153,7 +153,7 @@ def test_03_register_item(page, settings, record, flow_state, shot):
     flow.upload_sample_file(page, settings)
     flow.fill_required_metadata(page, settings, item_type_id)
     flow.fill_journal_metadata(page, item_type_id)
-    shot(page, 'crossref-02-item-metadata')
+    shot(page, '02-item-metadata')
 
     flow.leave_metadata_screen(page, settings)
     flow.designate_index(page, settings)
@@ -169,15 +169,15 @@ def test_04_choose_crossref_grant(page, settings, shot):
             settings.crossref_prefix)
 
     flow.choose_identifier_grant(page, settings, value=CROSSREF_GRANT)
-    shot(page, 'crossref-03-grant-chosen')
+    shot(page, '03-grant-chosen')
 
 
 def test_05_approve(page, settings, record, flow_state, shot):
     """Approve, which is where WEKO grants the DOI."""
-    shot(page, 'crossref-04-approval')
+    shot(page, '04-approval')
     flow_state['recid'] = flow.approve(page)
     record('item', flow_state['recid'], settings.item_title)
-    shot(page, 'crossref-05-approved')
+    shot(page, '05-approved')
 
 
 def test_06_doi_was_granted(client, settings, flow_state):
@@ -202,7 +202,7 @@ def test_07_doi_is_the_permalink(page, settings, flow_state, shot):
     page.goto(settings.url('/records/{0}'.format(flow_state['recid'])))
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(2000)
-    shot(page, 'crossref-06-record-page')
+    shot(page, '06-record-page')
 
     assert flow_state['doi'] in page.content(), \
         'the record page does not show the DOI that was granted'

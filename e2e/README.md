@@ -37,7 +37,7 @@ written to a ledger, and `./e2ectl clean` removes it again.
 | `weko_e2e/inboxpurge.py` | The same for the LDN inbox, run in the `inbox` container |
 | `weko_e2e/cli.py`, `e2ectl` | The tool |
 | `environments/` | Environment files to copy and change |
-| `evidence/` | The last run's report and its screenshots |
+| `evidence/` | The last run's report and its screenshots, one folder per optional suite |
 
 ## Setting up
 
@@ -586,7 +586,19 @@ only delete what is in the ledger, and what `--discover` finds.
 
 ## The last run
 
-The report and the screenshots are in
-[`evidence/README.md`](evidence/README.md). The test takes the screenshots
-itself as it goes, so re-running it refreshes the whole of
-`evidence/images/`.
+[`evidence/README.md`](evidence/README.md) is the run, the base flow and
+the cleaning up. Each optional suite has a report of its own, beside the
+screenshots it is written from:
+
+```
+evidence/
+├── README.md, README.ja.md      the run, and the base flow
+├── images/                      what the base flow's steps photographed
+├── ark/README.md, images/       the ark suite, and its own screenshots
+├── coarnotify/README.md, …
+└── crossref/README.md, …
+```
+
+The tests take the screenshots themselves as they go, under fixed names,
+so re-running a suite refreshes that suite's folder in place and the
+report cannot drift from the code.

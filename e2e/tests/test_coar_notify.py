@@ -150,7 +150,7 @@ def test_06_send_the_item_for_approval(page, client, approver, settings,
     flow.choose_identifier_grant(page, settings, value='0')
 
     assert ui.current_step(page) == ui.APPROVAL
-    shot(page, 'coarnotify-01-awaiting-approval')
+    shot(page, '01-awaiting-approval')
 
 
 def test_07_the_approver_is_offered_the_item(approver, settings, flow_state):
@@ -208,11 +208,11 @@ def test_08_the_approver_approves(page, approver, approver_page, settings,
         'the approver ({0}) is not being shown the approval screen of {1}, '
         'but "{2}"'.format(settings.approver_email, activity_id,
                            ui.current_step(approver_page)))
-    shot(approver_page, 'coarnotify-02-approver-screen')
+    shot(approver_page, '02-approver-screen')
 
     flow_state['recid'] = flow.approve(approver_page)
     record('item', flow_state['recid'], settings.item_title)
-    shot(approver_page, 'coarnotify-03-approved')
+    shot(approver_page, '03-approved')
 
 
 def test_09_the_registrant_is_told_it_was_approved(client, settings,
@@ -253,7 +253,7 @@ def test_10_the_user_can_choose_how_to_be_notified(page, settings, shot):
     page.goto(settings.url('/account/settings/notifications/'))
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(1500)
-    shot(page, 'coarnotify-04-settings')
+    shot(page, '04-settings')
 
     for name in ('notifications-subscribe_webpush',
                  'notifications-subscribe_email'):
