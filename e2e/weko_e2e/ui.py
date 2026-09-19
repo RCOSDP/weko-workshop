@@ -47,6 +47,22 @@ def sample_file(name='weko-e2e-sample.pdf'):
 
 # -- session ---------------------------------------------------------------
 
+def new_page(browser, settings):
+    """Return a page in a browsing context of its own.
+
+    A context is what holds the cookies, so one per account: the run's own
+    page is logged in as the registrant, and a page that has to be
+    somebody else -- the approver, or a visitor who has not logged in --
+    cannot share it.  Close ``page.context`` when done with it.
+    """
+    context = browser.new_context(
+        ignore_https_errors=True,
+        viewport={'width': 1440, 'height': 1000},
+        locale='en-US')
+    context.set_default_timeout(settings.timeout)
+    return context.new_page()
+
+
 def dismiss_cookie_banner(page):
     """Accept the cookie banner, if this instance shows one.
 
@@ -163,6 +179,19 @@ def quit_activity(page, settings, identifier):
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(4000)
     return identifier
+
+
+def leave_activity(page, settings):
+    """Leave the activity screen, which lets go of the lock on it.
+
+    WEKO locks an activity to the window that has it open and releases
+    the lock as that window unloads, so a second person can take the
+    activity over only once the first has moved on.  A run in which the
+    registrant hands an item to an approver has to do the same.
+    """
+    page.goto(settings.url('/'))
+    page.wait_for_load_state('networkidle')
+    page.wait_for_timeout(2000)
 
 
 def force_unlock(page):

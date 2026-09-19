@@ -11,6 +11,7 @@ gives its resources.
     e2ectl ark-stub enable        a stand-in ARK server, when there is none
     e2ectl crossref-account enable    the Crossref account, for depositing
     e2ectl doi-log                what WEKO sent to a registration agency
+    e2ectl inbox                  what WEKO sent over COAR Notify
     e2ectl ping                   can it reach the instance and log in
     e2ectl status                 what is still there
     e2ectl clean                  delete it, the way the screens do
@@ -27,13 +28,18 @@ import sys
 
 import requests
 
+from . import notify
 from .client import WekoClient, WekoError
 from .config import HERE, Settings
+from .inboxpurge import MARKER as INBOX_MARKER
 from .ledger import KINDS, Ledger
 from .purge import MARKER
 
 PURGE_IN_CONTAINER = '/tmp/weko-e2e-purge.py'
 SPEC_IN_CONTAINER = '/tmp/weko-e2e-purge.json'
+INBOX_PURGE_IN_CONTAINER = '/tmp/weko-e2e-inbox-purge.py'
+INBOX_SHOWN = 10
+"""How many notifications ``e2ectl inbox`` prints per account."""
 LOG_MARKER = 'WEKO_E2E_DOI_LOG: '
 """Prefix of the one line :func:`deposit_log` reads back."""
 
@@ -262,19 +268,25 @@ def _compose(settings, *arguments):
     return ['docker', 'compose', '-f', settings.compose_file] + list(arguments)
 
 
+def _in_service(settings, service, *arguments):
+    """Return a command line running something in one container."""
+    return _compose(settings, 'exec', '-T', service, *arguments)
+
+
 def _in_web(settings, *arguments):
     """Return a command line running something in the web container."""
-    return _compose(settings, 'exec', '-T', settings.web_service,
-                    *arguments)
+    return _in_service(settings, settings.web_service, *arguments)
 
 
-def _copy_into_container(settings, content, path):
-    """Write bytes to a path inside the ``web`` container.
+def _copy_into_container(settings, content, path, service=None):
+    """Write bytes to a path inside a container.
 
+    :param service: the compose service, defaulting to ``web``
     :return: True when the container took it
     """
     result = subprocess.run(
-        _in_web(settings, 'sh', '-c', 'cat > {0}'.format(path)),
+        _in_service(settings, service or settings.web_service,
+                    'sh', '-c', 'cat > {0}'.format(path)),
         cwd=settings.weko_repo, input=content,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if result.returncode:
@@ -327,6 +339,105 @@ def _hard_purge(settings, targets):
                 str(value) for value in report[kind])))
     for error in report.get('errors') or []:
         print('purge error: {0}'.format(error))
+    _purge_inbox(settings, targets)
+
+
+def _purge_inbox(settings, targets):
+    """Remove from the LDN inbox what this run's activities announced.
+
+    The inbox is a service of its own with a database of its own, so it
+    does not go back to its baseline when the WEKO database does; the
+    notifications a run sent would otherwise pile up there for ever.
+
+    Silent where the instance has no inbox container to speak to: an
+    instance reached over the network is not a stack this tool can run
+    ``docker compose`` in, and that is not an error.
+    """
+    activities = [resource['id'] for resource in targets['activity']]
+    if not activities:
+        return
+    with open(os.path.join(HERE, 'inboxpurge.py'), 'rb') as handle:
+        script = handle.read()
+    if not _copy_into_container(settings, script, INBOX_PURGE_IN_CONTAINER,
+                                service=settings.inbox_service):
+        print('no {0} container to clear; the notifications this run sent '
+              'are still in the inbox'.format(settings.inbox_service))
+        return
+
+    result = subprocess.run(
+        _in_service(settings, settings.inbox_service, 'sh', '-c',
+                    'cd /app && python {0} {1}'.format(
+                        INBOX_PURGE_IN_CONTAINER, ' '.join(activities))),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = result.stdout.decode('utf-8', 'replace')
+    report = None
+    for line in output.splitlines():
+        if line.startswith(INBOX_MARKER):
+            report = json.loads(line[len(INBOX_MARKER):])
+    if report is None:
+        print(output[-2000:])
+        print('the inbox purge did not report; the notifications this run '
+              'sent are still there')
+        return
+    if report.get('notifications'):
+        print('purged notifications: {0}'.format(
+            len(report['notifications'])))
+    for error in report.get('errors') or []:
+        print('inbox purge error: {0}'.format(error))
+
+
+# -- COAR Notify -----------------------------------------------------------
+
+def command_inbox(args, settings, ledger):
+    """Print what this instance has sent over COAR Notify.
+
+    A notification is addressed to a person, so it is read as that
+    person: the account the suite registers with, and the account it has
+    approve.  ``--run`` narrows the list to the notifications one run's
+    activities produced, which is what the ``coarnotify`` suite checks.
+    """
+    activities = [resource['id']
+                  for resource in _targets(ledger, args.run)['activity']] \
+        if args.run else None
+    if activities is not None and not activities:
+        print('run {0} recorded no activity, so nothing was announced about '
+              'it'.format(args.run))
+        return 0
+
+    for role, account in (
+            ('registrant', settings),
+            ('approver', settings.as_account(settings.approver_email,
+                                             settings.approver_password))):
+        print('{0}: {1}'.format(role, account.email))
+        try:
+            client = WekoClient(account).login()
+        except WekoError as error:
+            print('  cannot log in: {0}'.format(error))
+            continue
+        if role == 'registrant':
+            print('  announced inbox: {0}'.format(
+                notify.announced_inbox(client.session, account)
+                or '(the site announces none)'))
+        _print_notifications(client, account, activities)
+    return 0
+
+
+def _print_notifications(client, settings, activities):
+    """Print one account's notifications, newest first."""
+    urls = notify.notifications(client.session, settings)
+    shown = 0
+    for url in urls:
+        payload = notify.fetch(client.session, settings, url)
+        if activities is not None and not any(
+                notify.is_about(payload, activity) for activity in activities):
+            continue
+        print('  {0}  {1}'.format(payload.get('updated'),
+                                  notify.summary(payload)))
+        shown += 1
+        if activities is None and shown >= INBOX_SHOWN:
+            break
+    print('  {0} of {1} notification(s) shown'.format(shown, len(urls)))
 
 
 # -- the Crossref account --------------------------------------------------
@@ -755,6 +866,7 @@ COMMANDS = {
     'crossref-account': command_crossref_account,
     'doi-log': command_doi_log,
     'env': command_env,
+    'inbox': command_inbox,
     'status': command_status,
     'ping': command_ping,
     'clean': command_clean,

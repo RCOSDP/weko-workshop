@@ -468,6 +468,25 @@ class WekoClient(object):
                 })
         return rows
 
+    def release_user_lock(self, activity_id):
+        """Let go of whatever activity this account is holding open.
+
+        WEKO lets one account have one activity open at a time and
+        releases the hold when the window showing it unloads, so a run
+        that was killed leaves one behind -- and the screens only offer
+        to force it off when it is the same activity, which leaves the
+        next run looking at "Already have another activity open".
+
+        :param activity_id: the activity that is about to be opened
+        :return: True when WEKO took the call
+        """
+        response = self.session.post(
+            self._url('/workflow/activity/user_unlock/{0}'.format(
+                activity_id)),
+            data=json.dumps({'is_opened': False, 'is_force': True}),
+            timeout=120, headers={'Content-Type': 'application/json'})
+        return response.ok
+
     def quit_activity(self, activity_id):
         """Quit an activity, as the Quit button on its screen does.
 

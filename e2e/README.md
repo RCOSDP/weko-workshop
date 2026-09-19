@@ -23,15 +23,18 @@ written to a ledger, and `./e2ectl clean` removes it again.
 | --- | --- |
 | `tests/test_basic_publish.py` | The base suite: one flow cut into 13 steps |
 | `tests/test_ark_mint.py` | Optional suite `ark`: an ARK is minted for the item |
+| `tests/test_coar_notify.py` | Optional suite `coarnotify`: the workflow is announced over COAR Notify |
 | `tests/test_crossref_doi.py` | Optional suite `crossref`: a Crossref DOI is granted |
 | `conftest.py` | The browser, the HTTP client and the ledger the run shares |
 | `weko_e2e/flow.py` | The registration flow every suite walks |
 | `weko_e2e/arkstub.py` | A stand-in ARK server, for the `ark` suite |
+| `weko_e2e/notify.py` | Reading what the instance announced over COAR Notify |
 | `weko_e2e/config.py` | The settings, read from the environment or an environment file |
 | `weko_e2e/client.py` | HTTP client for the endpoints the screens call, for setup and teardown |
 | `weko_e2e/ui.py` | Playwright helpers for walking an activity's screens |
 | `weko_e2e/ledger.py` | The record of what a run created (`.e2e-state.json`) |
 | `weko_e2e/purge.py` | The physical delete, copied into the `web` container and run there |
+| `weko_e2e/inboxpurge.py` | The same for the LDN inbox, run in the `inbox` container |
 | `weko_e2e/cli.py`, `e2ectl` | The tool |
 | `environments/` | Environment files to copy and change |
 | `evidence/` | The last run's report and its screenshots |
@@ -54,8 +57,8 @@ checkout:
 
 ## Pointing it at an instance
 
-Set the variables, or put them in an environment file. There are three to
-copy in [`environments/`](environments):
+Set the variables, or put them in an environment file. There are copies to
+start from in [`environments/`](environments):
 
 | File | For |
 | --- | --- |
@@ -64,6 +67,7 @@ copy in [`environments/`](environments):
 | `fqdn-no-dns.env` | An instance published under a host name DNS does not know |
 | `crossref-sandbox.env` | Depositing to Crossref's sandbox with an account of your own |
 | `ark-server.env` | Minting against an ARK server of your own |
+| `coar-notify.env` | The two accounts the COAR Notify suite works between |
 
 ```bash
 cp environments/local-docker.env e2e.env    # read automatically
@@ -129,13 +133,14 @@ because each needs something of the instance that not every instance has.
 | --- | --- | --- |
 | (base) | index, workflow, item registration, publication | nothing beyond a working instance |
 | `ark` | an ARK is minted for the item and becomes its permalink | an ARK server (`e2ectl ark-account enable`), or a stand-in (`e2ectl ark-stub enable`) |
+| `coarnotify` | the approval request and the approval are announced over COAR Notify, to the right people | an LDN inbox (the `inbox` service) and a second account to approve |
 | `crossref` | a Crossref DOI is granted to the item and becomes its permalink | nothing. Depositing to Crossref on top of that needs an account |
 
 ```bash
 python -m pytest                      # the base suite; the others are skipped
 python -m pytest --suite crossref     # and the Crossref suite
 python -m pytest --suite all          # everything
-WEKO_E2E_SUITES=ark,crossref python -m pytest   # the same, from the environment
+WEKO_E2E_SUITES=ark,coarnotify python -m pytest # the same, from the environment
 ```
 
 A suite nobody asked for is **skipped, not hidden**, so a run always says
@@ -206,6 +211,48 @@ the other way round.
 
 Set `WEKO_E2E_ARK_NAAN` to have the suite check the ARK came out under
 the NAAN this environment is configured for; without it, any ARK counts.
+
+### The `coarnotify` suite
+
+WEKO turns workflow events into COAR Notify messages and POSTs them to an
+LDN inbox, which is a service of its own -- the `inbox` container in a
+stack from `install.sh`. WEKO is only the sender; it reads them back for
+the person they were addressed to at `GET /api/notifications`.
+
+**Who receives what is the point.** WEKO leaves the person who acted out
+of the notification about their own action, so a run in which one account
+did everything would prove nothing. This suite therefore uses two
+accounts and walks the loop between them:
+
+| | | |
+| --- | --- | --- |
+| the registrant sends the item for approval | → | the approver is sent `Offer` + `EndorsementAction` |
+| the approver approves it | → | the registrant is sent `Announce` + `EndorsementAction` |
+
+Both are read the way a user reads them -- `GET /api/notifications` as
+that user -- and then fetched from the inbox and checked field by field:
+the `@context`, the `urn:uuid:` id, who it is addressed to, the item it
+is about and the activity it belongs to. It also checks that the site
+announces its inbox (`Link: rel="ldp#inbox"`, on a HEAD of the top page),
+that a visitor who has not logged in gets a 401 rather than somebody's
+notifications, and that the user has a screen for saying how they want to
+be told.
+
+```bash
+../.venv-e2e/bin/python -m pytest --suite coarnotify
+../.venv-e2e/bin/python ./e2ectl inbox --run <run id>   # what it announced
+```
+
+Nothing has to be configured on a stack from `install.sh`:
+`WEKO_NOTIFICATIONS` is already on in `scripts/instance.cfg` and
+`repoadmin@example.org` is the repository administrator every approval
+request goes to. Where the approver is somebody else, set
+`WEKO_E2E_APPROVER_EMAIL` and `WEKO_E2E_APPROVER_PASSWORD`;
+`environments/coar-notify.env` is a copy to start from.
+
+The notifications live in the inbox's own database, not in WEKO's, so
+they do not go away when the WEKO database goes back to its baseline:
+`clean --hard` clears the run's own out of the `inbox` container as well.
 
 ### The `crossref` suite
 
@@ -320,7 +367,9 @@ the screens being clean is enough, and `--hard` to get back to how
 `install.sh` left the database.
 
 `--hard` is the only part that needs docker: it copies `weko_e2e/purge.py`
-into the `web` container and runs it with `invenio shell`. It therefore
+into the `web` container and runs it with `invenio shell`, and
+`weko_e2e/inboxpurge.py` into the `inbox` container to take the run's
+COAR Notify notifications out of the inbox's own database. It therefore
 needs the WEKO checkout that owns the compose file. That checkout is found
 automatically when it sits next to this repository and is named `wekov2`,
 `weko3` or `weko`; otherwise set `WEKO_E2E_REPO`. `e2ectl ping` says
@@ -359,6 +408,8 @@ Every one of these can also be a line in an environment file.
 | --- | --- | --- |
 | `WEKO_TEST_EMAIL` | `wekosoftware@nii.ac.jp` | A system administrator |
 | `WEKO_TEST_PASSWORD` | `uspass123` | |
+| `WEKO_E2E_APPROVER_EMAIL` | `repoadmin@example.org` | Somebody else, for the `coarnotify` suite to have approve |
+| `WEKO_E2E_APPROVER_PASSWORD` | `uspass123` | |
 
 ### What the run makes
 
@@ -382,9 +433,10 @@ Every one of these can also be a line in an environment file.
 
 | Variable | Default | |
 | --- | --- | --- |
-| `WEKO_E2E_SUITES` | (none) | Optional suites to run: `ark`, `crossref`, several separated by commas, or `all` |
+| `WEKO_E2E_SUITES` | (none) | Optional suites to run: `ark`, `coarnotify`, `crossref`, several separated by commas, or `all` |
 | `WEKO_E2E_CROSSREF_PREFIX` | `10.5555` | Prefix the `crossref` suite configures and expects |
 | `WEKO_E2E_ARK_NAAN` | (empty) | NAAN the `ark` suite expects the minted ARK to be under, and mints under |
+| `WEKO_E2E_NOTIFY_TIMEOUT` | `120` | Seconds the `coarnotify` suite waits for a notification to reach the inbox |
 
 ### The ARK server (minting)
 
@@ -428,6 +480,7 @@ setting them alone changes nothing on the instance.
 | `WEKO_E2E_REPO` | found automatically | The WEKO checkout that owns the compose file |
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | Compose service running WEKO |
+| `WEKO_E2E_INBOX_SERVICE` | `inbox` | Compose service running the LDN inbox, cleared of the run's notifications |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | Where the WEKO checkout is mounted in that container |
 
 ### Other
@@ -444,8 +497,9 @@ setting them alone changes nothing on the instance.
 | `https://localhost`, local docker stack from `install.sh` | 13 passed |
 | `https://weko3.example.org` with `WEKO_E2E_HOST_IP=127.0.0.1`, no DNS entry | 13 passed |
 | The same, as a different system administrator account | 13 passed |
-| All three suites in one session (`--suite all`, with the ARK stub) | 27 passed |
+| All four suites in one session (`--suite all`, with the ARK stub) | 37 passed |
 | `crossref` with depositing on, against a stand-in for Crossref | 10 passed; deposit reached `success` |
+| `coarnotify` against the stack's own `inbox` service | 10 passed; both notifications reached the right account |
 | `ark` against a server configured with `ark-account` (login flow) | 6 passed; minted `ark:/12345/x9...` |
 
 ## Deriving a suite from this one
@@ -509,6 +563,16 @@ only delete what is in the ledger, and what `--discover` finds.
   `./e2ectl ark-account status` (or `ark-stub status`), and the `web` log
   for what the mint said; WEKO logs the reason and carries on registering
   the item rather than failing it.
+- **The `coarnotify` suite says nothing was offered to the approver** --
+  the `inbox` container is not up (`docker compose -f docker-compose2.yml
+  ps inbox`), `WEKO_NOTIFICATIONS` is off in `scripts/instance.cfg`, or
+  the approver is not the account this instance sends approval requests
+  to. `./e2ectl inbox` shows what each account has been sent.
+- **The `coarnotify` suite says the approver is not shown the approval
+  screen** -- the account is not allowed to approve on this instance, or
+  it is still holding an activity an earlier run left open; the suite
+  releases that hold itself, and `./e2ectl clean --discover` removes the
+  activity.
 - **The `crossref` suite says the grant is not offered** -- the identifier
   settings could not be saved; open `/admin/identifier/` and look.
 - **The deposit steps skip** -- `WEKO_E2E_CROSSREF_DEPOSIT` is off, or the

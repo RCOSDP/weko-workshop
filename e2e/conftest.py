@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from weko_e2e import ui  # noqa: E402
 from weko_e2e.client import WekoClient, anonymous_session  # noqa: E402
 from weko_e2e.config import (E2E_DIR, OPTIONAL_SUITES,  # noqa: E402
                              Settings, parse_suites)
@@ -196,14 +197,9 @@ def browser(base_settings):
 @pytest.fixture(scope='session')
 def page(browser, base_settings):
     """Return the one page every step of the run shares."""
-    context = browser.new_context(
-        ignore_https_errors=True,
-        viewport={'width': 1440, 'height': 1000},
-        locale='en-US')
-    context.set_default_timeout(base_settings.timeout)
-    page = context.new_page()
+    page = ui.new_page(browser, base_settings)
     yield page
-    context.close()
+    page.context.close()
 
 
 @pytest.fixture(scope='session')
@@ -214,14 +210,9 @@ def visitor_page(browser, base_settings):
     whole point of the last steps; it has to be a separate context,
     because the run's own page is logged in as an administrator.
     """
-    context = browser.new_context(
-        ignore_https_errors=True,
-        viewport={'width': 1440, 'height': 1000},
-        locale='en-US')
-    context.set_default_timeout(base_settings.timeout)
-    page = context.new_page()
+    page = ui.new_page(browser, base_settings)
     yield page
-    context.close()
+    page.context.close()
 
 
 @pytest.fixture(scope='session')

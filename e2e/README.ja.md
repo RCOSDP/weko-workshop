@@ -21,15 +21,18 @@ WEKO のチェックアウトの中ではなくこのリポジトリに置いて
 | --- | --- |
 | `tests/test_basic_publish.py` | 基本テスト本体。13 ステップで 1 つの流れ |
 | `tests/test_ark_mint.py` | オプション `ark`: ARK が発行されることを確認 |
+| `tests/test_coar_notify.py` | オプション `coarnotify`: ワークフローが COAR Notify で通知されることを確認 |
 | `tests/test_crossref_doi.py` | オプション `crossref`: Crossref DOI が付与されることを確認 |
 | `conftest.py` | セッション共有のブラウザ・HTTP クライアント・台帳 |
 | `weko_e2e/flow.py` | 全スイートが共通で使う登録フロー |
 | `weko_e2e/arkstub.py` | `ark` 用のスタブ ARK サーバ |
+| `weko_e2e/notify.py` | COAR Notify で何が通知されたかを読む |
 | `weko_e2e/config.py` | 環境変数／環境ファイルから読む設定 |
 | `weko_e2e/client.py` | 画面と同じエンドポイントを叩く HTTP クライアント（準備と後始末用） |
 | `weko_e2e/ui.py` | アクティビティ画面を進めるための Playwright ヘルパ |
 | `weko_e2e/ledger.py` | 実行が作ったものを記録する台帳（`.e2e-state.json`） |
 | `weko_e2e/purge.py` | web コンテナにコピーして実行する物理削除スクリプト |
+| `weko_e2e/inboxpurge.py` | 同じものの inbox コンテナ版（LDN Inbox の通知を消す） |
 | `weko_e2e/cli.py`, `e2ectl` | テストツール本体 |
 | `environments/` | コピーして使う環境ファイルの雛形 |
 | `evidence/` | 直近の実行記録とエビデンス画像 |
@@ -52,7 +55,7 @@ python3 -m venv .venv-e2e
 ## 対象環境の指定
 
 環境変数で指定するか、環境ファイルに書きます。雛形が
-[`environments/`](environments) に 3 つあります。
+[`environments/`](environments) にあります。
 
 | ファイル | 用途 |
 | --- | --- |
@@ -61,6 +64,7 @@ python3 -m venv .venv-e2e
 | `fqdn-no-dns.env` | DNS で引けないホスト名で公開されている環境 |
 | `crossref-sandbox.env` | 自分のアカウントで Crossref サンドボックスへ deposit する |
 | `ark-server.env` | 自分の ARK サーバに対して ARK を発行する |
+| `coar-notify.env` | COAR Notify スイートが使う 2 つのアカウント |
 
 ```bash
 cp environments/local-docker.env e2e.env    # 置いておけば自動で読む
@@ -125,13 +129,14 @@ cd e2e
 | --- | --- | --- |
 | （基本） | インデックス・ワークフロー・アイテム登録・公開 | 動作する WEKO 環境だけ |
 | `ark` | ARK が発行され、アイテムのパーマリンクになる | ARK サーバ（`e2ectl ark-account enable`）、または代替スタブ（`e2ectl ark-stub enable`） |
+| `coarnotify` | 承認依頼と承認が COAR Notify で正しい相手に通知される | LDN Inbox（`inbox` サービス）と、承認役のもう 1 アカウント |
 | `crossref` | Crossref DOI が付与され、パーマリンクになる | なし。さらに Crossref へ登録（deposit）するにはアカウントが必要 |
 
 ```bash
 python -m pytest                      # 基本のみ。オプションは skip
 python -m pytest --suite crossref     # + Crossref
 python -m pytest --suite all          # 全部
-WEKO_E2E_SUITES=ark,crossref python -m pytest   # 環境変数でも同じ
+WEKO_E2E_SUITES=ark,coarnotify python -m pytest # 環境変数でも同じ
 ```
 
 有効化していないスイートは**隠されるのではなく skip され**、理由と有効化の
@@ -197,6 +202,44 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite ark
 
 `WEKO_E2E_ARK_NAAN` を指定すると、発行された ARK がその NAAN 配下かどうかも
 確認します。未指定なら ARK であれば通ります。
+
+### `coarnotify` スイート
+
+WEKO はワークフローの出来事を COAR Notify のメッセージに変換し、LDN Inbox
+へ POST します。Inbox は WEKO とは別のサービスで、`install.sh` の構成では
+`inbox` コンテナがそれにあたります。WEKO は送信側でしかなく、受け取った通知は
+宛先の利用者に対して `GET /api/notifications` で返します。
+
+**誰に届くかが肝心です。** WEKO は「自分が行った操作の通知」から自分自身を
+除外するので、1 つのアカウントで全部やってしまう実行では何も確認できません。
+そのためこのスイートは 2 つのアカウントを使い、その間の往復を確認します。
+
+| | | |
+| --- | --- | --- |
+| 登録者がアイテムを承認に回す | → | 承認者に `Offer` + `EndorsementAction` が届く |
+| 承認者がそれを承認する | → | 登録者に `Announce` + `EndorsementAction` が届く |
+
+どちらも利用者と同じ読み方（当人として `GET /api/notifications`）で取得し、
+さらに Inbox から本体を取ってきて中身を 1 項目ずつ確認します（`@context`、
+`urn:uuid:` の id、宛先、対象アイテム、どのアクティビティのものか）。
+あわせて、サイトが Inbox を広告していること（トップページへの HEAD に対する
+`Link: rel="ldp#inbox"`）、未ログインの閲覧者には他人の通知ではなく 401 が
+返ること、利用者に通知方法を選ぶ画面があることも確認します。
+
+```bash
+../.venv-e2e/bin/python -m pytest --suite coarnotify
+../.venv-e2e/bin/python ./e2ectl inbox --run <実行 ID>   # 何が通知されたか
+```
+
+`install.sh` の構成なら設定は不要です。`scripts/instance.cfg` で
+`WEKO_NOTIFICATIONS` が有効になっており、承認依頼の宛先である
+リポジトリ管理者は `repoadmin@example.org` です。承認役が別のアカウントの
+環境では `WEKO_E2E_APPROVER_EMAIL` と `WEKO_E2E_APPROVER_PASSWORD` を
+指定してください（雛形は `environments/coar-notify.env`）。
+
+通知は WEKO の DB ではなく Inbox 側の DB にあるため、WEKO の DB を初期状態に
+戻しても残ります。`clean --hard` はその実行が出した通知を `inbox` コンテナ
+から併せて削除します。
 
 ### `crossref` スイート
 
@@ -307,8 +350,10 @@ WEKO の削除はインデックス・ワークフロー・フロー・アイテ
 `install.sh` 直後の状態に戻したいなら `--hard` を使ってください。
 
 docker が要るのは `--hard` だけです。`weko_e2e/purge.py` を web コンテナに
-コピーして `invenio shell` で実行するため、compose ファイルを持つ WEKO の
-チェックアウトが必要になります。このリポジトリの隣にあって `wekov2` /
+コピーして `invenio shell` で実行し、あわせて `weko_e2e/inboxpurge.py` を
+inbox コンテナにコピーして、その実行が出した COAR Notify の通知を Inbox 側の
+DB から消すため、compose ファイルを持つ WEKO のチェックアウトが必要に
+なります。このリポジトリの隣にあって `wekov2` /
 `weko3` / `weko` という名前なら自動で見つけます。それ以外は `WEKO_E2E_REPO`
 を指定してください。見つかったかどうかは `e2ectl ping` が表示します。
 テスト実行・`clean`・`status` は docker のないリモート環境でも動きます。
@@ -344,6 +389,8 @@ docker が要るのは `--hard` だけです。`weko_e2e/purge.py` を web コ�
 | --- | --- | --- |
 | `WEKO_TEST_EMAIL` | `wekosoftware@nii.ac.jp` | システム管理者 |
 | `WEKO_TEST_PASSWORD` | `uspass123` | |
+| `WEKO_E2E_APPROVER_EMAIL` | `repoadmin@example.org` | `coarnotify` で承認役になる別のアカウント |
+| `WEKO_E2E_APPROVER_PASSWORD` | `uspass123` | |
 
 ### 作成するもの
 
@@ -367,9 +414,10 @@ docker が要るのは `--hard` だけです。`weko_e2e/purge.py` を web コ�
 
 | 変数 | 既定値 | 内容 |
 | --- | --- | --- |
-| `WEKO_E2E_SUITES` | （なし） | 実行するオプション: `ark` / `crossref`、カンマ区切り、または `all` |
+| `WEKO_E2E_SUITES` | （なし） | 実行するオプション: `ark` / `coarnotify` / `crossref`、カンマ区切り、または `all` |
 | `WEKO_E2E_CROSSREF_PREFIX` | `10.5555` | `crossref` が設定し、期待するプレフィックス |
 | `WEKO_E2E_ARK_NAAN` | （空） | 発行に使い、`ark` が期待する NAAN |
+| `WEKO_E2E_NOTIFY_TIMEOUT` | `120` | `coarnotify` が通知の到着を待つ秒数 |
 
 ### ARK サーバ（発行用）
 
@@ -413,6 +461,7 @@ docker が要るのは `--hard` だけです。`weko_e2e/purge.py` を web コ�
 | `WEKO_E2E_REPO` | 自動検出 | compose ファイルを持つ WEKO のチェックアウト |
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | WEKO が動く compose サービス名 |
+| `WEKO_E2E_INBOX_SERVICE` | `inbox` | LDN Inbox が動く compose サービス名。その実行の通知を消す先 |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | そのコンテナ内でのチェックアウトのパス |
 
 ### その他
@@ -429,9 +478,10 @@ docker が要るのは `--hard` だけです。`weko_e2e/purge.py` を web コ�
 | `https://localhost`（`install.sh` の手元 docker 環境） | 13 passed |
 | `https://weko3.example.org`（DNS 登録なし、`WEKO_E2E_HOST_IP=127.0.0.1`） | 13 passed |
 | 同上、別のシステム管理者アカウントで | 13 passed |
-| 3 スイート同時実行（`--suite all`、ARK スタブ使用） | 27 passed |
+| 4 スイート同時実行（`--suite all`、ARK スタブ使用） | 37 passed |
 | `crossref` + deposit 有効（Crossref 代替スタブ宛て） | 10 passed、deposit が `success` に到達 |
 | `ark` + `ark-account`（ログイン方式）で設定したサーバ宛て | 6 passed、`ark:/12345/x9...` を発行 |
+| `coarnotify`（環境付属の `inbox` サービス宛て） | 10 passed、2 通ともそれぞれ正しい相手に到達 |
 
 ## 派生版の作り方
 
@@ -490,6 +540,15 @@ docker が要るのは `--hard` だけです。`weko_e2e/purge.py` を web コ�
   いる。`./e2ectl ark-account status`（またはスタブなら `ark-stub status`）と
   web のログを確認する。WEKO は mint 失敗の理由をログに出し、アイテム登録自体
   は続行します
+- **`coarnotify` で「承認者に何も届いていない」と言われる** — `inbox`
+  コンテナが起動していない（`docker compose -f docker-compose2.yml ps
+  inbox`）、`scripts/instance.cfg` の `WEKO_NOTIFICATIONS` が無効、または
+  承認役として指定したアカウントがその環境の承認依頼の宛先ではない。
+  `./e2ectl inbox` で各アカウントに何が届いているか確認できます
+- **`coarnotify` で承認者に承認画面が出ないと言われる** — そのアカウントに
+  承認権限がないか、前の実行で開いたままのアクティビティを掴んでいる。
+  掴み直しはスイート側で解除しますが、アクティビティ自体は
+  `./e2ectl clean --discover` で消せます
 - **`crossref` で付与が提示されないと言われる** — 識別子設定の保存に失敗して
   いる。`/admin/identifier/` を開いて確認する
 - **deposit のステップが skip される** — `WEKO_E2E_CROSSREF_DEPOSIT` がオフ、

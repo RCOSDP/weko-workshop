@@ -36,6 +36,10 @@ DEFAULTS = {
     'WEKO_E2E_UPLOAD_TIMEOUT': '180',
     'WEKO_E2E_SEARCH_TIMEOUT': '180',
     'WEKO_E2E_SUITES': '',
+    'WEKO_E2E_APPROVER_EMAIL': 'repoadmin@example.org',
+    'WEKO_E2E_APPROVER_PASSWORD': 'uspass123',
+    'WEKO_E2E_NOTIFY_TIMEOUT': '120',
+    'WEKO_E2E_INBOX_SERVICE': 'inbox',
     'WEKO_E2E_CROSSREF_PREFIX': '10.5555',
     'WEKO_E2E_CROSSREF_DEPOSIT': '',
     'WEKO_E2E_CROSSREF_LOGIN_ID': '',
@@ -156,13 +160,13 @@ def _env(name):
     return DEFAULTS[name]
 
 
-OPTIONAL_SUITES = ('ark', 'crossref')
+OPTIONAL_SUITES = ('ark', 'coarnotify', 'crossref')
 """Optional suites, each of which has to be asked for by name.
 
 The base flow always runs.  These do not, because each needs something of
 the instance that not every instance has -- an ARK server, a Crossref
-prefix -- so running them where that is missing would only produce
-failures nobody asked for.
+prefix, an LDN inbox and a second account -- so running them where that
+is missing would only produce failures nobody asked for.
 """
 
 
@@ -235,6 +239,10 @@ class Settings(object):
         self.container_repo = _env('WEKO_E2E_CONTAINER_REPO')
         self.weko_repo = find_weko_repo(self.compose_file)
         self.suites = parse_suites(_env('WEKO_E2E_SUITES'))
+        self.approver_email = _env('WEKO_E2E_APPROVER_EMAIL')
+        self.approver_password = _env('WEKO_E2E_APPROVER_PASSWORD')
+        self.notify_timeout = int(_env('WEKO_E2E_NOTIFY_TIMEOUT'))
+        self.inbox_service = _env('WEKO_E2E_INBOX_SERVICE')
         self.crossref_prefix = _env('WEKO_E2E_CROSSREF_PREFIX')
         self.crossref_deposit = _flag('WEKO_E2E_CROSSREF_DEPOSIT')
         self.crossref_login_id = _env('WEKO_E2E_CROSSREF_LOGIN_ID')
@@ -298,9 +306,30 @@ class Settings(object):
         """
         if not scope:
             return self
+        copy = self._copy()
+        copy.run_id = '{0}-{1}'.format(self.run_id, scope)
+        return copy
+
+    def as_account(self, email, password):
+        """Return these settings with somebody else's credentials.
+
+        The ``coarnotify`` suite needs two accounts at once -- one
+        registers, the other approves and is the one the approval request
+        is sent to -- and everything else about the instance is the same
+        for both.
+
+        :param email: the account to log in as
+        :param password: its password
+        """
+        copy = self._copy()
+        copy.email = email
+        copy.password = password
+        return copy
+
+    def _copy(self):
+        """Return a shallow copy of these settings."""
         copy = Settings.__new__(Settings)
         copy.__dict__.update(self.__dict__)
-        copy.run_id = '{0}-{1}'.format(self.run_id, scope)
         return copy
 
     @property
@@ -341,6 +370,7 @@ class Settings(object):
             ('host resolver rule', self.host_map or '(DNS)'),
             ('verify TLS', 'yes' if self.verify_tls else 'no'),
             ('account', self.email),
+            ('approver account', self.approver_email),
             ('item type', self.item_type_name),
             ('label', self.label),
             ('optional suites', ', '.join(self.suites) or
@@ -348,6 +378,7 @@ class Settings(object):
             ('crossref prefix', self.crossref_prefix),
             ('crossref deposit', self._describe_deposit()),
             ('ark server', self._describe_ark()),
+            ('notification wait', '{0} s'.format(self.notify_timeout)),
             ('run id', self.run_id),
             ('ledger', self.state_path),
             ('action timeout', '{0} ms'.format(self.timeout)),
@@ -357,6 +388,7 @@ class Settings(object):
             ('WEKO checkout', self.weko_repo or '(not found)'),
             ('compose file', self.compose_file),
             ('web service', self.web_service),
+            ('inbox service', self.inbox_service),
             ('repository in container', self.container_repo),
         ]
 
