@@ -29,6 +29,7 @@ written to a ledger, and `./e2ectl clean` removes it again.
 | `weko_e2e/flow.py` | The registration flow every suite walks |
 | `weko_e2e/arkstub.py` | A stand-in ARK server, for the `ark` suite |
 | `weko_e2e/notify.py` | Reading what the instance announced over COAR Notify |
+| `weko_e2e/pushstub.py` | A stand-in browser subscription, for the web push steps |
 | `weko_e2e/config.py` | The settings, read from the environment or an environment file |
 | `weko_e2e/client.py` | HTTP client for the endpoints the screens call, for setup and teardown |
 | `weko_e2e/ui.py` | Playwright helpers for walking an activity's screens |
@@ -37,7 +38,7 @@ written to a ledger, and `./e2ectl clean` removes it again.
 | `weko_e2e/inboxpurge.py` | The same for the LDN inbox, run in the `inbox` container |
 | `weko_e2e/cli.py`, `e2ectl` | The tool |
 | `environments/` | Environment files to copy and change |
-| `evidence/` | The last run's report and its screenshots |
+| `evidence/` | The last run's report and its screenshots, one folder per optional suite |
 
 ## Setting up
 
@@ -133,7 +134,7 @@ because each needs something of the instance that not every instance has.
 | --- | --- | --- |
 | (base) | index, workflow, item registration, publication | nothing beyond a working instance |
 | `ark` | an ARK is minted for the item and becomes its permalink | an ARK server (`e2ectl ark-account enable`), or a stand-in (`e2ectl ark-stub enable`) |
-| `coarnotify` | the approval request and the approval are announced over COAR Notify, to the right people | an LDN inbox (the `inbox` service) and a second account to approve |
+| `coarnotify` | the approval request and the approval are announced over COAR Notify, reach the people they are meant to, and arrive as a web push | an LDN inbox (the `inbox` service) and a second account to approve; the web push steps also want `e2ectl webpush-stub enable` |
 | `crossref` | a Crossref DOI is granted to the item and becomes its permalink | nothing. Depositing to Crossref on top of that needs an account |
 
 ```bash
@@ -253,6 +254,41 @@ request goes to. Where the approver is somebody else, set
 The notifications live in the inbox's own database, not in WEKO's, so
 they do not go away when the WEKO database goes back to its baseline:
 `clean --hard` clears the run's own out of the `inbox` container as well.
+
+#### Web push
+
+A notification can also reach the user as a Web Push. WEKO's part of that
+is registering the subscription, the user's profile and the message
+templates with the inbox; the inbox is what encrypts a notification for a
+subscription and delivers it. The suite checks the whole of it: the push
+arrives, is decrypted, and says what `push.json` says, rendered with this
+item and this approver.
+
+Two things are in the way of doing that for real, and `e2ectl
+webpush-stub` deals with both. A real subscription comes from the
+browser's own push service -- Google's or Mozilla's -- which a run
+against a local stack cannot reach; and the shipped compose file leaves
+the inbox's VAPID keys empty, so it would sign nothing anyway.
+
+```bash
+../.venv-e2e/bin/python ./e2ectl webpush-stub enable   # keys, recreate, stand-in
+../.venv-e2e/bin/python -m pytest --suite coarnotify
+../.venv-e2e/bin/python ./e2ectl webpush-stub disable  # puts it all back
+```
+
+`enable` generates a VAPID key pair, writes it into the WEKO checkout's
+compose file between markers -- the keys belong to the `inbox` service
+rather than to WEKO, which is why they are not in `instance.cfg` --
+recreates the inbox so it reads them, and runs `weko_e2e/pushstub.py` on
+the loopback interface of that container. The stand-in holds subscription
+keys of its own, registers them with the inbox the way the notification
+settings screen registers a real subscription, and decrypts what arrives
+so the suite can read what a browser would have shown. `disable` takes
+the block away and puts the original lines back; `status` says where
+things stand, and `start` / `stop` are the stub process alone.
+
+Without the stand-in the four web push steps skip, with the reason and
+how to ask for them -- the same way the Crossref deposit does.
 
 ### The `crossref` suite
 
@@ -480,7 +516,7 @@ setting them alone changes nothing on the instance.
 | `WEKO_E2E_REPO` | found automatically | The WEKO checkout that owns the compose file |
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | Compose service running WEKO |
-| `WEKO_E2E_INBOX_SERVICE` | `inbox` | Compose service running the LDN inbox, cleared of the run's notifications |
+| `WEKO_E2E_INBOX_SERVICE` | `inbox` | Compose service running the LDN inbox: cleared of the run's notifications, and where the web push stand-in runs |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | Where the WEKO checkout is mounted in that container |
 
 ### Other
@@ -573,6 +609,19 @@ only delete what is in the ledger, and what `--discover` finds.
   it is still holding an activity an earlier run left open; the suite
   releases that hold itself, and `./e2ectl clean --discover` removes the
   activity.
+- **The web push steps skip** -- no stand-in is running;
+  `./e2ectl webpush-stub enable` sets one up and
+  `./e2ectl webpush-stub status` says where things stand. They also skip
+  without the WEKO checkout, because the stand-in lives in the `inbox`
+  container.
+- **The announcement arrives but the push does not** -- the inbox sends
+  in a background task and only writes a failure to its log, so look
+  there (`docker compose -f docker-compose2.yml logs inbox`). It needs
+  three things for one push: a subscription, a user profile for the same
+  URI, and a template whose `type` matches the notification. The
+  stand-in registers the first two; WEKO registers the third from
+  `push.json` when it first starts, so an instance that has not been
+  restarted since that file changed still has the old text.
 - **The `crossref` suite says the grant is not offered** -- the identifier
   settings could not be saved; open `/admin/identifier/` and look.
 - **The deposit steps skip** -- `WEKO_E2E_CROSSREF_DEPOSIT` is off, or the
@@ -586,7 +635,19 @@ only delete what is in the ledger, and what `--discover` finds.
 
 ## The last run
 
-The report and the screenshots are in
-[`evidence/README.md`](evidence/README.md). The test takes the screenshots
-itself as it goes, so re-running it refreshes the whole of
-`evidence/images/`.
+[`evidence/README.md`](evidence/README.md) is the run, the base flow and
+the cleaning up. Each optional suite has a report of its own, beside the
+screenshots it is written from:
+
+```
+evidence/
+├── README.md, README.ja.md      the run, and the base flow
+├── images/                      what the base flow's steps photographed
+├── ark/README.md, images/       the ark suite, and its own screenshots
+├── coarnotify/README.md, …
+└── crossref/README.md, …
+```
+
+The tests take the screenshots themselves as they go, under fixed names,
+so re-running a suite refreshes that suite's folder in place and the
+report cannot drift from the code.
