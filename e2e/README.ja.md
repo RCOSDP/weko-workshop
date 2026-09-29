@@ -356,7 +356,43 @@ deposit の状態は web コンテナ内の `doi_deposit_log` から読むので
 
 スイートは `install.sh` 直後の環境を前提にしています。その一部が欠けていると、
 失敗は分かりにくい場所に出ます（アイテム登録が Next で止まる、検索が何も
-見つけない、など）。`e2ectl doctor` は、どこが欠けているのかを先に示します。
+見つけない、など）。そこで、これは最初に確認されます。
+
+**実行すると自動で確認されます。** `pytest` は開始前に環境を点検し、問題が
+あれば 1 分以上かけて失敗する前に停止します。
+
+```
+https://localhost: 14 of 15 checks passed
+  FAIL  this month's log partition
+      there is no user_activity_logs_202609. WEKO writes a log row for most
+      requests, so without it the file upload answers 500 and item
+      registration stops at Next.
+
+Exit: this instance is not in a state to be tested: this month's log
+partition. Put it right with "./e2ectl doctor --fix", or run with
+--no-doctor to go ahead anyway.
+```
+
+所要は約 15 秒（大半はコンテナ内での `invenio shell` の起動）で、停止するのは
+**FAIL のときだけ**です。warn は他のスイートが必要とするものか、誰かの残骸で、
+どちらもその実行の関知するところではありません。確認対象も、実行するスイートに
+関係する項目だけに絞られます。
+
+| オプション | 内容 |
+| --- | --- |
+| `--no-doctor` | 点検しない |
+| `--doctor-fix` | 直せるものを直してから実行 |
+| `--doctor-fix-accounts` | `--doctor-fix` と併用し、アカウントとロールも |
+
+```bash
+python -m pytest --doctor-fix          # 不足を補ってから実行
+python -m pytest --no-doctor           # 点検せず実行
+```
+
+この停止の終了コードは 4（pytest の「usage error」）で、テスト失敗の 1 とは
+区別できます。
+
+`e2ectl doctor` は同じものを単体で実行するコマンドです。
 
 ```bash
 cd e2e

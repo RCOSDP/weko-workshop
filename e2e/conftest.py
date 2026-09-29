@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from weko_e2e import ui  # noqa: E402
+from weko_e2e import doctor, ui  # noqa: E402
 from weko_e2e.client import WekoClient, anonymous_session  # noqa: E402
 from weko_e2e.config import (E2E_DIR, OPTIONAL_SUITES,  # noqa: E402
                              Settings, parse_suites)
@@ -42,11 +42,83 @@ def pytest_addoption(parser):
              'and the same thing as WEKO_E2E_SUITES'.format(
                  ', '.join(OPTIONAL_SUITES)))
     group.addoption(
+        '--no-doctor', action='store_true', default=False,
+        help='do not look the instance over before running')
+    group.addoption(
+        '--doctor-fix', action='store_true', default=False,
+        help='put right what can be put right before running, as '
+             '"e2ectl doctor --fix" would')
+    group.addoption(
+        '--doctor-fix-accounts', action='store_true', default=False,
+        help='with --doctor-fix, also create accounts and give them the '
+             'roles the suites need')
+    group.addoption(
         '--clean-after', action='store_true', default=False,
         help='delete what the run created when it finishes, pass or fail')
     group.addoption(
         '--clean-hard', action='store_true', default=False,
         help='with --clean-after, also remove the rows WEKO only hides')
+
+
+def pytest_sessionstart(session):
+    """Look the instance over before a run is spent on it.
+
+    A missing piece of what ``install.sh`` sets up shows itself as a
+    failure somewhere unhelpful -- a file upload that answers 500, a
+    search that finds nothing -- a minute or more into a run.  Asking
+    first costs a few seconds and says which piece it is.
+
+    A run stops only on a failure: a warning is something one of the
+    optional suites wants, or somebody's leftovers, and neither is this
+    run's business.  ``--no-doctor`` skips the whole thing.
+    """
+    config = session.config
+    if config.getoption('--no-doctor') or config.option.collectonly:
+        return
+
+    from weko_e2e.cli import look_over, put_right
+
+    settings = Settings()
+    book = Ledger(settings.state_path)
+    try:
+        survey, findings = look_over(settings, book)
+    except Exception as error:  # looking is never what fails a run
+        print('\ncould not look the instance over ({0}); carrying on. '
+              'Run "./e2ectl doctor" to see why.'.format(error))
+        return
+
+    wanted = enabled_suites(config)
+    findings = [f for f in findings if not f.suite or f.suite in wanted]
+    if config.getoption('--doctor-fix'):
+        repairable = [f for f in findings if f.fix and f.status != doctor.OK]
+        if repairable:
+            print('\nrepairing before the run:')
+            put_right(findings, settings, survey,
+                      config.getoption('--doctor-fix-accounts'))
+            survey, findings = look_over(settings, book)
+            findings = [f for f in findings
+                        if not f.suite or f.suite in wanted]
+
+    _report(findings, settings)
+    failed = [f for f in findings if f.status == doctor.FAIL]
+    if failed:
+        pytest.exit(
+            'this instance is not in a state to be tested: {0}. Put it '
+            'right with "./e2ectl doctor --fix", or run with --no-doctor '
+            'to go ahead anyway.'.format(
+                '; '.join(f.name for f in failed)),
+            returncode=pytest.ExitCode.USAGE_ERROR)
+
+
+def _report(findings, settings):
+    """Print what the checks made of the instance, shortest way round."""
+    troubled = [f for f in findings if f.status != doctor.OK]
+    print('\n{0}: {1} of {2} checks passed'.format(
+        settings.base_url, len(findings) - len(troubled), len(findings)))
+    for finding in troubled:
+        print('  {0}  {1}\n      {2}'.format(
+            'FAIL' if finding.status == doctor.FAIL else 'warn',
+            finding.name, finding.detail))
 
 
 def pytest_configure(config):

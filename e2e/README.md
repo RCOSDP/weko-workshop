@@ -378,7 +378,46 @@ What running it against a real instance showed:
 The suites assume an instance `install.sh` has just finished setting up.
 When a piece of that is missing the failure usually lands somewhere
 unhelpful -- an item registration that stops at Next, a search that finds
-nothing -- so `e2ectl doctor` says which piece it is first.
+nothing -- so this is asked first.
+
+**A run asks by itself.** Every `pytest` looks the instance over before
+it starts, and stops rather than spending a minute or more finding out
+the hard way:
+
+```
+https://localhost: 14 of 15 checks passed
+  FAIL  this month's log partition
+      there is no user_activity_logs_202609. WEKO writes a log row for most
+      requests, so without it the file upload answers 500 and item
+      registration stops at Next.
+
+Exit: this instance is not in a state to be tested: this month's log
+partition. Put it right with "./e2ectl doctor --fix", or run with
+--no-doctor to go ahead anyway.
+```
+
+It costs about fifteen seconds -- most of it starting `invenio shell` in
+the container -- and only a **failure** stops a run. A warning is
+something one of the other suites wants, or somebody's leftovers, and
+neither is this run's business; only the checks that matter to the suites
+being run are looked at.
+
+| Option | |
+| --- | --- |
+| `--no-doctor` | do not look at all |
+| `--doctor-fix` | put right what can be put right, then run |
+| `--doctor-fix-accounts` | with `--doctor-fix`, accounts and roles too |
+
+```bash
+python -m pytest --doctor-fix          # repair what is missing, then run
+python -m pytest --no-doctor           # go ahead regardless
+```
+
+A run that stops this way exits 4, which is pytest's "usage error" --
+distinct from the 1 a failing test gives, so a script can tell them
+apart.
+
+`e2ectl doctor` is the same thing on its own:
 
 ```bash
 cd e2e
