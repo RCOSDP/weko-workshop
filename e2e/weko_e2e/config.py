@@ -40,6 +40,9 @@ DEFAULTS = {
     'WEKO_E2E_APPROVER_PASSWORD': 'uspass123',
     'WEKO_E2E_NOTIFY_TIMEOUT': '120',
     'WEKO_E2E_INBOX_SERVICE': 'inbox',
+    'WEKO_E2E_DB_SERVICE': 'postgresql',
+    'WEKO_E2E_DB_USER': 'invenio',
+    'WEKO_E2E_DB_NAME': 'invenio',
     'WEKO_E2E_CROSSREF_PREFIX': '10.5555',
     'WEKO_E2E_CROSSREF_DEPOSIT': '',
     'WEKO_E2E_CROSSREF_LOGIN_ID': '',
@@ -89,11 +92,15 @@ def find_weko_repo(compose_file):
     :param compose_file: compose file name that marks the checkout
     :return: absolute path of the checkout, or None when there is none
     """
+    candidates = []
     named = os.environ.get('WEKO_E2E_REPO')
     if named:
-        return os.path.abspath(os.path.expanduser(named))
+        # Named rather than guessed, but still checked: a name that does
+        # not hold the compose file would otherwise fail later, once per
+        # call, inside docker.
+        candidates.append(os.path.abspath(os.path.expanduser(named)))
 
-    candidates = [os.getcwd(), WORKSHOP_DIR]
+    candidates += [os.getcwd(), WORKSHOP_DIR]
     beside = os.path.abspath(os.path.join(WORKSHOP_DIR, os.pardir))
     candidates += [os.path.join(beside, name) for name in WEKO_REPO_NAMES]
     for candidate in candidates:
@@ -243,6 +250,9 @@ class Settings(object):
         self.approver_password = _env('WEKO_E2E_APPROVER_PASSWORD')
         self.notify_timeout = int(_env('WEKO_E2E_NOTIFY_TIMEOUT'))
         self.inbox_service = _env('WEKO_E2E_INBOX_SERVICE')
+        self.db_service = _env('WEKO_E2E_DB_SERVICE')
+        self.db_user = _env('WEKO_E2E_DB_USER')
+        self.db_name = _env('WEKO_E2E_DB_NAME')
         self.crossref_prefix = _env('WEKO_E2E_CROSSREF_PREFIX')
         self.crossref_deposit = _flag('WEKO_E2E_CROSSREF_DEPOSIT')
         self.crossref_login_id = _env('WEKO_E2E_CROSSREF_LOGIN_ID')
@@ -389,6 +399,8 @@ class Settings(object):
             ('compose file', self.compose_file),
             ('web service', self.web_service),
             ('inbox service', self.inbox_service),
+            ('database service', '{0} ({1}/{2})'.format(
+                self.db_service, self.db_user, self.db_name)),
             ('repository in container', self.container_repo),
         ]
 

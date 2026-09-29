@@ -29,6 +29,9 @@ WEKO のチェックアウトの中ではなくこのリポジトリに置いて
 | `weko_e2e/notify.py` | COAR Notify で何が通知されたかを読む |
 | `weko_e2e/pushstub.py` | Web Push 用の代替ブラウザ購読 |
 | `weko_e2e/config.py` | 環境変数／環境ファイルから読む設定 |
+| `weko_e2e/doctor.py` | 「テスト可能な状態」の定義（チェック群） |
+| `weko_e2e/dataload.py` | dump から行追加部分だけを取り出す |
+| `weko_e2e/inspect.py` | web コンテナ内で実行する、環境の内側の状態取得 |
 | `weko_e2e/client.py` | 画面と同じエンドポイントを叩く HTTP クライアント（準備と後始末用） |
 | `weko_e2e/ui.py` | アクティビティ画面を進めるための Playwright ヘルパ |
 | `weko_e2e/ledger.py` | 実行が作ったものを記録する台帳（`.e2e-state.json`） |
@@ -349,6 +352,101 @@ deposit の状態は web コンテナ内の `doi_deposit_log` から読むので
   合わせ、画面で指定する形にしています。
 - 所要時間は環境によって 13 ステップで約 60〜110 秒です。
 
+## 環境がテスト可能な状態か
+
+スイートは `install.sh` 直後の環境を前提にしています。その一部が欠けていると、
+失敗は分かりにくい場所に出ます（アイテム登録が Next で止まる、検索が何も
+見つけない、など）。`e2ectl doctor` は、どこが欠けているのかを先に示します。
+
+```bash
+cd e2e
+../.venv-e2e/bin/python ./e2ectl doctor        # 問題があれば表示
+../.venv-e2e/bin/python ./e2ectl doctor --verbose   # 正常な項目も表示
+```
+
+```
+https://localhost  (inspected)
+ok    the instance answers
+ok    the WEKO checkout
+ok    the account logs in
+...
+FAIL  this month's log partition
+      there is no user_activity_logs_202609. WEKO writes a log row for most
+      requests, so without it the file upload answers 500 and item
+      registration stops at Next.
+warn  nothing left from an earlier run
+      1 index left behind (E2E). ...
+
+2 of these can be put right: run "doctor --fix"
+```
+
+確認するのは 18 項目です。環境が応答するか、アカウントがログインでき管理
+できるか。アイテムタイプ・ワークフローアクション・複製元のフロー・インデックス
+ツリー・ファイルロケーション・当月のログパーティション・登録済み言語が
+あるか。検索が応答し worker が動いているか。オプションスイート向けに、
+識別子設定の行・承認役・Inbox があるか。最後に `install.sh` 直後からの
+差分を示します。
+
+`[crossref]` `[coarnotify]` が付く項目はそのスイートにだけ効くもので、
+FAIL ではなく warn になります。
+
+### 修復
+
+```bash
+../.venv-e2e/bin/python ./e2ectl doctor --fix                  # 補えるものを補う
+../.venv-e2e/bin/python ./e2ectl doctor --fix --fix-accounts   # アカウントとロールも
+```
+
+**既にあるものが優先されます。** どの修復も、欠けているものを足すだけで、
+既存を置き換えることはありません。
+
+| 状態 | `--fix` が行うこと |
+| --- | --- |
+| 当月のパーティションが無い | `CREATE TABLE ... PARTITION OF user_activity_logs` |
+| ワークフローアクションが無い | `invenio workflow init action_status,Action` |
+| フローが 1 つも無い | `scripts/demo/defaultworkflow.sql` の**行だけ**を投入 |
+| インデックスツリーが空 | `scripts/demo/indextree.sql` の**行だけ**を投入 |
+| 識別子設定の行が無い | `scripts/demo/doi_identifier.sql` の**行だけ**を投入 |
+| ファイルロケーションが無い | 作成する。**既にある環境では触らない** |
+| 言語が未登録 | `invenio language create --active --registered en English 001` |
+| 前回実行の残骸がある | `clean --discover --hard` |
+| 対象のアイテムタイプが無い | `scripts/demo/item_type.sql` の**行だけ**を投入 |
+| アカウントや承認役が無い／ロール不足 | 作成してロールを付与（`--fix-accounts` 指定時のみ） |
+
+### SQL ファイルを実行せずに行だけを足す
+
+上記 4 つは `install.sh` が投入するデータを扱いますが、**どれもファイル自体は
+実行しません**。`scripts/demo/item_type.sql` はシードではなくダンプで、
+**アイテムタイプ関連テーブルを DROP** してから作り直して詰め直します。空の
+DB には正しい手順ですが、独自のアイテムタイプを持つ環境では巻き込みます。
+
+そこで `weko_e2e/dataload.py` が各ファイルから**行を追加する文だけ**を取り
+出し、既存のスキーマに対して実行します。DROP も制約の変更も行わず、元から
+あった行はそのまま残ります。
+
+安全性は 3 点で担保しています。
+
+- **単一トランザクション。** 行は自分の id を持つので、その id を既に使って
+  いる環境では INSERT が失敗し、投入全体が巻き戻り、その旨が報告されます。
+  中途半端なアイテムタイプは残りません
+- **主キーは効いたまま。** ダンプの行は親→子の順ではなく書き出し順なので、
+  投入中だけ外部キー検査を外します（`session_replication_role`。
+  `pg_restore --disable-triggers` と同じ手）。主キーと一意制約はトリガでは
+  ないため効き続け、既存の行の上に載ることを防ぎます
+- **シーケンスは前進のみ。** ダンプはシーケンスを「ダンプ時点」に戻しますが、
+  それより進んでいる環境では発番済み id を再発行してしまいます。各 `setval`
+  は「現在値と dump 値の大きい方」に書き換えます
+
+既存アカウントのパスワードを変更しないのも同じ考え方です。`--fix-accounts`
+は欠けているものを補うためのもので、環境のアカウントを奪うためのものでは
+ありません。
+
+`--fix` が触らないものは、手で実行すべきコマンドとともに報告されます。
+これ以上に壊れている環境は `install.sh` で作り直すほうが早いはずです。
+
+`doctor` は FAIL があると終了コード 1 を返すので、実行前のゲートとしても
+使えます。
+
 ## 後始末（テストツール）
 
 実行したものは既定では**消さずに残します**（失敗時に画面を確認できるように）。
@@ -493,6 +591,9 @@ DB から消すため、compose ファイルを持つ WEKO のチェックアウ
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | WEKO が動く compose サービス名 |
 | `WEKO_E2E_INBOX_SERVICE` | `inbox` | LDN Inbox が動く compose サービス名。実行の通知を消す先であり、Web Push 代替の動作場所 |
+| `WEKO_E2E_DB_SERVICE` | `postgresql` | DB が動く compose サービス名。`doctor --fix` が SQL を流す先 |
+| `WEKO_E2E_DB_USER` | `invenio` | |
+| `WEKO_E2E_DB_NAME` | `invenio` | |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | そのコンテナ内でのチェックアウトのパス |
 
 ### その他
@@ -544,8 +645,9 @@ DB から消すため、compose ファイルを持つ WEKO のチェックアウ
 
 ## うまく動かないとき
 
-- **想定と違う動きをする** — まず `./e2ectl env`。たいていは設定が思っている
-  のと別の場所を指しています
+- **想定と違う動きをする** — まず `./e2ectl doctor`、次に `./e2ectl env`。
+  「環境がテスト可能な状態にない」場合と「設定が思っているのと別の場所を
+  指している」場合の両方を、この 2 つでカバーできます
 - **`e2ectl ping` が「does not answer」** — 手元の環境なら
   `docker compose -f docker-compose2.yml ps` でコンテナを確認する。DNS で
   引けないホスト名なら `WEKO_E2E_HOST_IP` を指定する
