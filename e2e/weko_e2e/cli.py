@@ -512,6 +512,32 @@ MARKS = {doctor.OK: 'ok  ', doctor.WARN: 'warn', doctor.FAIL: 'FAIL'}
 """How each status is spelled in the tool's output."""
 
 
+def look_over(settings, ledger):
+    """Return what every check makes of an instance.
+
+    The seam the suite itself uses: ``conftest`` calls this before a run
+    rather than spending one on an instance that cannot pass.
+
+    :return: ``(survey, findings)`` -- the survey because a repair needs
+        what was found out, not only what was concluded
+    """
+    survey = _survey(settings, ledger)
+    return survey, doctor.evaluate(survey)
+
+
+def put_right(findings, settings, survey, accounts=False, out=print):
+    """Apply every repair the findings name.
+
+    :param accounts: allow the repairs that create or change an account
+    :param out: where to say what happened
+    :return: the findings that were repairable
+    """
+    repairable = [f for f in findings if f.fix and f.status != doctor.OK]
+    for finding in repairable:
+        _repair(finding, settings, survey, accounts, out=out)
+    return repairable
+
+
 def command_doctor(args, settings, ledger):
     """Say whether this instance can be tested, and put right what can be.
 
@@ -541,8 +567,7 @@ def command_doctor(args, settings, ledger):
 
     if repairable:
         print('\nrepairing:')
-    for finding in repairable:
-        _repair(finding, args, settings, survey)
+        put_right(findings, settings, survey, args.fix_accounts)
     if repairable:
         print('\nlooking again:')
         return command_doctor(
@@ -552,20 +577,20 @@ def command_doctor(args, settings, ledger):
     return 1 if doctor.worst(findings) == doctor.FAIL else 0
 
 
-def _repair(finding, args, settings, survey):
+def _repair(finding, settings, survey, accounts=False, out=print):
     """Apply one repair, and say what happened."""
     fixer, needs_accounts = FIXES[finding.fix]
-    if needs_accounts and not args.fix_accounts:
-        print('  skipped {0}: it would add or change an account; pass '
-              '--fix-accounts to allow that'.format(finding.name))
+    if needs_accounts and not accounts:
+        out('  skipped {0}: it would add or change an account; pass '
+            '--fix-accounts to allow that'.format(finding.name))
         return
     if not settings.weko_repo:
-        print('  cannot repair {0}: there is no WEKO checkout to reach the '
-              'containers through'.format(finding.name))
+        out('  cannot repair {0}: there is no WEKO checkout to reach the '
+            'containers through'.format(finding.name))
         return
-    print('  {0}...'.format(finding.name))
+    out('  {0}...'.format(finding.name))
     for line in fixer(settings, survey) or []:
-        print('    {0}'.format(line))
+        out('    {0}'.format(line))
 
 
 # -- the repairs -----------------------------------------------------------
