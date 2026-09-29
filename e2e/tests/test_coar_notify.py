@@ -29,12 +29,36 @@ in which one account did everything would prove nothing -- which is why
 the approver here is somebody else.
 """
 
+import json
+import os
+import re
+import time
+import uuid
+
 import pytest
 
 from weko_e2e import flow, notify, ui
+from weko_e2e.cli import (push_received, push_stub,  # noqa: I100
+                          push_subscribe, push_unsubscribe)
 from weko_e2e.client import WekoClient, WekoError
 
 pytestmark = pytest.mark.suite('coarnotify')
+
+VAPID_KEY_PATH = '/inbox/subscription/vapid-public-key'
+"""Where a browser asks for the key it has to subscribe with."""
+
+SERVICE_WORKER_PATH = '/static/gen/sw.js'
+"""The script that receives a Web Push and shows it."""
+
+PUSH_TEMPLATES = os.path.join(
+    'modules', 'weko-notifications', 'weko_notifications', 'templates',
+    'weko_notifications', 'push.json')
+"""The message texts WEKO registers with the inbox, in the checkout.
+
+The inbox renders a push from these, so they are what a delivered push
+has to say; reading them is how this suite knows the text it should see
+without writing that text down a second time.
+"""
 
 
 @pytest.fixture(scope='module')
@@ -182,7 +206,63 @@ def test_07_the_approver_is_offered_the_item(approver, settings, flow_state):
             offer['target']['type'])
 
 
-def test_08_the_approver_approves(page, approver, approver_page, settings,
+# -- web push, when this environment can deliver one -----------------------
+
+def test_08_the_instance_can_send_a_web_push(client, settings, flow_state):
+    """A Web Push can be signed here, and something is listening for one.
+
+    Skipped unless this environment has the stand-in browser running.  A
+    real subscription comes from Google's or Mozilla's push service,
+    which a run against a local stack cannot reach; and the inbox signs
+    nothing without a VAPID key, which the shipped compose file leaves
+    empty.  ``e2ectl webpush-stub enable`` is what puts both in place.
+    """
+    if not settings.weko_repo:
+        pytest.skip(
+            'the web push stand-in is reached through docker; set '
+            'WEKO_E2E_REPO to the WEKO checkout')
+    subscription = push_stub(settings, '/subscription')
+    if not subscription:
+        pytest.skip(
+            'no web push stand-in is running; "e2ectl webpush-stub enable" '
+            'generates a VAPID key pair for the inbox and runs a browser '
+            'of its own for it to send to')
+    flow_state['push_stub'] = subscription
+    print('stand-in subscription: {0}'.format(subscription['endpoint']))
+
+    response = client.session.get(settings.url(VAPID_KEY_PATH), timeout=60)
+    assert response.status_code == 200, \
+        'the inbox answered {0} for {1}'.format(
+            response.status_code, VAPID_KEY_PATH)
+    key = response.text.strip()
+    assert key, (
+        'the inbox publishes no VAPID public key, so no browser can '
+        'subscribe and nothing it was sent could be signed')
+    print('VAPID public key: {0}...'.format(key[:16]))
+
+
+def test_09_the_registrant_subscribes_to_web_push(settings, flow_state):
+    """The registrant's browser subscribes, as the settings screen does.
+
+    WEKO registers a subscription and the user's profile together -- the
+    profile is what the inbox picks the language of the message by -- so
+    the stand-in registers both.
+    """
+    _require_web_push(flow_state)
+    # The offer names the registrant as the one who asked for approval.
+    target = flow_state['offer']['actor']['id']
+    answer = push_subscribe(settings, target)
+    assert answer, 'the web push stand-in stopped answering'
+    assert answer.get('subscribe') in (200, 201), \
+        'the inbox refused the subscription: {0}'.format(answer)
+    assert answer.get('userprofile') in (200, 201), \
+        'the inbox refused the user profile: {0}'.format(answer)
+    flow_state['push_target'] = target
+    flow_state['pushed_before'] = len(push_received(settings))
+    print('subscribed for {0}'.format(target))
+
+
+def test_10_the_approver_approves(page, approver, approver_page, settings,
                                   record, flow_state, shot):
     """The approver, not the registrant, approves the item.
 
@@ -215,7 +295,7 @@ def test_08_the_approver_approves(page, approver, approver_page, settings,
     shot(approver_page, '03-approved')
 
 
-def test_09_the_registrant_is_told_it_was_approved(client, settings,
+def test_11_the_registrant_is_told_it_was_approved(client, settings,
                                                    flow_state):
     """The registrant is sent an Announce + EndorsementAction.
 
@@ -232,6 +312,7 @@ def test_09_the_registrant_is_told_it_was_approved(client, settings,
             settings.email, flow_state['activity_id'],
             settings.notify_timeout))
     print('announced: {0}'.format(notify.summary(announcement)))
+    flow_state['announcement'] = announcement
 
     _check_shape(announcement, settings)
     assert announcement['object']['id'].rstrip('/').endswith(
@@ -248,7 +329,70 @@ def test_09_the_registrant_is_told_it_was_approved(client, settings,
         'the announcement was sent to the person who made it'
 
 
-def test_10_the_user_can_choose_how_to_be_notified(page, settings, shot):
+def test_12_the_approval_arrives_as_a_web_push(settings, flow_state):
+    """The announcement reaches the browser as a Web Push, in words.
+
+    The payload is encrypted for the subscription's own keys, so what the
+    stand-in decrypts is what the user's browser would have been shown --
+    and it has to be what ``push.json`` says, rendered with this item and
+    this approver.
+    """
+    _require_web_push(flow_state)
+    notification = flow_state['announcement']
+    push = _wait_for_push(settings, notification['id'],
+                          settings.notify_timeout)
+    assert push, (
+        'the inbox sent no web push for {0} within {1} s, although the '
+        'announcement reached it. Check the inbox log: it sends in a '
+        'background task and only writes the failure down.'.format(
+            notification['id'], settings.notify_timeout))
+    print('web push: {0}'.format(json.dumps(push, ensure_ascii=False)))
+
+    title, body = _rendered_template(settings, notify.ANNOUNCE_ENDORSE,
+                                     notification)
+    assert push['title'] == title, \
+        'the push says {0!r}, not the {1!r} push.json asks for'.format(
+            push['title'], title)
+    assert push['options']['body'] == body, \
+        'the push body is {0!r}, not the {1!r} push.json asks for'.format(
+            push['options']['body'], body)
+    assert push['options']['data']['url'] == notification['context']['id'], \
+        'clicking the push would open {0!r}, not the activity it is ' \
+        'about'.format(push['options']['data']['url'])
+
+
+def test_13_unsubscribing_stops_the_pushes(client, settings, flow_state):
+    """Once the browser unsubscribes, the inbox sends it nothing more.
+
+    The run has only one approval to give, so the second notification is
+    offered to the inbox the way any sender offers one -- a POST to the
+    inbox itself -- and it is the same notification but for its id, so
+    the only thing that has changed is the subscription.
+    """
+    _require_web_push(flow_state)
+    answer = push_unsubscribe(settings)
+    assert answer and answer.get('unsubscribe') == 200, \
+        'the inbox did not take the subscription away: {0}'.format(answer)
+
+    before = len(push_received(settings))
+    again = dict(flow_state['announcement'])
+    again['id'] = 'urn:uuid:{0}'.format(uuid.uuid4())
+    response = client.session.post(
+        settings.url('/inbox'), data=json.dumps(again), timeout=60,
+        headers={'Content-Type': 'application/ld+json'})
+    assert response.status_code == 201, \
+        'the inbox answered {0} for a notification it should take: ' \
+        '{1}'.format(response.status_code, response.text[:200])
+
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        time.sleep(3)
+        assert len(push_received(settings)) == before, (
+            'the inbox pushed to a subscription that had unsubscribed')
+    print('nothing was pushed after unsubscribing, as it should not be')
+
+
+def test_14_the_user_can_choose_how_to_be_notified(page, settings, shot):
     """The registrant has a screen for saying how they want to be told."""
     page.goto(settings.url('/account/settings/notifications/'))
     page.wait_for_load_state('networkidle')
@@ -259,6 +403,80 @@ def test_10_the_user_can_choose_how_to_be_notified(page, settings, shot):
                  'notifications-subscribe_email'):
         assert page.locator("input[name='{0}']".format(name)).count(), \
             'the notification settings screen offers no {0!r}'.format(name)
+
+    # Turning Web push on is what registers the service worker, so the
+    # screen is only an offer while that script is served.
+    worker = page.request.get(settings.url(SERVICE_WORKER_PATH))
+    assert worker.ok, \
+        'the service worker {0} answers {1}, so a browser could not ' \
+        'receive a web push'.format(SERVICE_WORKER_PATH, worker.status)
+
+
+def _require_web_push(flow_state):
+    """Skip when this environment cannot deliver a Web Push."""
+    if not flow_state.get('push_stub'):
+        pytest.skip('this environment sends no web push; see the step that '
+                    'looks for the stand-in')
+
+
+def _wait_for_push(settings, notification_id, timeout, interval=3):
+    """Wait for the push the inbox sends about one notification.
+
+    The inbox pushes in a background task, after it has answered the
+    sender, so the push follows the notification rather than arriving
+    with it.  Each push carries the notification's id as its tag, which
+    is what tells this run's apart from anything else in the stand-in.
+
+    :return: the push payload, or None when none arrived in time
+    """
+    deadline = time.time() + timeout
+    while True:
+        for entry in push_received(settings):
+            payload = entry.get('payload') or {}
+            if payload.get('options', {}).get('tag') == notification_id:
+                return payload
+        if time.time() >= deadline:
+            return None
+        time.sleep(interval)
+
+
+def _rendered_template(settings, activity_type, notification, language='en'):
+    """Return the title and body ``push.json`` asks for, filled in.
+
+    The inbox picks the template by the notification's ``type`` and
+    renders ``{{ object_name }}`` and ``{{ actor_name }}`` into it; this
+    does the same, so the step compares what arrived with what the
+    instance's own message file says rather than with a copy of the text.
+
+    :raise AssertionError: when the file has no template for that type
+    """
+    path = os.path.join(settings.weko_repo, PUSH_TEMPLATES)
+    assert os.path.isfile(path), \
+        'the message templates are not at {0}; this is where WEKO reads ' \
+        'them from before registering them with the inbox'.format(path)
+    with open(path, encoding='utf-8') as handle:
+        templates = json.load(handle)
+
+    for entry in templates.values():
+        if entry.get('type') != activity_type:
+            continue
+        text = entry.get('templates', {}).get(language)
+        assert text, 'push.json has no {0!r} text for {1}'.format(
+            language, activity_type)
+        values = {
+            'object_name': notification['object']['name'],
+            'actor_name': notification['actor']['name'],
+        }
+        return (_render(text['title'], values), _render(text['body'], values))
+    raise AssertionError(
+        'push.json has no template for {0}, so the inbox had nothing to '
+        'render'.format(activity_type))
+
+
+def _render(text, values):
+    """Fill ``{{ name }}`` in, the way the inbox does."""
+    return re.sub(r'\{\{\s*(\w+)\s*\}\}',
+                  lambda match: str(values.get(match.group(1), '')), text)
 
 
 def _check_shape(payload, settings):

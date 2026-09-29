@@ -27,6 +27,7 @@ WEKO のチェックアウトの中ではなくこのリポジトリに置いて
 | `weko_e2e/flow.py` | 全スイートが共通で使う登録フロー |
 | `weko_e2e/arkstub.py` | `ark` 用のスタブ ARK サーバ |
 | `weko_e2e/notify.py` | COAR Notify で何が通知されたかを読む |
+| `weko_e2e/pushstub.py` | Web Push 用の代替ブラウザ購読 |
 | `weko_e2e/config.py` | 環境変数／環境ファイルから読む設定 |
 | `weko_e2e/client.py` | 画面と同じエンドポイントを叩く HTTP クライアント（準備と後始末用） |
 | `weko_e2e/ui.py` | アクティビティ画面を進めるための Playwright ヘルパ |
@@ -129,7 +130,7 @@ cd e2e
 | --- | --- | --- |
 | （基本） | インデックス・ワークフロー・アイテム登録・公開 | 動作する WEKO 環境だけ |
 | `ark` | ARK が発行され、アイテムのパーマリンクになる | ARK サーバ（`e2ectl ark-account enable`）、または代替スタブ（`e2ectl ark-stub enable`） |
-| `coarnotify` | 承認依頼と承認が COAR Notify で正しい相手に通知される | LDN Inbox（`inbox` サービス）と、承認役のもう 1 アカウント |
+| `coarnotify` | 承認依頼と承認が COAR Notify で正しい相手に通知され、Web Push でも届く | LDN Inbox（`inbox` サービス）と承認役のもう 1 アカウント。Web Push の確認には `e2ectl webpush-stub enable` |
 | `crossref` | Crossref DOI が付与され、パーマリンクになる | なし。さらに Crossref へ登録（deposit）するにはアカウントが必要 |
 
 ```bash
@@ -240,6 +241,36 @@ WEKO はワークフローの出来事を COAR Notify のメッセージに変�
 通知は WEKO の DB ではなく Inbox 側の DB にあるため、WEKO の DB を初期状態に
 戻しても残ります。`clean --hard` はその実行が出した通知を `inbox` コンテナ
 から併せて削除します。
+
+#### Web Push
+
+通知は Web Push で利用者に届けることもできます。WEKO の担当は、購読・
+ユーザープロファイル・メッセージテンプレートを Inbox に登録するところまでで、
+通知を購読鍵で暗号化して配送するのは Inbox です。スイートはその全体を確認
+します。Push が届き、復号でき、`push.json` の文面がこのアイテムと承認者で
+展開されていること。
+
+これを実際に行うには 2 つ障害があり、`e2ectl webpush-stub` が両方を片付け
+ます。本物の購読はブラウザの Push サービス（Google / Mozilla）から取るもので、
+ローカル環境からは到達できません。また配布時の compose ファイルは Inbox の
+VAPID 鍵を空にしているため、そもそも署名ができません。
+
+```bash
+../.venv-e2e/bin/python ./e2ectl webpush-stub enable   # 鍵・作り直し・代替
+../.venv-e2e/bin/python -m pytest --suite coarnotify
+../.venv-e2e/bin/python ./e2ectl webpush-stub disable  # すべて元に戻す
+```
+
+`enable` は VAPID 鍵を生成し、WEKO チェックアウトの compose ファイルへ
+マーカ付きで書き込み（鍵は WEKO ではなく `inbox` サービスのものなので
+`instance.cfg` ではありません）、Inbox を作り直して読み込ませ、
+`weko_e2e/pushstub.py` をそのコンテナのループバックで起動します。代替側は
+自前の購読鍵を持ち、通知設定画面が本物の購読を登録するのと同じ手順で Inbox
+に登録し、届いたものを復号します。`disable` はブロックを外して元の行を戻し、
+`status` は現状を表示、`start` / `stop` はプロセスだけを操作します。
+
+代替を動かしていない環境では、Web Push の 4 ステップが理由と有効化方法つきで
+skip されます（Crossref の deposit と同じ扱いです）。
 
 ### `crossref` スイート
 
@@ -461,7 +492,7 @@ DB から消すため、compose ファイルを持つ WEKO のチェックアウ
 | `WEKO_E2E_REPO` | 自動検出 | compose ファイルを持つ WEKO のチェックアウト |
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | WEKO が動く compose サービス名 |
-| `WEKO_E2E_INBOX_SERVICE` | `inbox` | LDN Inbox が動く compose サービス名。その実行の通知を消す先 |
+| `WEKO_E2E_INBOX_SERVICE` | `inbox` | LDN Inbox が動く compose サービス名。実行の通知を消す先であり、Web Push 代替の動作場所 |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | そのコンテナ内でのチェックアウトのパス |
 
 ### その他
@@ -549,6 +580,16 @@ DB から消すため、compose ファイルを持つ WEKO のチェックアウ
   承認権限がないか、前の実行で開いたままのアクティビティを掴んでいる。
   掴み直しはスイート側で解除しますが、アクティビティ自体は
   `./e2ectl clean --discover` で消せます
+- **Web Push のステップが skip される** — 代替が動いていない。
+  `./e2ectl webpush-stub enable` で用意でき、`./e2ectl webpush-stub status`
+  で現状を確認できます。代替は `inbox` コンテナ内で動くため、WEKO
+  チェックアウトが見つからない環境でも skip されます
+- **承認通知は届くが Push が来ない** — Inbox はバックグラウンドタスクで送信し、
+  失敗はログにしか出しません（`docker compose -f docker-compose2.yml logs
+  inbox`）。1 通の Push には購読・同じ URI のユーザープロファイル・通知の
+  `type` に一致するテンプレートの 3 つが要ります。前 2 つは代替が登録し、
+  3 つ目は WEKO が起動時に `push.json` から登録するので、`push.json` を
+  変更したあと再起動していない環境では古い文面のままです
 - **`crossref` で付与が提示されないと言われる** — 識別子設定の保存に失敗して
   いる。`/admin/identifier/` を開いて確認する
 - **deposit のステップが skip される** — `WEKO_E2E_CROSSREF_DEPOSIT` がオフ、

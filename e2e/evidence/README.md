@@ -15,9 +15,9 @@ screenshots it is written from.
 
 | | |
 | --- | --- |
-| Run at | 2026-09-19 04:37:49 – 04:43:26 (UTC) |
-| Run id | `20260919-043749` |
-| Result | **37 passed, 2 skipped** (336.58 s) |
+| Run at | 2026-09-19 05:18:39 – 05:24:29 (UTC) |
+| Run id | `20260919-051839` |
+| Result | **41 passed, 2 skipped** (349.85 s) |
 | Against | `https://localhost` (`install.sh` / `docker-compose2.yml`) |
 | Suites | base, `ark` (against the stand-in ARK server), `coarnotify`, `crossref` |
 | Cleaned up with | `./e2ectl clean --hard`; the database, and the inbox, went back to how `install.sh` left them |
@@ -27,7 +27,7 @@ screenshots it is written from.
 platform linux -- Python 3.11.12, pytest-9.1.1, pluggy-1.6.0
 rootdir: /home/mhaya/weko-workshop/e2e
 configfile: pytest.ini
-collected 37 items
+collected 43 items
 
 tests/test_basic_publish.py::test_01_login PASSED
 tests/test_basic_publish.py::test_02_create_index PASSED
@@ -57,9 +57,13 @@ tests/test_coar_notify.py::test_04_the_approver_can_read_their_notifications PAS
 tests/test_coar_notify.py::test_05_set_up PASSED
 tests/test_coar_notify.py::test_06_send_the_item_for_approval PASSED
 tests/test_coar_notify.py::test_07_the_approver_is_offered_the_item PASSED
-tests/test_coar_notify.py::test_08_the_approver_approves PASSED
-tests/test_coar_notify.py::test_09_the_registrant_is_told_it_was_approved PASSED
-tests/test_coar_notify.py::test_10_the_user_can_choose_how_to_be_notified PASSED
+tests/test_coar_notify.py::test_08_the_instance_can_send_a_web_push PASSED
+tests/test_coar_notify.py::test_09_the_registrant_subscribes_to_web_push PASSED
+tests/test_coar_notify.py::test_10_the_approver_approves PASSED
+tests/test_coar_notify.py::test_11_the_registrant_is_told_it_was_approved PASSED
+tests/test_coar_notify.py::test_12_the_approval_arrives_as_a_web_push PASSED
+tests/test_coar_notify.py::test_13_unsubscribing_stops_the_pushes PASSED
+tests/test_coar_notify.py::test_14_the_user_can_choose_how_to_be_notified PASSED
 
 tests/test_crossref_doi.py::test_01_prefix_is_set PASSED
 tests/test_crossref_doi.py::test_02_set_up PASSED
@@ -72,7 +76,7 @@ tests/test_crossref_doi.py::test_08_doi_is_published PASSED
 tests/test_crossref_doi.py::test_09_deposit_was_recorded SKIPPED
 tests/test_crossref_doi.py::test_10_deposit_reached_crossref SKIPPED
 
-============ 37 passed, 2 skipped, 20 warnings in 336.58s (0:05:36) ============
+============ 41 passed, 2 skipped, 22 warnings in 349.85s (0:05:49) ============
 ```
 
 The two skips are the Crossref deposit: this instance was given no
@@ -113,17 +117,17 @@ four suites can share one session:
 
 | Suite | index | flow / workflow | activity | item |
 | --- | --- | --- | --- | --- |
-| base | `1789792754033` | `3e5875f0…` / `04c12c39…` | `A-20260919-00014` | `2000053` |
-| `ark` | `1789792686782` | `a92947f8…` / `bcf6c81e…` | `A-20260919-00013` | `2000052` |
-| `coarnotify` | `1789792844096` | `41fb8d9f…` / `64c39c83…` | `A-20260919-00015` | `2000054` |
-| `crossref` | `1789792927666` | `a56e2f94…` / `fb89d190…` | `A-20260919-00016` | `2000055` |
+| base | `1789795192785` | `3de1ac20…` / `6a53e140…` | `A-20260919-00026` | `2000065` |
+| `ark` | `1789795123751` | `6b7f3cb5…` / `314a4d35…` | `A-20260919-00025` | `2000064` |
+| `coarnotify` | `1789795285144` | `29306ba0…` / `8c94b678…` | `A-20260919-00027` | `2000066` |
+| `crossref` | `1789795389184` | `43dc3f27…` / `e4e8fec9…` | `A-20260919-00028` | `2000067` |
 
 What the optional suites were after:
 
 | | |
 | --- | --- |
-| ARK minted | `ark:/99999/fk400002` |
-| Crossref DOI granted | `10.5555/0002000055` |
+| ARK minted | `ark:/99999/fk400006` |
+| Crossref DOI granted | `10.5555/0002000067` |
 | COAR Notify sent | 5 notifications: one approval request per suite that registered an item, and the approval announcement the `coarnotify` suite asked for |
 
 ---
@@ -139,7 +143,7 @@ As the system administrator `wekosoftware@nii.ac.jp`.
 ### 02. Create the test index (test_02_create_index)
 
 Create the index and publish it. The admin Index Tree shows
-`E2E Index 20260919-043749` next to the shipped `Sample Index`.
+`E2E Index 20260919-051839` next to the shipped `Sample Index`.
 
 A newly created index is private, which is why this step publishes it;
 without that, step 12 fails.
@@ -180,7 +184,7 @@ Title and Resource Type.
 
 ### 07. Designate the index (test_07_designate_index)
 
-Tick `E2E Index 20260919-043749` in the index tree; DESIGNATE INDEX shows
+Tick `E2E Index 20260919-051839` in the index tree; DESIGNATE INDEX shows
 it.
 
 ![The index designated](images/08-index-designated.png)
@@ -213,7 +217,7 @@ published.
 
 ### 11. The item is registered (test_11_record_is_registered)
 
-`/records/2000053` exists and shows the title the run registered.
+`/records/2000065` exists and shows the title the run registered.
 
 ![The item page, as the administrator](images/13-record-page.png)
 
@@ -246,7 +250,7 @@ read, or added, without the others.
 | Suite | Report | Result | What it checks |
 | --- | --- | --- | --- |
 | `ark` | [`ark/README.md`](ark/README.md) | 6 passed | an ARK is minted for the item and becomes its permalink |
-| `coarnotify` | [`coarnotify/README.md`](coarnotify/README.md) | 10 passed | the approval request and the approval are announced over COAR Notify, and reach the people they are meant to |
+| `coarnotify` | [`coarnotify/README.md`](coarnotify/README.md) | 14 passed | the approval request and the approval are announced over COAR Notify, reach the people they are meant to, and arrive as a web push |
 | `crossref` | [`crossref/README.md`](crossref/README.md) | 8 passed, 2 skipped | a Crossref DOI is granted to the item and becomes its permalink |
 
 The two skips are the Crossref deposit, which this instance has no account
@@ -262,50 +266,51 @@ looked at. The ledger says what is still there.
 
 ```console
 $ ./e2ectl status          # the run_id on the Settings line is this call's, not the run's
-Settings(base_url='https://localhost', run_id='20260919-044426', label='E2E')
+Settings(base_url='https://localhost', run_id='20260919-052532', label='E2E')
 ledger: /home/mhaya/weko-workshop/e2e/.e2e-state.json
-  run 20260919-043749  started 2026-09-19T04:38:06  20 resource(s)
-    index     1789792686782            E2E Index 20260919-043749-ark
-    flow      a92947f8-df56-4b86-a9d5-fe116b7677a8 E2E Flow 20260919-043749-ark
-    workflow  bcf6c81e-62b2-44dc-9624-d6eceb5d50a0 E2E Workflow 20260919-043749-ark
-    activity  A-20260919-00013         E2E Workflow 20260919-043749-ark
-    item      2000052                  E2E item 20260919-043749-ark
-    index     1789792754033            E2E Index 20260919-043749
+  run 20260919-051839  started 2026-09-19T05:18:43  20 resource(s)
+    index     1789795123751            E2E Index 20260919-051839-ark
+    flow      6b7f3cb5-1a1d-4409-88f6-00fc25e81cae E2E Flow 20260919-051839-ark
+    workflow  314a4d35-654d-4ec5-a3c3-992571812aed E2E Workflow 20260919-051839-ark
+    activity  A-20260919-00025         E2E Workflow 20260919-051839-ark
+    item      2000064                  E2E item 20260919-051839-ark
+    index     1789795192785            E2E Index 20260919-051839
     ...                                (the base suite's five)
-    index     1789792844096            E2E Index 20260919-043749-coarnotify
+    index     1789795285144            E2E Index 20260919-051839-coarnotify
     ...                                (the coarnotify suite's five)
-    index     1789792927666            E2E Index 20260919-043749-crossref
+    index     1789795389184            E2E Index 20260919-051839-crossref
     ...                                (the crossref suite's five)
 ```
 
 ```console
 $ ./e2ectl clean --hard
-deleted  item 2000052 E2E item 20260919-043749-ark
-deleted  item 2000053 E2E item 20260919-043749
-deleted  item 2000054 E2E item 20260919-043749-coarnotify
-deleted  item 2000055 E2E item 20260919-043749-crossref
-deleted  activity A-20260919-00013 ...
-deleted  workflow bcf6c81e-62b2-44dc-9624-d6eceb5d50a0 ...
-deleted  flow a92947f8-df56-4b86-a9d5-fe116b7677a8 ...
-deleted  index 1789792686782 E2E Index 20260919-043749-ark
-deleted  index 1789792754033 E2E Index 20260919-043749
-deleted  index 1789792844096 E2E Index 20260919-043749-coarnotify
-deleted  index 1789792927666 E2E Index 20260919-043749-crossref
+deleted  item 2000064 E2E item 20260919-051839-ark
+deleted  item 2000065 E2E item 20260919-051839
+deleted  item 2000066 E2E item 20260919-051839-coarnotify
+deleted  item 2000067 E2E item 20260919-051839-crossref
+deleted  activity A-20260919-00025 ...
+deleted  workflow 314a4d35-654d-4ec5-a3c3-992571812aed ...
+deleted  flow 6b7f3cb5-1a1d-4409-88f6-00fc25e81cae ...
+deleted  index 1789795123751 E2E Index 20260919-051839-ark
+deleted  index 1789795192785 E2E Index 20260919-051839
+deleted  index 1789795285144 E2E Index 20260919-051839-coarnotify
+deleted  index 1789795389184 E2E Index 20260919-051839-crossref
 hard purge: docker compose -f docker-compose2.yml exec -T web invenio shell /tmp/weko-e2e-purge.py /tmp/weko-e2e-purge.json
-purged items: 2000052, 2000053, 2000054, 2000055
-purged activities: A-20260919-00013, A-20260919-00014, A-20260919-00015, A-20260919-00016
-purged workflows: bcf6c81e-..., 04c12c39-..., 64c39c83-..., fb89d190-...
-purged flows: a92947f8-..., 3e5875f0-..., 41fb8d9f-..., a56e2f94-...
-purged indexes: 1789792686782, 1789792754033, 1789792844096, 1789792927666
-purged notifications: 5
+purged items: 2000064, 2000065, 2000066, 2000067
+purged activities: A-20260919-00025, A-20260919-00026, A-20260919-00027, A-20260919-00028
+purged workflows: 314a4d35-..., 6a53e140-..., 8c94b678-..., e4e8fec9-...
+purged flows: 6b7f3cb5-..., 3de1ac20-..., 29306ba0-..., 43dc3f27-...
+purged indexes: 1789795123751, 1789795192785, 1789795285144, 1789795389184
+purged notifications: 6
 ```
 
 The last line is the inbox: it is a service of its own with a database of
 its own, so it does not come back to its baseline when WEKO's database
 does. `--hard` copies `weko_e2e/inboxpurge.py` into the `inbox` container
 and removes the notifications whose `context` names one of the run's
-activities -- the four offers and the one announcement, and nothing
-else.
+activities -- the four approval requests, the announcement, and the copy
+the `coarnotify` suite offered the inbox to test unsubscribing -- and
+nothing else.
 
 ### What the database gained, and gave back
 
@@ -316,7 +321,7 @@ after `--hard`, and nothing else with it.
 | | index | flow | workflow | activity | records | bucket | pid | inbox |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Before the run | 1 | 1 | 2 | 0 | 0 | 0 | 0 | 36 |
-| After the run | 5 | 5 | 6 | 4 | 8 | 8 | 37 | 41 |
+| After the run | 5 | 5 | 6 | 4 | 8 | 8 | 37 | 42 |
 | After `clean --hard` | **1** | **1** | **2** | **0** | **0** | **0** | **0** | **36** |
 
 Four of each, one per suite. Two records and two buckets per item,
@@ -327,7 +332,7 @@ included, and the inbox to the 36 notifications it held before the run.
 The item's page is gone too.
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000053
+$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000065
 404
 ```
 
@@ -344,7 +349,8 @@ code change.
 | The same, with `WEKO_TEST_EMAIL` / `WEKO_TEST_PASSWORD` set to a second system administrator account and `WEKO_E2E_LABEL=E2E-user2` | 13 passed |
 | `ark` against a server configured with `e2ectl ark-account enable`, login flow rather than API key | 6 passed; minted `ark:/12345/x900002` under the configured NAAN and shoulder |
 | `crossref` with `WEKO_E2E_CROSSREF_DEPOSIT=1` against a stand-in for Crossref | 10 passed; the deposit reached `success` |
-| `coarnotify` on its own against the stack's own `inbox` service | 10 passed; the offer reached `users/2` and the announcement `users/1` |
+| `coarnotify` on its own, with the web push stand-in | 14 passed; the push arrived and decrypted to what `push.json` says |
+| `coarnotify` with no web push stand-in running | 10 passed, 4 skipped; the four web push steps said how to ask for them |
 
 The second row goes through the host resolver rule in the browser and the
 pinned-host adapter in the HTTP client; the third proves the run does not
@@ -371,17 +377,21 @@ session.
 
 ```bash
 cd e2e
-../.venv-e2e/bin/python ./e2ectl ark-stub enable # the ark suite needs a server
-../.venv-e2e/bin/python ./e2ectl clean --hard   # back to the baseline
+../.venv-e2e/bin/python ./e2ectl ark-stub enable     # the ark suite needs a server
+../.venv-e2e/bin/python ./e2ectl webpush-stub enable # and the push steps a browser
+../.venv-e2e/bin/python ./e2ectl clean --hard        # back to the baseline
 WEKO_E2E_ARK_NAAN=99999 \
-  ../.venv-e2e/bin/python -m pytest --suite all   # the screenshots are retaken
-../.venv-e2e/bin/python ./e2ectl status         # what the ledger holds
-../.venv-e2e/bin/python ./e2ectl clean --hard    # clean up
+  ../.venv-e2e/bin/python -m pytest --suite all      # the screenshots are retaken
+../.venv-e2e/bin/python ./e2ectl status              # what the ledger holds
+../.venv-e2e/bin/python ./e2ectl clean --hard        # clean up
+../.venv-e2e/bin/python ./e2ectl webpush-stub disable
 ../.venv-e2e/bin/python ./e2ectl ark-stub disable
 ```
 
-The `coarnotify` suite needs nothing turned on: the `inbox` service and
-`repoadmin@example.org` are both part of what `install.sh` brings up.
+The rest of the `coarnotify` suite needs nothing turned on: the `inbox`
+service and `repoadmin@example.org` are both part of what `install.sh`
+brings up. Only the four web push steps want the stand-in, and they skip
+without it.
 
 The screenshots are written to `images/` under fixed names, so each run
 replaces them. The numbers in this document -- the run id, the item id, the

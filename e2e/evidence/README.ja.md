@@ -13,9 +13,9 @@ English: [`README.md`](README.md)
 
 | | |
 | --- | --- |
-| 実行日時 | 2026-09-19 04:37:49 〜 04:43:26 (UTC) |
-| 実行 ID | `20260919-043749` |
-| 結果 | **37 passed, 2 skipped**（所要 336.58 秒） |
+| 実行日時 | 2026-09-19 05:18:39 〜 05:24:29 (UTC) |
+| 実行 ID | `20260919-051839` |
+| 結果 | **41 passed, 2 skipped**（所要 349.85 秒） |
 | 対象 | `https://localhost`（`install.sh` / `docker-compose2.yml`） |
 | スイート | 基本 / `ark`（代替 ARK サーバ使用） / `coarnotify` / `crossref` |
 | 後始末 | `./e2ectl clean --hard` で全削除、DB も Inbox も `install.sh` 直後の状態に復帰 |
@@ -25,7 +25,7 @@ English: [`README.md`](README.md)
 platform linux -- Python 3.11.12, pytest-9.1.1, pluggy-1.6.0
 rootdir: /home/mhaya/weko-workshop/e2e
 configfile: pytest.ini
-collected 37 items
+collected 43 items
 
 tests/test_basic_publish.py::test_01_login PASSED
 tests/test_basic_publish.py::test_02_create_index PASSED
@@ -55,9 +55,13 @@ tests/test_coar_notify.py::test_04_the_approver_can_read_their_notifications PAS
 tests/test_coar_notify.py::test_05_set_up PASSED
 tests/test_coar_notify.py::test_06_send_the_item_for_approval PASSED
 tests/test_coar_notify.py::test_07_the_approver_is_offered_the_item PASSED
-tests/test_coar_notify.py::test_08_the_approver_approves PASSED
-tests/test_coar_notify.py::test_09_the_registrant_is_told_it_was_approved PASSED
-tests/test_coar_notify.py::test_10_the_user_can_choose_how_to_be_notified PASSED
+tests/test_coar_notify.py::test_08_the_instance_can_send_a_web_push PASSED
+tests/test_coar_notify.py::test_09_the_registrant_subscribes_to_web_push PASSED
+tests/test_coar_notify.py::test_10_the_approver_approves PASSED
+tests/test_coar_notify.py::test_11_the_registrant_is_told_it_was_approved PASSED
+tests/test_coar_notify.py::test_12_the_approval_arrives_as_a_web_push PASSED
+tests/test_coar_notify.py::test_13_unsubscribing_stops_the_pushes PASSED
+tests/test_coar_notify.py::test_14_the_user_can_choose_how_to_be_notified PASSED
 
 tests/test_crossref_doi.py::test_01_prefix_is_set PASSED
 tests/test_crossref_doi.py::test_02_set_up PASSED
@@ -70,7 +74,7 @@ tests/test_crossref_doi.py::test_08_doi_is_published PASSED
 tests/test_crossref_doi.py::test_09_deposit_was_recorded SKIPPED
 tests/test_crossref_doi.py::test_10_deposit_reached_crossref SKIPPED
 
-============ 37 passed, 2 skipped, 20 warnings in 336.58s (0:05:36) ============
+============ 41 passed, 2 skipped, 22 warnings in 349.85s (0:05:49) ============
 ```
 
 skip 2 件は Crossref の deposit です。この環境には Crossref アカウントを
@@ -111,17 +115,17 @@ requests  : 2.34.2 / beautifulsoup4 4.15.0
 
 | スイート | インデックス | フロー / ワークフロー | アクティビティ | アイテム |
 | --- | --- | --- | --- | --- |
-| 基本 | `1789792754033` | `3e5875f0…` / `04c12c39…` | `A-20260919-00014` | `2000053` |
-| `ark` | `1789792686782` | `a92947f8…` / `bcf6c81e…` | `A-20260919-00013` | `2000052` |
-| `coarnotify` | `1789792844096` | `41fb8d9f…` / `64c39c83…` | `A-20260919-00015` | `2000054` |
-| `crossref` | `1789792927666` | `a56e2f94…` / `fb89d190…` | `A-20260919-00016` | `2000055` |
+| 基本 | `1789795192785` | `3de1ac20…` / `6a53e140…` | `A-20260919-00026` | `2000065` |
+| `ark` | `1789795123751` | `6b7f3cb5…` / `314a4d35…` | `A-20260919-00025` | `2000064` |
+| `coarnotify` | `1789795285144` | `29306ba0…` / `8c94b678…` | `A-20260919-00027` | `2000066` |
+| `crossref` | `1789795389184` | `43dc3f27…` / `e4e8fec9…` | `A-20260919-00028` | `2000067` |
 
 オプションスイートが確認したもの:
 
 | | |
 | --- | --- |
-| 発行された ARK | `ark:/99999/fk400002` |
-| 付与された Crossref DOI | `10.5555/0002000055` |
+| 発行された ARK | `ark:/99999/fk400006` |
+| 付与された Crossref DOI | `10.5555/0002000067` |
 | COAR Notify で送られた通知 | 5 件。アイテムを登録した各スイートの承認依頼 1 件ずつと、`coarnotify` スイートが確認した承認通知 1 件 |
 
 ---
@@ -137,7 +141,7 @@ requests  : 2.34.2 / beautifulsoup4 4.15.0
 ### 02. テスト用インデックスの作成（test_02_create_index）
 
 インデックスを作成し、公開状態にする。管理画面の Index Tree に
-`E2E Index 20260919-043749` が既定の `Sample Index` と並んで現れている。
+`E2E Index 20260919-051839` が既定の `Sample Index` と並んで現れている。
 
 新規作成したインデックスは非公開なので、ここで公開状態にする。
 これをしないと 12（未ログインからの閲覧）が失敗する。
@@ -178,7 +182,7 @@ Start / Item Registration / Item Link / Identifier Grant / Approval / End の
 
 ### 07. インデックス指定（test_07_designate_index）
 
-INDEX TREE で `E2E Index 20260919-043749` にチェックを入れ、
+INDEX TREE で `E2E Index 20260919-051839` にチェックを入れ、
 DESIGNATE INDEX に反映されていることを確認する。
 
 ![インデックス指定](images/08-index-designated.png)
@@ -209,7 +213,7 @@ DOI 付与は派生版で扱う（先行例: `works/crossref-doi-manual/e2e/`）
 
 ### 11. アイテムの登録確認（test_11_record_is_registered）
 
-`/records/2000053` にアイテムが登録され、登録したタイトルが表示される。
+`/records/2000065` にアイテムが登録され、登録したタイトルが表示される。
 
 ![アイテム詳細（管理者）](images/13-record-page.png)
 
@@ -242,7 +246,7 @@ DOI 付与は派生版で扱う（先行例: `works/crossref-doi-manual/e2e/`）
 | スイート | 実行記録 | 結果 | 確認すること |
 | --- | --- | --- | --- |
 | `ark` | [`ark/README.ja.md`](ark/README.ja.md) | 6 passed | ARK が発行され、アイテムのパーマリンクになる |
-| `coarnotify` | [`coarnotify/README.ja.md`](coarnotify/README.ja.md) | 10 passed | 承認依頼と承認が COAR Notify で意図した相手に届く |
+| `coarnotify` | [`coarnotify/README.ja.md`](coarnotify/README.ja.md) | 14 passed | 承認依頼と承認が COAR Notify で意図した相手に届き、Web Push でも届く |
 | `crossref` | [`crossref/README.ja.md`](crossref/README.ja.md) | 8 passed, 2 skipped | Crossref DOI が付与され、パーマリンクになる |
 
 skip 2 件は Crossref の deposit で、この環境にはアカウントがありません。
@@ -257,48 +261,49 @@ skip 2 件は Crossref の deposit で、この環境にはアカウントがあ
 
 ```console
 $ ./e2ectl status          # status 行の run_id は status を呼んだ時刻のもの
-Settings(base_url='https://localhost', run_id='20260919-044426', label='E2E')
+Settings(base_url='https://localhost', run_id='20260919-052532', label='E2E')
 ledger: /home/mhaya/weko-workshop/e2e/.e2e-state.json
-  run 20260919-043749  started 2026-09-19T04:38:06  20 resource(s)
-    index     1789792686782            E2E Index 20260919-043749-ark
-    flow      a92947f8-df56-4b86-a9d5-fe116b7677a8 E2E Flow 20260919-043749-ark
-    workflow  bcf6c81e-62b2-44dc-9624-d6eceb5d50a0 E2E Workflow 20260919-043749-ark
-    activity  A-20260919-00013         E2E Workflow 20260919-043749-ark
-    item      2000052                  E2E item 20260919-043749-ark
-    index     1789792754033            E2E Index 20260919-043749
+  run 20260919-051839  started 2026-09-19T05:18:43  20 resource(s)
+    index     1789795123751            E2E Index 20260919-051839-ark
+    flow      6b7f3cb5-1a1d-4409-88f6-00fc25e81cae E2E Flow 20260919-051839-ark
+    workflow  314a4d35-654d-4ec5-a3c3-992571812aed E2E Workflow 20260919-051839-ark
+    activity  A-20260919-00025         E2E Workflow 20260919-051839-ark
+    item      2000064                  E2E item 20260919-051839-ark
+    index     1789795192785            E2E Index 20260919-051839
     ...                                （基本スイートの 5 件）
-    index     1789792844096            E2E Index 20260919-043749-coarnotify
+    index     1789795285144            E2E Index 20260919-051839-coarnotify
     ...                                （coarnotify スイートの 5 件）
-    index     1789792927666            E2E Index 20260919-043749-crossref
+    index     1789795389184            E2E Index 20260919-051839-crossref
     ...                                （crossref スイートの 5 件）
 ```
 
 ```console
 $ ./e2ectl clean --hard
-deleted  item 2000052 E2E item 20260919-043749-ark
-deleted  item 2000053 E2E item 20260919-043749
-deleted  item 2000054 E2E item 20260919-043749-coarnotify
-deleted  item 2000055 E2E item 20260919-043749-crossref
-deleted  activity A-20260919-00013 ...
-deleted  workflow bcf6c81e-62b2-44dc-9624-d6eceb5d50a0 ...
-deleted  flow a92947f8-df56-4b86-a9d5-fe116b7677a8 ...
-deleted  index 1789792686782 E2E Index 20260919-043749-ark
-deleted  index 1789792754033 E2E Index 20260919-043749
-deleted  index 1789792844096 E2E Index 20260919-043749-coarnotify
-deleted  index 1789792927666 E2E Index 20260919-043749-crossref
+deleted  item 2000064 E2E item 20260919-051839-ark
+deleted  item 2000065 E2E item 20260919-051839
+deleted  item 2000066 E2E item 20260919-051839-coarnotify
+deleted  item 2000067 E2E item 20260919-051839-crossref
+deleted  activity A-20260919-00025 ...
+deleted  workflow 314a4d35-654d-4ec5-a3c3-992571812aed ...
+deleted  flow 6b7f3cb5-1a1d-4409-88f6-00fc25e81cae ...
+deleted  index 1789795123751 E2E Index 20260919-051839-ark
+deleted  index 1789795192785 E2E Index 20260919-051839
+deleted  index 1789795285144 E2E Index 20260919-051839-coarnotify
+deleted  index 1789795389184 E2E Index 20260919-051839-crossref
 hard purge: docker compose -f docker-compose2.yml exec -T web invenio shell /tmp/weko-e2e-purge.py /tmp/weko-e2e-purge.json
-purged items: 2000052, 2000053, 2000054, 2000055
-purged activities: A-20260919-00013, A-20260919-00014, A-20260919-00015, A-20260919-00016
-purged workflows: bcf6c81e-..., 04c12c39-..., 64c39c83-..., fb89d190-...
-purged flows: a92947f8-..., 3e5875f0-..., 41fb8d9f-..., a56e2f94-...
-purged indexes: 1789792686782, 1789792754033, 1789792844096, 1789792927666
-purged notifications: 5
+purged items: 2000064, 2000065, 2000066, 2000067
+purged activities: A-20260919-00025, A-20260919-00026, A-20260919-00027, A-20260919-00028
+purged workflows: 314a4d35-..., 6a53e140-..., 8c94b678-..., e4e8fec9-...
+purged flows: 6b7f3cb5-..., 3de1ac20-..., 29306ba0-..., 43dc3f27-...
+purged indexes: 1789795123751, 1789795192785, 1789795285144, 1789795389184
+purged notifications: 6
 ```
 
 最後の 1 行は Inbox です。Inbox は独立したサービスで DB も別なので、WEKO の
 DB を戻しても通知は残ります。`--hard` は `weko_e2e/inboxpurge.py` を `inbox`
 コンテナにコピーし、`context` がその実行のアクティビティを指す通知だけを
-削除します（承認依頼 4 件と承認通知 1 件、それ以外はそのまま）。
+削除します（承認依頼 4 件・承認通知 1 件・購読解除の確認のために
+`coarnotify` スイートが Inbox へ投げた複製 1 件。それ以外はそのまま）。
 
 ### DB の増減
 
@@ -308,7 +313,7 @@ DB を戻しても通知は残ります。`--hard` は `weko_e2e/inboxpurge.py` 
 | 時点 | index | flow | workflow | activity | records | bucket | pid | inbox |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | テスト前 | 1 | 1 | 2 | 0 | 0 | 0 | 0 | 36 |
-| テスト後 | 5 | 5 | 6 | 4 | 8 | 8 | 37 | 41 |
+| テスト後 | 5 | 5 | 6 | 4 | 8 | 8 | 37 | 42 |
 | `clean --hard` 後 | **1** | **1** | **2** | **0** | **0** | **0** | **0** | **36** |
 
 スイートごとに 1 つずつ増えています。アイテム 1 件あたりレコードと bucket が
@@ -319,7 +324,7 @@ DB を戻しても通知は残ります。`--hard` は `weko_e2e/inboxpurge.py` 
 削除後はアイテムのページも消えている。
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000053
+$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000065
 404
 ```
 
@@ -335,7 +340,8 @@ $ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/
 | 同上 + `WEKO_TEST_EMAIL` / `WEKO_TEST_PASSWORD` を別のシステム管理者アカウントに、`WEKO_E2E_LABEL=E2E-user2` | 13 passed |
 | `ark` を `e2ectl ark-account enable` で設定した実サーバ（API key ではなくログイン方式）に対して | 6 passed、設定どおり `ark:/12345/x900002` を発行 |
 | `crossref` に `WEKO_E2E_CROSSREF_DEPOSIT=1` を付け、Crossref 代替スタブ宛てに | 10 passed、deposit が `success` に到達 |
-| `coarnotify` 単体を、環境付属の `inbox` サービス宛てに | 10 passed、依頼が `users/2`、承認通知が `users/1` に到達 |
+| `coarnotify` 単体（Web Push 代替あり） | 14 passed、Push が届き `push.json` の文面に復号できた |
+| `coarnotify`（Web Push 代替を止めた状態） | 10 passed, 4 skipped、Web Push の 4 ステップが有効化方法を表示 |
 
 2 行目はブラウザ側の host resolver ルールと HTTP クライアント側のホスト
 ピン留めの両方を通ります。3 行目は、環境に最初から入っているアカウントに
@@ -361,17 +367,20 @@ $ for i in 1 2; do ../.venv-e2e/bin/python -m pytest --clean-after --clean-hard 
 
 ```bash
 cd e2e
-../.venv-e2e/bin/python ./e2ectl ark-stub enable # ark スイートにはサーバが要る
-../.venv-e2e/bin/python ./e2ectl clean --hard   # 基準状態に戻す
+../.venv-e2e/bin/python ./e2ectl ark-stub enable     # ark にはサーバが要る
+../.venv-e2e/bin/python ./e2ectl webpush-stub enable # Push にはブラウザが要る
+../.venv-e2e/bin/python ./e2ectl clean --hard        # 基準状態に戻す
 WEKO_E2E_ARK_NAAN=99999 \
-  ../.venv-e2e/bin/python -m pytest --suite all   # 画像が撮り直される
-../.venv-e2e/bin/python ./e2ectl status         # 台帳を確認
-../.venv-e2e/bin/python ./e2ectl clean --hard    # 後始末
+  ../.venv-e2e/bin/python -m pytest --suite all      # 画像が撮り直される
+../.venv-e2e/bin/python ./e2ectl status              # 台帳を確認
+../.venv-e2e/bin/python ./e2ectl clean --hard        # 後始末
+../.venv-e2e/bin/python ./e2ectl webpush-stub disable
 ../.venv-e2e/bin/python ./e2ectl ark-stub disable
 ```
 
-`coarnotify` スイートに事前準備は不要です。`inbox` サービスも
-`repoadmin@example.org` も `install.sh` が用意するものです。
+`coarnotify` スイートの大半は事前準備不要です。`inbox` サービスも
+`repoadmin@example.org` も `install.sh` が用意するものです。代替が要るのは
+Web Push の 4 ステップだけで、無ければその 4 つが skip されます。
 
 画像は `images/` に固定の名前で書かれるので、実行するたびに差し替わります。
 この文書の数値（実行 ID・アイテム ID・所要時間）は実行ごとに変わります。

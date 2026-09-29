@@ -14,7 +14,7 @@ as they went.
 
 | | |
 | --- | --- |
-| Run id | `20260919-043749` |
+| Run id | `20260919-051839` |
 | Result | **8 passed, 2 skipped** |
 | Asked for with | `--suite crossref` |
 
@@ -45,7 +45,7 @@ flow does not.
 
 ![After approval](images/05-approved.png)
 
-The item carries `10.5555/0002000055`, under the prefix the suite
+The item carries `10.5555/0002000067`, under the prefix the suite
 configured, and shows it as its permalink.
 
 ![The record page, showing the DOI](images/06-record-page.png)

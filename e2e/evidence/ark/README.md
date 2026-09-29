@@ -13,7 +13,7 @@ themselves as they went.
 
 | | |
 | --- | --- |
-| Run id | `20260919-043749` |
+| Run id | `20260919-051839` |
 | Result | **6 passed** |
 | Asked for with | `--suite ark`, with `WEKO_E2E_ARK_NAAN=99999` |
 
@@ -36,7 +36,7 @@ so nothing on screen asks for one.
 ### The item carries an ARK (test_04, test_05)
 
 The permalink of an item with no DOI and no CNRI is its ARK, so the
-record page is where a minted ARK shows up -- here `ark:/99999/fk400002`,
+record page is where a minted ARK shows up -- here `ark:/99999/fk400006`,
 under the NAAN this environment was configured for.
 
 ![The record page, showing the ARK as its permalink](images/04-record-page.png)

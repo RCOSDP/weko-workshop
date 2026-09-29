@@ -93,9 +93,18 @@ _FAILED = {}
 
 
 def pytest_runtest_makereport(item, call):
-    """Remember the first step of a flow that failed."""
-    if call.when == 'call' and call.excinfo is not None:
-        _FAILED.setdefault(item.module.__name__, item.name)
+    """Remember the first step of a flow that failed.
+
+    A step that skips itself has not failed, and the flow goes on: an
+    optional part of one -- a Crossref deposit nobody has an account
+    for, a web push nothing is listening for -- says so and gets out of
+    the way of the steps that do not depend on it.
+    """
+    if call.when != 'call' or call.excinfo is None:
+        return
+    if call.excinfo.errisinstance(pytest.skip.Exception):
+        return
+    _FAILED.setdefault(item.module.__name__, item.name)
 
 
 def pytest_runtest_setup(item):

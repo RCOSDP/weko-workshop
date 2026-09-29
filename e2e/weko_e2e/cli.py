@@ -12,6 +12,7 @@ gives its resources.
     e2ectl crossref-account enable    the Crossref account, for depositing
     e2ectl doi-log                what WEKO sent to a registration agency
     e2ectl inbox                  what WEKO sent over COAR Notify
+    e2ectl webpush-stub enable    a stand-in browser, for the web push steps
     e2ectl ping                   can it reach the instance and log in
     e2ectl status                 what is still there
     e2ectl clean                  delete it, the way the screens do
@@ -25,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import requests
 
@@ -42,6 +44,21 @@ INBOX_SHOWN = 10
 """How many notifications ``e2ectl inbox`` prints per account."""
 LOG_MARKER = 'WEKO_E2E_DOI_LOG: '
 """Prefix of the one line :func:`deposit_log` reads back."""
+
+PUSH_STUB_IN_CONTAINER = '/tmp/weko-e2e-push-stub.py'
+PUSH_STUB_PORT = 8901
+PUSH_MARKER = 'WEKO_E2E_PUSH_STUB: '
+"""Prefix of the one line a call to the push stub reads back."""
+
+WEBPUSH_BLOCK_START = '      # >>> weko-e2e webpush stub >>>'
+WEBPUSH_BLOCK_END = '      # <<< weko-e2e webpush stub <<<'
+VAPID_KEYS = ('VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY')
+"""The two the inbox needs before it can send a Web Push at all.
+
+They live in the compose file rather than in ``instance.cfg``, because
+they belong to the inbox service and not to WEKO; the shipped file leaves
+them empty, which is why a default stack sends no push.
+"""
 
 ARK_STUB_IN_CONTAINER = '/tmp/weko-e2e-ark-stub.py'
 ARK_STUB_PORT = 8899
@@ -440,6 +457,307 @@ def _print_notifications(client, settings, activities):
     print('  {0} of {1} notification(s) shown'.format(shown, len(urls)))
 
 
+# -- the web push stand-in -------------------------------------------------
+
+def _compose_path(settings):
+    """Return the compose file of the WEKO checkout."""
+    return os.path.join(settings.weko_repo, settings.compose_file)
+
+
+def _generate_vapid_keys(settings):
+    """Return a VAPID key pair, generated in the inbox container.
+
+    The pair has to be one the inbox's own ``pywebpush`` will sign with,
+    so it is made with the library that will use it rather than with
+    something this suite would have to grow a dependency on.
+
+    :return: ``(public, private)`` base64url, or ``(None, None)``
+    """
+    snippet = (
+        "import base64;"
+        "from cryptography.hazmat.primitives.asymmetric import ec;"
+        "from cryptography.hazmat.primitives import serialization;"
+        "k=ec.generate_private_key(ec.SECP256R1());"
+        "b=lambda r: base64.urlsafe_b64encode(r).rstrip(b'=').decode();"
+        "print('{0}'+b(k.public_key().public_bytes("
+        "serialization.Encoding.X962,"
+        "serialization.PublicFormat.UncompressedPoint))+' '"
+        "+b(k.private_numbers().private_value.to_bytes(32,'big')))".format(
+            PUSH_MARKER))
+    result = subprocess.run(
+        _in_service(settings, settings.inbox_service, 'python', '-c', snippet),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.decode('utf-8', 'replace').splitlines():
+        if line.startswith(PUSH_MARKER):
+            public, private = line[len(PUSH_MARKER):].split()
+            return public, private
+    print(result.stdout.decode('utf-8', 'replace')[-2000:])
+    return None, None
+
+
+def _vapid_lines(settings):
+    """Return the compose file's VAPID lines, as ``{key: line}``.
+
+    Only the ones inside the inbox service: another service could set a
+    name of its own and must not be rewritten.
+    """
+    with open(_compose_path(settings), encoding='utf-8') as handle:
+        lines = handle.read().split('\n')
+    inside = False
+    found = {}
+    for index, line in enumerate(lines):
+        if line.startswith('  ') and not line.startswith('   ') \
+                and line.strip().endswith(':'):
+            inside = line.strip() == '{0}:'.format(settings.inbox_service)
+            continue
+        if inside:
+            for key in VAPID_KEYS:
+                if line.strip().startswith('- {0}='.format(key)):
+                    found[key] = index
+    return lines, found
+
+
+def _write_webpush_block(settings, public, private):
+    """Put a VAPID key pair into the compose file, reversibly.
+
+    The shipped file sets both keys to nothing, so rather than adding a
+    second copy -- which would leave which one wins to the reader and to
+    docker -- the lines themselves are replaced, and what they said is
+    kept inside the block so ``disable`` can put it back exactly.
+
+    :return: True when the file changed
+    """
+    lines, found = _vapid_lines(settings)
+    if WEBPUSH_BLOCK_START in lines:
+        return False
+    missing = [key for key in VAPID_KEYS if key not in found]
+    if missing:
+        print('the {0} service in {1} sets no {2}; add it and try '
+              'again'.format(settings.inbox_service, settings.compose_file,
+                             ', '.join(missing)))
+        return False
+
+    at = min(found.values())
+    was = [lines[found[key]] for key in VAPID_KEYS]
+    for index in sorted(found.values(), reverse=True):
+        del lines[index]
+    block = [WEBPUSH_BLOCK_START]
+    block += ['      # was:{0}'.format(line.rstrip()) for line in was]
+    block += ['      - VAPID_PUBLIC_KEY={0}'.format(public),
+              '      - VAPID_PRIVATE_KEY={0}'.format(private),
+              WEBPUSH_BLOCK_END]
+    lines[at:at] = block
+    with open(_compose_path(settings), 'w', encoding='utf-8') as handle:
+        handle.write('\n'.join(lines))
+    return True
+
+
+def _remove_webpush_block(settings):
+    """Put the compose file's VAPID lines back as they were.
+
+    :return: True when the file changed
+    """
+    with open(_compose_path(settings), encoding='utf-8') as handle:
+        lines = handle.read().split('\n')
+    if WEBPUSH_BLOCK_START not in lines:
+        return False
+    start = lines.index(WEBPUSH_BLOCK_START)
+    end = lines.index(WEBPUSH_BLOCK_END)
+    restored = [line.replace('      # was:', '', 1)
+                for line in lines[start:end] if '# was:' in line]
+    lines[start:end + 1] = restored
+    with open(_compose_path(settings), 'w', encoding='utf-8') as handle:
+        handle.write('\n'.join(lines))
+    return True
+
+
+def _recreate_inbox(settings):
+    """Recreate the inbox container, so it reads the keys just written."""
+    print('recreating {0}'.format(settings.inbox_service))
+    subprocess.run(
+        _compose(settings, 'up', '-d', settings.inbox_service),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+
+def _copy_push_stub(settings):
+    """Put the stub script into the inbox container."""
+    with open(os.path.join(HERE, 'pushstub.py'), 'rb') as handle:
+        script = handle.read()
+    return _copy_into_container(settings, script, PUSH_STUB_IN_CONTAINER,
+                                service=settings.inbox_service)
+
+
+def _stop_push_stub(settings):
+    """Stop the stub in the inbox container, if one is running there.
+
+    The script stops itself: the inbox's image has neither ``pkill`` nor
+    ``ps``, so it finds the serving process in ``/proc``.  It is copied
+    in first, because stopping has to work even where nothing put it
+    there in this session.
+    """
+    _copy_push_stub(settings)
+    subprocess.run(
+        _in_service(settings, settings.inbox_service, 'python',
+                    PUSH_STUB_IN_CONTAINER, '--stop'),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+
+def _start_push_stub(settings):
+    """Copy the stub into the inbox container and start it there."""
+    if not _copy_push_stub(settings):
+        return False
+    _stop_push_stub(settings)
+    subprocess.run(
+        _in_service(settings, settings.inbox_service, 'sh', '-c',
+                    'cd /app && nohup python {0} {1} >/dev/null 2>&1 &'.format(
+                        PUSH_STUB_IN_CONTAINER, PUSH_STUB_PORT)),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return push_stub(settings, '/subscription') is not None
+
+
+def push_stub(settings, path, payload=None):
+    """Call the push stub inside the inbox container and return its answer.
+
+    The stub listens on the loopback interface of the container the inbox
+    sends from, which is the only place a subscription endpoint of its own
+    can be reached; so a caller out here asks through docker, the way the
+    DOI deposit log is read.
+
+    :param path: the stub's endpoint, e.g. ``/received``
+    :param payload: a body to POST, or None for a GET
+    :return: what the stub answered, or None when it did not
+    """
+    if not settings.weko_repo:
+        return None
+    snippet = (
+        "import json,urllib.request;"
+        "d={0};"
+        "r=urllib.request.Request('http://127.0.0.1:{1}{2}',"
+        "data=None if d is None else json.dumps(d).encode(),"
+        "headers={{'Content-Type':'application/json'}},"
+        "method='GET' if d is None else 'POST');"
+        "print('{3}'+json.dumps(json.load(urllib.request.urlopen(r,"
+        "timeout=30))))".format(
+            repr(payload), PUSH_STUB_PORT, path, PUSH_MARKER))
+    result = subprocess.run(
+        _in_service(settings, settings.inbox_service, 'python', '-c', snippet),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.decode('utf-8', 'replace').splitlines():
+        if line.startswith(PUSH_MARKER):
+            return json.loads(line[len(PUSH_MARKER):])
+    return None
+
+
+def push_received(settings):
+    """Return every Web Push the stand-in browser has been sent."""
+    answer = push_stub(settings, '/received')
+    return (answer or {}).get('received') or []
+
+
+def push_subscribe(settings, target, language='en', displayname=None):
+    """Subscribe the stand-in browser to Web Push for one user."""
+    return push_stub(settings, '/subscribe', {
+        'target': target, 'language': language,
+        'displayname': displayname or 'WEKO E2E'})
+
+
+def push_unsubscribe(settings):
+    """Take the stand-in browser's subscription away again."""
+    return push_stub(settings, '/unsubscribe', {})
+
+
+def command_webpush_stub(args, settings, ledger):
+    """Turn the stand-in Web Push browser on or off.
+
+    The inbox sends a Web Push to whatever endpoint a subscription names,
+    so a stand-in that holds keys of its own and decrypts what arrives is
+    enough to exercise the whole path -- and the alternative, a real
+    subscription, would mean a browser talking to Google's or Mozilla's
+    push service, which a run against a local stack cannot do.
+
+    The inbox also needs a VAPID key pair before it will send anything at
+    all, and the shipped compose file leaves it empty; ``enable``
+    generates one, writes it into the compose file between markers, and
+    recreates the inbox so it is read.
+    """
+    action = args.action or 'status'
+    if not settings.weko_repo:
+        print('the web push stand-in needs the WEKO checkout that owns {0}; '
+              'set WEKO_E2E_REPO to it'.format(settings.compose_file))
+        return 1
+
+    if action == 'status':
+        print('settings in {0}: {1}'.format(
+            settings.compose_file,
+            'present' if WEBPUSH_BLOCK_START in
+            open(_compose_path(settings), encoding='utf-8').read()
+            else 'absent'))
+        subscription = push_stub(settings, '/subscription')
+        print('stand-in in the container: {0}'.format(
+            'subscribed as {0}'.format(subscription['endpoint'])
+            if subscription else 'not answering'))
+        print('pushes received so far: {0}'.format(
+            len(push_received(settings))))
+        return 0
+
+    if action == 'start':
+        # The stub is an ordinary process in the container, so a restart
+        # of that container takes it with it; this puts it back without
+        # touching the configuration.
+        if not _start_push_stub(settings):
+            print('the stand-in did not answer in the container')
+            return 1
+        print('web push stand-in is listening on port {0}'.format(
+            PUSH_STUB_PORT))
+        return 0
+
+    if action == 'stop':
+        _stop_push_stub(settings)
+        print('stopped the web push stand-in, leaving the keys alone')
+        return 0
+
+    if action == 'enable':
+        public, private = _generate_vapid_keys(settings)
+        if not public:
+            print('could not generate a VAPID key pair in the {0} '
+                  'container; is the stack up?'.format(settings.inbox_service))
+            return 1
+        if _write_webpush_block(settings, public, private):
+            print('wrote a VAPID key pair into {0}'.format(
+                _compose_path(settings)))
+            _recreate_inbox(settings)
+        else:
+            print('the VAPID keys are already in {0}'.format(
+                _compose_path(settings)))
+        if not _start_push_stub(settings):
+            print('the stand-in did not answer in the container')
+            return 1
+        print('the inbox signs with {0}...'.format(public[:16]))
+        print('run the suite with: WEKO_E2E_SUITES=coarnotify '
+              'python -m pytest')
+        return 0
+
+    if action == 'disable':
+        _stop_push_stub(settings)
+        if _remove_webpush_block(settings):
+            print('took the VAPID keys back out of {0}'.format(
+                _compose_path(settings)))
+            _recreate_inbox(settings)
+        else:
+            print('the VAPID keys were not in {0}'.format(
+                _compose_path(settings)))
+        return 0
+
+    print('unknown action {0!r}; use enable, disable, start, stop or '
+          'status'.format(action))
+    return 1
+
+
 # -- the Crossref account --------------------------------------------------
 
 def _crossref_block(settings):
@@ -745,6 +1063,28 @@ def _restart_weko(settings):
         subprocess.run(_compose(settings, 'restart', service),
                        cwd=settings.weko_repo,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    _wait_for_weko(settings)
+
+
+def _wait_for_weko(settings, timeout=300):
+    """Wait until the instance is serving again, and say whether it is.
+
+    ``docker compose restart`` comes back when the container is running,
+    which is a good while before WEKO answers; a suite started in that
+    window fails on its first page for a reason that has nothing to do
+    with what it was testing.  nginx answers throughout, so what is
+    waited for is a login rather than a connection.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            WekoClient(settings).login()
+            return True
+        except (WekoError, requests.RequestException):
+            time.sleep(5)
+    print('{0} is still not answering after {1} s; "e2ectl ping" says '
+          'more'.format(settings.base_url, timeout))
+    return False
 
 
 def _stop_ark_stub(settings):
@@ -868,6 +1208,7 @@ COMMANDS = {
     'env': command_env,
     'inbox': command_inbox,
     'status': command_status,
+    'webpush-stub': command_webpush_stub,
     'ping': command_ping,
     'clean': command_clean,
 }
