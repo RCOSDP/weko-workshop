@@ -7,6 +7,8 @@ dependency first.  A run whose ledger was lost is still cleanable: with
 gives its resources.
 
     e2ectl env                    the settings a run would use
+    e2ectl doctor                 is this instance fit to be tested
+    e2ectl doctor --fix           put right what can be put right
     e2ectl ark-account enable     a real ARK server, for the ark suite
     e2ectl ark-stub enable        a stand-in ARK server, when there is none
     e2ectl crossref-account enable    the Crossref account, for depositing
@@ -30,16 +32,30 @@ import time
 
 import requests
 
-from . import notify
+from . import dataload, doctor, notify
 from .client import WekoClient, WekoError
 from .config import HERE, Settings
 from .inboxpurge import MARKER as INBOX_MARKER
+from .inspect import MARKER as INSPECT_MARKER
 from .ledger import KINDS, Ledger
 from .purge import MARKER
 
 PURGE_IN_CONTAINER = '/tmp/weko-e2e-purge.py'
 SPEC_IN_CONTAINER = '/tmp/weko-e2e-purge.json'
 INBOX_PURGE_IN_CONTAINER = '/tmp/weko-e2e-inbox-purge.py'
+INSPECT_IN_CONTAINER = '/tmp/weko-e2e-inspect.py'
+
+DEMO_SQL = os.path.join('scripts', 'demo')
+"""Where the data ``install.sh`` loads lives in the WEKO checkout."""
+
+LOCATION_NAME = 'local'
+LOCATION_URI = '/var/tmp'
+"""The file location to create where an instance has none at all.
+
+The same one ``install.sh`` makes.  An instance that already has one of
+its own keeps it: a repository writing somewhere else is not a broken
+repository.
+"""
 INBOX_SHOWN = 10
 """How many notifications ``e2ectl inbox`` prints per account."""
 LOG_MARKER = 'WEKO_E2E_DOI_LOG: '
@@ -402,6 +418,398 @@ def _purge_inbox(settings, targets):
             len(report['notifications'])))
     for error in report.get('errors') or []:
         print('inbox purge error: {0}'.format(error))
+
+
+# -- is the instance fit to be tested --------------------------------------
+
+def _inspect(settings):
+    """Return what the instance looks like from inside, or None.
+
+    The script is copied in for the one call, the way the purge is; this
+    suite is not on the container's bind mount.
+    """
+    if not settings.weko_repo:
+        return None
+    with open(os.path.join(HERE, 'inspect.py'), 'rb') as handle:
+        script = handle.read()
+    if not _copy_into_container(settings, script, INSPECT_IN_CONTAINER):
+        return None
+    result = subprocess.run(
+        _in_web(settings, 'invenio', 'shell', INSPECT_IN_CONTAINER),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.decode('utf-8', 'replace').splitlines():
+        if line.startswith(INSPECT_MARKER):
+            found = json.loads(line[len(INSPECT_MARKER):])
+            return None if found.get('error') else found
+    return None
+
+
+def _worker_is_up(settings):
+    """Return whether the worker container is running, or None."""
+    if not settings.weko_repo:
+        return None
+    result = subprocess.run(
+        _compose(settings, 'ps', '--status', 'running', 'worker'),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode:
+        return None
+    return b'worker' in result.stdout
+
+
+def _survey(settings, ledger):
+    """Look at the instance every way the checks need, once."""
+    found = doctor.Survey(settings)
+    client = WekoClient(settings)
+    found.reachable = client.is_reachable()
+    if not found.reachable:
+        return found
+
+    try:
+        client.login()
+    except (WekoError, requests.RequestException) as error:
+        found.login_error = str(error)
+    if not found.login_error:
+        try:
+            client.get('/admin/')
+        except WekoError as error:
+            found.admin_error = str(error)
+        try:
+            client.search_index(0)
+        except (WekoError, requests.RequestException) as error:
+            found.search_error = str(error)
+        found.inbox = notify.announced_inbox(client.session, settings)
+        try:
+            found.leftovers = _discover(client, settings, _targets(ledger))
+        except (WekoError, requests.RequestException):
+            found.leftovers = {}
+        # Only what the ledger does not already know is somebody's
+        # leftover; what it knows is this ledger's to clean.
+        found.leftovers = dict(
+            (kind, [r for r in resources if r.get('discovered')])
+            for kind, resources in found.leftovers.items())
+
+    approver = settings.as_account(settings.approver_email,
+                                   settings.approver_password)
+    try:
+        WekoClient(approver).login()
+    except (WekoError, requests.RequestException) as error:
+        found.approver_login_error = str(error)
+
+    try:
+        found.report = _inspect(settings)
+    except OSError as error:
+        found.report_error = str(error)
+    try:
+        found.worker = _worker_is_up(settings)
+    except OSError:
+        found.worker = None
+    return found
+
+
+MARKS = {doctor.OK: 'ok  ', doctor.WARN: 'warn', doctor.FAIL: 'FAIL'}
+"""How each status is spelled in the tool's output."""
+
+
+def command_doctor(args, settings, ledger):
+    """Say whether this instance can be tested, and put right what can be.
+
+    ``install.sh`` is what the suites assume has just run.  This checks
+    the parts of that they actually depend on, and ``--fix`` repairs the
+    ones that can be repaired without taking anything away -- what the
+    instance already has is what it keeps.
+    """
+    survey = _survey(settings, ledger)
+    findings = doctor.evaluate(survey)
+
+    print('{0}  ({1})'.format(settings.base_url,
+                              'inspected' if survey.report
+                              else 'not inspected: no WEKO checkout'))
+    for finding in findings:
+        suite = ' [{0}]'.format(finding.suite) if finding.suite else ''
+        print('{0}  {1}{2}'.format(MARKS[finding.status], finding.name, suite))
+        if finding.status != doctor.OK or args.verbose:
+            print('      {0}'.format(finding.detail))
+
+    repairable = [f for f in findings if f.fix and f.status != doctor.OK]
+    if not args.fix:
+        if repairable:
+            print('\n{0} of these can be put right: run "doctor --fix"'.format(
+                len(repairable)))
+        return 1 if doctor.worst(findings) == doctor.FAIL else 0
+
+    if repairable:
+        print('\nrepairing:')
+    for finding in repairable:
+        _repair(finding, args, settings, survey)
+    if repairable:
+        print('\nlooking again:')
+        return command_doctor(
+            argparse.Namespace(**dict(vars(args), fix=False)), settings,
+            ledger)
+    print('\nnothing to repair')
+    return 1 if doctor.worst(findings) == doctor.FAIL else 0
+
+
+def _repair(finding, args, settings, survey):
+    """Apply one repair, and say what happened."""
+    fixer, needs_accounts = FIXES[finding.fix]
+    if needs_accounts and not args.fix_accounts:
+        print('  skipped {0}: it would add or change an account; pass '
+              '--fix-accounts to allow that'.format(finding.name))
+        return
+    if not settings.weko_repo:
+        print('  cannot repair {0}: there is no WEKO checkout to reach the '
+              'containers through'.format(finding.name))
+        return
+    print('  {0}...'.format(finding.name))
+    for line in fixer(settings, survey) or []:
+        print('    {0}'.format(line))
+
+
+# -- the repairs -----------------------------------------------------------
+#
+# Every one of them adds what is missing and takes nothing away.  Where
+# the only way to load something is a file that would drop what is
+# already there, the repair refuses and the finding says so instead.
+
+def _invenio(settings, *arguments):
+    """Run one ``invenio`` command in the web container.
+
+    :return: ``(ok, output)``
+    """
+    result = subprocess.run(
+        _in_web(settings, 'invenio', *arguments), cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = result.stdout.decode('utf-8', 'replace').strip()
+    return result.returncode == 0, output.splitlines()[-1] if output else ''
+
+
+def _psql(settings, sql, atomic=False):
+    """Run SQL in the database container.
+
+    :param atomic: run the whole of it in one transaction, so that a
+        statement the instance refuses leaves nothing behind
+    :return: ``(ok, output)``
+    """
+    arguments = ['psql', '-v', 'ON_ERROR_STOP=1']
+    if atomic:
+        arguments.append('--single-transaction')
+    arguments += ['-U', settings.db_user, '-d', settings.db_name, '-f', '-']
+    result = subprocess.run(
+        _in_service(settings, settings.db_service, *arguments),
+        cwd=settings.weko_repo, input=sql.encode('utf-8'),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = result.stdout.decode('utf-8', 'replace').strip()
+    lines = [line for line in output.splitlines()
+             if line.strip() and not line.startswith('INSERT ')]
+    return result.returncode == 0, lines[-1] if lines else ''
+
+
+def _load_demo_rows(settings, name):
+    """Add the rows one of ``install.sh``'s files holds, and nothing else.
+
+    The file itself is not run.  ``item_type.sql`` is a dump: it drops
+    the item type tables and builds them again before filling them, which
+    would take an instance's own item types with it.  So the statements
+    that only add rows are read out of it and run on the schema that is
+    already there -- see :mod:`weko_e2e.dataload`.
+
+    It is one transaction.  The rows carry the ids they insert, so on an
+    instance already using one of those ids the load is refused whole,
+    and nothing is left half done.
+    """
+    path = os.path.join(settings.weko_repo, DEMO_SQL, name)
+    if not os.path.isfile(path):
+        return ['{0} is not in this checkout'.format(path)]
+    with open(path, encoding='utf-8') as handle:
+        statements = dataload.data_only(handle.read())
+    if not statements:
+        return ['{0} holds no rows to add'.format(name)]
+
+    adding = dataload.describe(statements)
+    ok, output = _psql(settings, dataload.load_script(statements),
+                       atomic=True)
+    if ok:
+        return ['added {0} from {1}'.format(
+            ', '.join('{0} {1}'.format(count, table)
+                      for table, count in sorted(adding.items())), name)]
+    return [
+        'the rows of {0} were refused, and nothing was changed: {1}'.format(
+            name, output),
+        'that is what happens when the instance is already using the ids '
+        'they carry; look at what it has before loading them by hand',
+        'it also happens when {0} may not set session_replication_role, '
+        'which the load needs to put the foreign keys aside for its own '
+        'transaction'.format(settings.db_user),
+    ]
+
+
+def _fix_leftovers(settings, survey):
+    """Delete what an earlier run left behind, the way ``clean`` does."""
+    main(['clean', '--discover', '--hard'])
+    return []
+
+
+def _fix_partition(settings, survey):
+    """Create this month's partition of the activity log."""
+    month = (survey.report or {}).get('today')
+    if not month:
+        return ['this instance was not inspected, so the month is not known']
+    year, number = int(month[:4]), int(month[4:])
+    nxt = '{0:04d}-{1:02d}-01'.format(
+        year + (1 if number == 12 else 0), 1 if number == 12 else number + 1)
+    name = 'user_activity_logs_{0}'.format(month)
+    ok, output = _psql(settings, (
+        'CREATE TABLE IF NOT EXISTS {0} PARTITION OF user_activity_logs '
+        "FOR VALUES FROM ('{1}-{2:02d}-01') TO ('{3}');").format(
+            name, year, number, nxt))
+    return ['{0} {1}'.format('created' if ok else 'could not create', name)
+            + (': {0}'.format(output) if not ok else '')]
+
+
+def _fix_actions(settings, survey):
+    """Load the workflow actions, which is an idempotent init."""
+    ok, output = _invenio(settings, 'workflow', 'init', 'action_status,Action')
+    return ['{0} the workflow actions{1}'.format(
+        'loaded' if ok else 'could not load',
+        '' if ok else ': {0}'.format(output))]
+
+
+def _fix_flow(settings, survey):
+    """Load the shipped Registration Flow, where there is no flow."""
+    return _load_demo_rows(settings, 'defaultworkflow.sql')
+
+
+def _fix_index_tree(settings, survey):
+    """Load the sample index, where the tree is empty."""
+    return _load_demo_rows(settings, 'indextree.sql')
+
+
+def _fix_identifier_settings(settings, survey):
+    """Load the identifier settings row, where there is none."""
+    return _load_demo_rows(settings, 'doi_identifier.sql')
+
+
+def _fix_item_types(settings, survey):
+    """Add the shipped item types, leaving any the instance already has.
+
+    Only the rows of ``item_type.sql`` are added, never the file itself,
+    so the item types that are there stay there -- tables, constraints
+    and all.
+    """
+    return _load_demo_rows(settings, 'item_type.sql')
+
+
+def _fix_location(settings, survey):
+    """Give files somewhere to go, where nothing says where."""
+    if (survey.report or {}).get('locations'):
+        return ['this instance already has a file location; left as it is']
+    ok, output = _invenio(settings, 'files', 'location', LOCATION_NAME,
+                          LOCATION_URI, '--default')
+    return ['{0} the file location {1} -> {2}{3}'.format(
+        'created' if ok else 'could not create', LOCATION_NAME, LOCATION_URI,
+        '' if ok else ': {0}'.format(output))]
+
+
+def _fix_language(settings, survey):
+    """Register English, so the index tree has a cache to rebuild."""
+    ok, output = _invenio(settings, 'language', 'create', '--active',
+                          '--registered', 'en', 'English', '001')
+    return ['{0} English{1}'.format(
+        'registered' if ok else 'could not register',
+        '' if ok else ': {0}'.format(output))]
+
+
+def _ensure_role(settings, survey, name):
+    """Create a role if the instance has none of that name."""
+    if name in ((survey.report or {}).get('roles') or []):
+        return []
+    ok, output = _invenio(settings, 'roles', 'create', name)
+    return ['{0} the role {1}{2}'.format(
+        'created' if ok else 'could not create', name,
+        '' if ok else ': {0}'.format(output))]
+
+
+def _ensure_account(settings, survey, email, password, role):
+    """Create an account and give it a role, leaving any of it that exists.
+
+    An account that is already there keeps its password: this is here to
+    fill a gap, not to take an instance's own accounts over.
+    """
+    said = []
+    if email not in ((survey.report or {}).get('accounts') or {}):
+        ok, output = _invenio(settings, 'users', 'create', email,
+                              '--password', password, '--active')
+        said.append('{0} {1}{2}'.format(
+            'created' if ok else 'could not create', email,
+            '' if ok else ': {0}'.format(output)))
+    else:
+        said.append('{0} is already there; its password was left '
+                    'alone'.format(email))
+    said += _ensure_role(settings, survey, role)
+    held = ((survey.report or {}).get('accounts') or {}).get(email) or []
+    if role in held:
+        said.append('{0} already holds {1}'.format(email, role))
+        return said
+    ok, output = _invenio(settings, 'roles', 'add', email, role)
+    said.append('{0} {1} to {2}{3}'.format(
+        'gave' if ok else 'could not give', role, email,
+        '' if ok else ': {0}'.format(output)))
+    return said
+
+
+def _fix_account(settings, survey):
+    """Make sure the account the run works as exists and administers."""
+    return _ensure_account(settings, survey, settings.email,
+                           settings.password, SYSTEM_ROLE)
+
+
+def _fix_approver(settings, survey):
+    """Make sure the approver exists and holds the role requests go to."""
+    return _ensure_account(settings, survey, settings.approver_email,
+                           settings.approver_password,
+                           _repo_role(survey))
+
+
+def _fix_approver_role(settings, survey):
+    """Give the approver the role approval requests are sent to."""
+    role = _repo_role(survey)
+    return _ensure_role(settings, survey, role) + _ensure_account(
+        settings, survey, settings.approver_email,
+        settings.approver_password, role)[1:]
+
+
+def _repo_role(survey):
+    """Return the role WEKO sends approval requests to."""
+    return survey.config('WEKO_ADMIN_PERMISSION_ROLE_REPO',
+                         'Repository Administrator')
+
+
+SYSTEM_ROLE = 'System Administrator'
+"""The role the account a run works as has to hold."""
+
+FIXES = {
+    'account': (_fix_account, True),
+    'approver': (_fix_approver, True),
+    'approver-role': (_fix_approver_role, True),
+    'item-types': (_fix_item_types, False),
+    'actions': (_fix_actions, False),
+    'flow': (_fix_flow, False),
+    'index-tree': (_fix_index_tree, False),
+    'identifier-settings': (_fix_identifier_settings, False),
+    'location': (_fix_location, False),
+    'partition': (_fix_partition, False),
+    'language': (_fix_language, False),
+    'leftovers': (_fix_leftovers, False),
+}
+"""Every repair, and whether it adds to or changes an account.
+
+The ones that do are held back behind ``--fix-accounts``, because an
+account is not something a tool should quietly create on somebody's
+instance.
+"""
 
 
 # -- COAR Notify -----------------------------------------------------------
@@ -1205,6 +1613,7 @@ COMMANDS = {
     'ark-stub': command_ark_stub,
     'crossref-account': command_crossref_account,
     'doi-log': command_doi_log,
+    'doctor': command_doctor,
     'env': command_env,
     'inbox': command_inbox,
     'status': command_status,
@@ -1236,6 +1645,15 @@ def build_parser():
                         help='say what would be deleted, delete nothing')
     parser.add_argument('--keep-ledger', action='store_true',
                         help='leave the ledger as it is')
+    parser.add_argument('--fix', action='store_true',
+                        help='for doctor: put right what can be put right '
+                             'without replacing anything already there')
+    parser.add_argument('--fix-accounts', action='store_true',
+                        help='for doctor --fix: also create accounts and '
+                             'give them the roles the suites need')
+    parser.add_argument('--verbose', action='store_true',
+                        help='for doctor: say what was found, not only what '
+                             'was wrong')
     return parser
 
 

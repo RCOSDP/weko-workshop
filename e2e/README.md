@@ -31,6 +31,9 @@ written to a ledger, and `./e2ectl clean` removes it again.
 | `weko_e2e/notify.py` | Reading what the instance announced over COAR Notify |
 | `weko_e2e/pushstub.py` | A stand-in browser subscription, for the web push steps |
 | `weko_e2e/config.py` | The settings, read from the environment or an environment file |
+| `weko_e2e/doctor.py` | What "fit to be tested" means, as checks |
+| `weko_e2e/dataload.py` | Taking the rows out of a dump, and leaving the rest of it |
+| `weko_e2e/inspect.py` | What the instance looks like from inside, run in the `web` container |
 | `weko_e2e/client.py` | HTTP client for the endpoints the screens call, for setup and teardown |
 | `weko_e2e/ui.py` | Playwright helpers for walking an activity's screens |
 | `weko_e2e/ledger.py` | The record of what a run created (`.e2e-state.json`) |
@@ -370,6 +373,111 @@ What running it against a real instance showed:
   workflows do, and designates it on the screen.
 - The 13 steps take about 60 to 110 seconds, depending on the instance.
 
+## Is the instance fit to be tested?
+
+The suites assume an instance `install.sh` has just finished setting up.
+When a piece of that is missing the failure usually lands somewhere
+unhelpful -- an item registration that stops at Next, a search that finds
+nothing -- so `e2ectl doctor` says which piece it is first.
+
+```bash
+cd e2e
+../.venv-e2e/bin/python ./e2ectl doctor        # what is wrong, if anything
+../.venv-e2e/bin/python ./e2ectl doctor --verbose   # and what is right
+```
+
+```
+https://localhost  (inspected)
+ok    the instance answers
+ok    the WEKO checkout
+ok    the account logs in
+...
+FAIL  this month's log partition
+      there is no user_activity_logs_202609. WEKO writes a log row for most
+      requests, so without it the file upload answers 500 and item
+      registration stops at Next.
+warn  nothing left from an earlier run
+      1 index left behind (E2E). A run does not collide with them -- every
+      name carries its own run id -- but they are somebody's leftovers.
+
+2 of these can be put right: run "doctor --fix"
+```
+
+It looks at eighteen things: that the instance answers and the account
+logs in and administers; that the item type, the workflow actions, a flow
+to copy from, an index tree, a file location, this month's log partition
+and a registered language are all there; that search answers and the
+worker is up; and, for the optional suites, the identifier settings row,
+the approver and the inbox. It finishes by saying how far the instance is
+from the baseline `install.sh` leaves.
+
+A check marked `[crossref]` or `[coarnotify]` only matters to that suite,
+and warns rather than fails.
+
+### Repairing
+
+```bash
+../.venv-e2e/bin/python ./e2ectl doctor --fix                  # what can be filled in
+../.venv-e2e/bin/python ./e2ectl doctor --fix --fix-accounts   # accounts and roles too
+```
+
+**What is already there wins.** Every repair adds what is missing and
+replaces nothing:
+
+| What is wrong | What `--fix` does |
+| --- | --- |
+| no partition for this month | `CREATE TABLE ... PARTITION OF user_activity_logs` |
+| no workflow actions | `invenio workflow init action_status,Action` |
+| no flow at all | adds the rows of `scripts/demo/defaultworkflow.sql` |
+| an empty index tree | adds the rows of `scripts/demo/indextree.sql` |
+| no identifier settings row | adds the rows of `scripts/demo/doi_identifier.sql` |
+| no file location | creates one; **an instance that has one keeps it** |
+| no language registered | `invenio language create --active --registered en English 001` |
+| leftovers from an earlier run | `clean --discover --hard` |
+| the item type under test is missing | adds the rows of `scripts/demo/item_type.sql` |
+| the account or the approver is missing, or lacks its role | creates it and adds the role -- only with `--fix-accounts` |
+
+### Adding rows without running the file
+
+Four of those repairs load data `install.sh` loads, and none of them runs
+the file. `scripts/demo/item_type.sql` is a dump, not a seed: it **drops
+the item type tables** and builds them again before filling them, which
+is right for an empty database and wrong for an instance with item types
+of its own.
+
+So `weko_e2e/dataload.py` reads out of each file only the statements that
+*add* rows, and the repair runs those against the schema the instance
+already has. Nothing is dropped, no constraint is altered, and every row
+that was there stays exactly as it was.
+
+Three things make that safe:
+
+- **One transaction.** The rows carry the ids they insert. Where the
+  instance is already using one of those ids the insert fails, the whole
+  load is undone, and the tool says so -- there is no half-loaded item
+  type.
+- **Primary keys still apply.** The load puts foreign key checking aside
+  for its own transaction (`session_replication_role`, which is what
+  `pg_restore --disable-triggers` does) because a dump lists its rows in
+  the order it wrote them rather than parent before child. Primary keys
+  and unique constraints are not triggers, so they still stop a load
+  landing on top of what is there.
+- **Sequences only move forward.** A dump puts its sequences back where
+  the dump ended; replaying that on an instance that has gone further
+  would hand out ids it has already used, so each `setval` is rewritten
+  to take the greater of the two.
+
+An account that already exists keeps its password, in the same spirit:
+`--fix-accounts` fills a gap, it does not take an instance's accounts
+over.
+
+Anything `--fix` will not touch is reported with what to run by hand. An
+instance that is broken further than this is quicker to rebuild with
+`install.sh`.
+
+`doctor` exits non-zero when something failed, so it works as a gate in
+front of a run.
+
 ## Cleaning up (the tool)
 
 A run leaves what it created **in place** by default, so that a failure can
@@ -517,6 +625,9 @@ setting them alone changes nothing on the instance.
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | Compose service running WEKO |
 | `WEKO_E2E_INBOX_SERVICE` | `inbox` | Compose service running the LDN inbox: cleared of the run's notifications, and where the web push stand-in runs |
+| `WEKO_E2E_DB_SERVICE` | `postgresql` | Compose service running the database, which `doctor --fix` applies SQL through |
+| `WEKO_E2E_DB_USER` | `invenio` | |
+| `WEKO_E2E_DB_NAME` | `invenio` | |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | Where the WEKO checkout is mounted in that container |
 
 ### Other
@@ -571,8 +682,9 @@ only delete what is in the ledger, and what `--discover` finds.
 
 ## When it does not work
 
-- **Anything unexpected** -- `./e2ectl env` first: most of it is a setting
-  pointing somewhere other than where you think.
+- **Anything unexpected** -- `./e2ectl doctor` first, then `./e2ectl env`:
+  between them they cover both halves of it, the instance not being in a
+  fit state and a setting pointing somewhere other than where you think.
 - **`e2ectl ping` says "does not answer"** -- for a local stack, check the
   containers with `docker compose -f docker-compose2.yml ps`; for a host
   name DNS does not know, set `WEKO_E2E_HOST_IP`.
