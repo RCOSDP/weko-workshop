@@ -10,6 +10,7 @@ gives its resources.
     e2ectl doctor                 is this instance fit to be tested
     e2ectl package                a zip of the suite, to hand to somebody
     e2ectl seed                   refresh the copy of what install.sh loads
+    e2ectl shib [login|status]    log in the way the Shibboleth SP does
     e2ectl doctor --fix           put right what can be put right
     e2ectl ark-account enable     a real ARK server, for the ark suite
     e2ectl ark-stub enable        a stand-in ARK server, when there is none
@@ -38,16 +39,18 @@ import requests
 
 from . import dataload, doctor, notify
 from .client import WekoClient, WekoError
-from .config import E2E_DIR, HERE, Settings
+from .config import E2E_DIR, HERE, LOCAL, Settings
 from .inboxpurge import MARKER as INBOX_MARKER
 from .inspect import MARKER as INSPECT_MARKER
 from .ledger import KINDS, Ledger
 from .purge import MARKER
+from .shibstub import MARKER as SHIB_MARKER
 
 PURGE_IN_CONTAINER = '/tmp/weko-e2e-purge.py'
 SPEC_IN_CONTAINER = '/tmp/weko-e2e-purge.json'
 INBOX_PURGE_IN_CONTAINER = '/tmp/weko-e2e-inbox-purge.py'
 INSPECT_IN_CONTAINER = '/tmp/weko-e2e-inspect.py'
+SHIB_STUB_IN_CONTAINER = '/tmp/weko-e2e-shib-stub.py'
 
 DEMO_SQL = os.path.join('scripts', 'demo')
 """Where the data ``install.sh`` loads lives in the WEKO checkout."""
@@ -570,6 +573,158 @@ def command_package(args, settings, ledger):
     return 0
 
 
+# -- logging in the way the Shibboleth SP does -----------------------------
+
+def shib_login(settings, attributes=None, next_url='/'):
+    """Post the attributes the SP's login script would, and say where to go.
+
+    Run in the **nginx** container, because that is where the SP's
+    script runs and because WEKO checks where the POST came from -- see
+    :mod:`weko_e2e.shibstub`.  Nothing here widens that check.
+
+    :return: what the stand-in reported, or None when it could not be
+        run at all
+    """
+    if not settings.weko_repo:
+        return None
+    with open(os.path.join(HERE, 'shibstub.py'), 'rb') as handle:
+        script = handle.read()
+    if not _copy_into_container(settings, script, SHIB_STUB_IN_CONTAINER,
+                                service=settings.nginx_service):
+        return None
+    result = subprocess.run(
+        _in_service(settings, settings.nginx_service, 'python3',
+                    SHIB_STUB_IN_CONTAINER, settings.base_url,
+                    json.dumps(attributes or settings.shib_attributes),
+                    ),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.decode('utf-8', 'replace').splitlines():
+        if line.startswith(SHIB_MARKER):
+            return json.loads(line[len(SHIB_MARKER):])
+    return {'status': 0, 'next': None,
+            'said': result.stdout.decode('utf-8', 'replace')[-400:]}
+
+
+def shib_account(settings, eppn=None):
+    """Return the WEKO account a Shibboleth identity is bound to.
+
+    What the suite checks the login by: WEKO keeps the binding in
+    ``shibboleth_user``, and the account it points at is an ordinary
+    ``accounts_user`` row.
+
+    :return: ``{'eppn', 'email', 'user_id', 'shib_mail'}``, or None when
+        nothing is bound to that eppn (or the database cannot be reached)
+    """
+    eppn = eppn or settings.shib_eppn
+    rows = _psql_rows(settings, (
+        "SELECT s.shib_eppn, u.email, u.id, s.shib_mail"
+        " FROM shibboleth_user s JOIN accounts_user u ON u.id = s.weko_uid"
+        " WHERE s.shib_eppn = '{0}'".format(eppn.replace("'", "''"))))
+    if not rows:
+        return None
+    return {'eppn': rows[0][0], 'email': rows[0][1],
+            'user_id': int(rows[0][2]), 'shib_mail': rows[0][3]}
+
+
+def forget_shib_account(settings, eppn=None):
+    """Take away the account a Shibboleth login made, and its binding.
+
+    Only ever the account **this** run's attributes created: the account
+    is looked up through the binding, and the binding through the eppn
+    the run logged in as.  An account somebody else made and a
+    Shibboleth identity bound to it by hand are both left alone, because
+    neither carries this eppn.
+
+    :return: what was removed, as lines to print
+    """
+    bound = shib_account(settings, eppn)
+    if not bound:
+        return []
+    said = []
+    ok, output = _psql(settings, (
+        "DELETE FROM shibboleth_user WHERE shib_eppn = '{0}';\n"
+        "DELETE FROM userprofiles_userprofile WHERE user_id = {1};\n"
+        "DELETE FROM accounts_userrole WHERE user_id = {1};\n"
+        "DELETE FROM accounts_user_session_activity WHERE user_id = {1};\n"
+        "DELETE FROM accounts_user WHERE id = {1} AND email = '{2}';".format(
+            (eppn or settings.shib_eppn).replace("'", "''"),
+            bound['user_id'], bound['email'].replace("'", "''"))),
+        atomic=True)
+    said.append('{0} the account {1} logged in as ({2})'.format(
+        'removed' if ok else 'could not remove', bound['eppn'],
+        bound['email']))
+    if not ok and output:
+        said.append(output)
+    return said
+
+
+def command_shib(args, settings, ledger):
+    """Log in the way the Shibboleth SP does, or look at what came of it.
+
+    ``status`` says whether the instance offers Shibboleth login and what
+    is bound to the run's eppn; ``enable`` and ``disable`` are the switch
+    on ``/admin/shibboleth/``; ``forget`` takes away the account a login
+    made, and nothing else; ``login`` -- the default -- posts the
+    attributes and says where to go with the answer.
+
+    For looking at the login by hand.  The ``shibboleth`` suite walks the
+    same path and then checks what WEKO made of it.
+    """
+    action = args.action or 'login'
+    if action in ('status', 'enable', 'disable'):
+        client = WekoClient(settings).login(how=LOCAL)
+        if action == 'status':
+            print('shibboleth login: {0}'.format(
+                'on' if client.shib_login_enabled() else 'off'))
+        else:
+            was = client.shib_login_enabled(action == 'enable')
+            print('shibboleth login: {0} (was {1})'.format(
+                'on' if action == 'enable' else 'off',
+                'on' if was else 'off'))
+        bound = shib_account(settings)
+        print('{0}: {1}'.format(
+            settings.shib_eppn,
+            'account {0}'.format(bound['email']) if bound
+            else 'nothing bound'))
+        return 0
+
+    if not settings.weko_repo:
+        print('the stand-in runs in the {0} container, which needs the WEKO '
+              'checkout that owns {1}'.format(settings.nginx_service,
+                                              settings.compose_file))
+        return 1
+
+    if action == 'forget':
+        said = forget_shib_account(settings)
+        for line in said:
+            print(line)
+        if not said:
+            print('nothing is bound to {0}'.format(settings.shib_eppn))
+        return 0
+
+    if action != 'login':
+        print('shib takes login, status, enable, disable or forget')
+        return 2
+
+    answer = shib_login(settings)
+    if not answer:
+        print('the stand-in could not be run in the {0} container'.format(
+            settings.nginx_service))
+        return 1
+    print('posted as {0} (mail {1})'.format(settings.shib_eppn,
+                                            settings.shib_mail))
+    print('WEKO answered {0}'.format(answer.get('status')))
+    if answer.get('next'):
+        print('follow {0} to take the session'.format(answer['next']))
+        return 0
+    print('no session: {0}'.format(answer.get('said') or 'no reason given'))
+    print('Shibboleth login has to be on ("./e2ectl shib enable"), and the '
+          'address the POST came from has to be in '
+          'WEKO_ACCOUNTS_SHIB_SP_ALLOWED_ADDRS')
+    return 1
+
+
 # -- is the instance fit to be tested --------------------------------------
 
 def _inspect(settings):
@@ -866,6 +1021,27 @@ def _psql(settings, sql, atomic=False):
     lines = [line for line in output.splitlines()
              if line.strip() and not line.startswith('INSERT ')]
     return result.returncode == 0, lines[-1] if lines else ''
+
+
+def _psql_rows(settings, sql):
+    """Run a query in the database container and return its rows.
+
+    :return: list of lists of strings, one per row, or None when the
+        query could not be run at all
+    """
+    # compose writes its own warnings to stderr, and they would read as
+    # rows, so this is the one place that keeps the two apart.
+    result = subprocess.run(
+        _in_service(settings, settings.db_service, 'psql', '-t', '-A',
+                    '-F', '|', '-U', settings.db_user, '-d', settings.db_name,
+                    '-c', sql),
+        cwd=settings.weko_repo,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if result.returncode:
+        return None
+    return [line.split('|')
+            for line in result.stdout.decode('utf-8', 'replace').splitlines()
+            if line.strip()]
 
 
 def _load_demo_rows(settings, name):
@@ -2032,11 +2208,15 @@ def _wait_for_weko(settings, timeout=300):
     window fails on its first page for a reason that has nothing to do
     with what it was testing.  nginx answers throughout, so what is
     waited for is a login rather than a connection.
+
+    Always the login screen, whatever the run logs in with: this is
+    asking whether WEKO is answering, and a Shibboleth login would also
+    be asking whether Shibboleth is on.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            WekoClient(settings).login()
+            WekoClient(settings).login(how=LOCAL)
             return True
         except (WekoError, requests.RequestException):
             time.sleep(5)
@@ -2166,6 +2346,7 @@ COMMANDS = {
     'doctor': command_doctor,
     'package': command_package,
     'seed': command_seed,
+    'shib': command_shib,
     'env': command_env,
     'inbox': command_inbox,
     'status': command_status,
@@ -2185,7 +2366,9 @@ def build_parser():
     parser.add_argument('action', nargs='?',
                         help='for ark-account, ark-stub and '
                              'crossref-account: enable, disable or status; '
-                             'ark-stub also takes start and stop')
+                             'ark-stub also takes start and stop; shib '
+                             'takes login, status, enable, disable or '
+                             'forget')
     parser.add_argument('--run', help='act on one run id only')
     parser.add_argument('--discover', action='store_true',
                         help='also act on resources named after the label, '

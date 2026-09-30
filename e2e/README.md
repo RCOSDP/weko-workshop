@@ -25,9 +25,11 @@ written to a ledger, and `./e2ectl clean` removes it again.
 | `tests/test_ark_mint.py` | Optional suite `ark`: an ARK is minted for the item |
 | `tests/test_coar_notify.py` | Optional suite `coarnotify`: the workflow is announced over COAR Notify |
 | `tests/test_crossref_doi.py` | Optional suite `crossref`: a Crossref DOI is granted |
+| `tests/test_shibboleth.py` | Optional suite `shibboleth`: a Shibboleth user logs in and gets the right account |
 | `conftest.py` | The browser, the HTTP client and the ledger the run shares |
 | `weko_e2e/flow.py` | The registration flow every suite walks |
 | `weko_e2e/arkstub.py` | A stand-in ARK server, for the `ark` suite |
+| `weko_e2e/shibstub.py` | A stand-in for the Shibboleth SP's login script |
 | `weko_e2e/notify.py` | Reading what the instance announced over COAR Notify |
 | `weko_e2e/pushstub.py` | A stand-in browser subscription, for the web push steps |
 | `weko_e2e/config.py` | The settings, read from the environment or an environment file |
@@ -188,6 +190,7 @@ because each needs something of the instance that not every instance has.
 | `ark` | an ARK is minted for the item and becomes its permalink | an ARK server (`e2ectl ark-account enable`), or a stand-in (`e2ectl ark-stub enable`) |
 | `coarnotify` | the approval request and the approval are announced over COAR Notify, reach the people they are meant to, and arrive as a web push | an LDN inbox (the `inbox` service) and a second account to approve; the web push steps also want `e2ectl webpush-stub enable` |
 | `crossref` | a Crossref DOI is granted to the item and becomes its permalink | nothing. Depositing to Crossref on top of that needs an account |
+| `shibboleth` | a Shibboleth user logs in, and `mail` -- not `eppn` -- becomes the account's email | the WEKO checkout, because the stand-in SP has to run in the `nginx` container |
 
 ```bash
 python -m pytest                      # the base suite; the others are skipped
@@ -393,6 +396,86 @@ where things stand, and `e2ectl doi-log` shows what WEKO has sent.
 The deposit is read from `doi_deposit_log` inside the `web` container, so
 these two steps need the WEKO checkout; they skip without it. A deposit
 that Crossref refuses fails the step with the reason Crossref gave.
+
+### The `shibboleth` suite
+
+WEKO is not what speaks SAML. The Service Provider does, in nginx, and
+what reaches WEKO is an ordinary POST of the attributes the IdP released
+-- `nginx/login.py` is the script that makes it. So this suite needs no
+IdP: `weko_e2e/shibstub.py` is copied into the **nginx** container and
+sends what that script sends, from where it sends it.
+
+```bash
+../.venv-e2e/bin/python -m pytest --suite shibboleth
+```
+
+Nothing has to be configured. The suite turns Shibboleth login on at
+`/admin/shibboleth/` itself and **puts the switch back the way it found
+it** afterwards, pass or fail.
+
+#### Where the POST comes from is the point
+
+`release_v2.1.0` closes `POST /weko/shib/login` to everything but the
+addresses in `WEKO_ACCOUNTS_SHIB_SP_ALLOWED_ADDRS` (`127.0.0.1` and
+`::1` by default). Standing where the SP stands is how this suite stays
+on the right side of that check. **Nothing here widens it, and nothing
+here should**: an instance that takes those attributes from anywhere is
+an instance anyone can log into as anyone.
+
+That also means the suite needs the WEKO checkout that owns the compose
+file, because that is what the stand-in is copied in through. Without it
+the suite skips, with the reason.
+
+#### What it is really asking
+
+    eppn   ->  shibboleth_user.shib_eppn, the binding
+    mail   ->  accounts_user.email, the account itself
+
+The second is the one worth a test. WEKO makes the account's email out of
+`mail`, not out of `eppn`, so an IdP that releases one and not the other
+-- or releases a `mail` that is not the address the repository knows the
+person by -- gives them an account under a name nobody expects. The run
+sends an `eppn` and a `mail` that are deliberately different
+(`WEKO_E2E_SHIB_EPPN` and `WEKO_E2E_SHIB_MAIL`) and says which one it
+finds.
+
+#### It touches no account that was already there
+
+The screen an unknown identity lands on offers two ways through, and they
+are not the same thing:
+
+| | |
+| --- | --- |
+| **Login as new ID** | makes an account out of the attributes |
+| **Login as registerd ID** | binds to an account you name **and overwrites that account's email** with the one the IdP released |
+
+The suite takes the first, and removes the account it made when it is
+done -- so an instance is left holding neither the account nor the
+binding. The second is left alone deliberately; a run that took it would
+rename somebody's account.
+
+#### Looking at it by hand
+
+```bash
+../.venv-e2e/bin/python ./e2ectl shib status    # is it on, and what is bound
+../.venv-e2e/bin/python ./e2ectl shib enable    # the switch on /admin/shibboleth/
+../.venv-e2e/bin/python ./e2ectl shib login     # post, and say where to go
+../.venv-e2e/bin/python ./e2ectl shib forget    # take away the account a login made
+../.venv-e2e/bin/python ./e2ectl shib disable
+```
+
+`shib login` prints the path WEKO answered with; following it in a
+browser is what turns the attributes into a session, exactly as the SP's
+script sends a real user to it.
+
+#### Logging every suite in through Shibboleth
+
+`WEKO_E2E_LOGIN=shibboleth` makes **every** suite come in that way rather
+than through the login screen. The default is `local`, and nothing about
+the other suites changes unless you ask for this. The account it brings
+in is a new one made from the attributes, so it has whatever roles a new
+Shibboleth user gets on your instance -- which for most of the suites is
+not enough, and is why this is a setting rather than the default.
 
 ## What the base suite does
 
@@ -727,10 +810,15 @@ Every one of these can also be a line in an environment file.
 
 | Variable | Default | |
 | --- | --- | --- |
-| `WEKO_E2E_SUITES` | (none) | Optional suites to run: `ark`, `coarnotify`, `crossref`, several separated by commas, or `all` |
+| `WEKO_E2E_SUITES` | (none) | Optional suites to run: `ark`, `coarnotify`, `crossref`, `shibboleth`, several separated by commas, or `all` |
 | `WEKO_E2E_CROSSREF_PREFIX` | `10.5555` | Prefix the `crossref` suite configures and expects |
 | `WEKO_E2E_ARK_NAAN` | (empty) | NAAN the `ark` suite expects the minted ARK to be under, and mints under |
 | `WEKO_E2E_NOTIFY_TIMEOUT` | `120` | Seconds the `coarnotify` suite waits for a notification to reach the inbox |
+| `WEKO_E2E_LOGIN` | `local` | `local` for the login screen, `shibboleth` to come in the way the SP brings a user in |
+| `WEKO_E2E_SHIB_EPPN` | `e2e-shibboleth@example.org` | The `eppn` the stand-in SP releases, which becomes the binding |
+| `WEKO_E2E_SHIB_MAIL` | `e2e-shibboleth-mail@example.org` | The `mail` it releases, which becomes the account's email. Deliberately not the `eppn` |
+| `WEKO_E2E_SHIB_USER_NAME` | `WEKO E2E Shibboleth` | The `DisplayName` it releases |
+| `WEKO_E2E_NGINX_SERVICE` | `nginx` | The compose service the stand-in SP runs in |
 
 ### The ARK server (minting)
 
@@ -797,6 +885,7 @@ setting them alone changes nothing on the instance.
 | All four suites in one session (`--suite all`, with the ARK stub) | 37 passed |
 | `crossref` with depositing on, against a stand-in for Crossref | 10 passed; deposit reached `success` |
 | `coarnotify` against the stack's own `inbox` service | 10 passed; both notifications reached the right account |
+| `shibboleth` against a stack from `install.sh` | 9 passed; `mail` became the account's email, and the switch and the account were put back |
 | `ark` against a server configured with `ark-account` (login flow) | 6 passed; minted `ark:/12345/x9...` |
 
 ## Deriving a suite from this one
@@ -922,7 +1011,8 @@ evidence/
 ├── images/                      what the base flow's steps photographed
 ├── ark/README.md, images/       the ark suite, and its own screenshots
 ├── coarnotify/README.md, …
-└── crossref/README.md, …
+├── crossref/README.md, …
+└── shibboleth/README.md, …
 ```
 
 The tests take the screenshots themselves as they go, under fixed names,

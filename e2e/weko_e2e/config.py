@@ -40,6 +40,11 @@ DEFAULTS = {
     'WEKO_E2E_APPROVER_PASSWORD': 'uspass123',
     'WEKO_E2E_NOTIFY_TIMEOUT': '120',
     'WEKO_E2E_INBOX_SERVICE': 'inbox',
+    'WEKO_E2E_NGINX_SERVICE': 'nginx',
+    'WEKO_E2E_LOGIN': 'local',
+    'WEKO_E2E_SHIB_EPPN': 'e2e-shibboleth@example.org',
+    'WEKO_E2E_SHIB_MAIL': 'e2e-shibboleth-mail@example.org',
+    'WEKO_E2E_SHIB_USER_NAME': 'WEKO E2E Shibboleth',
     'WEKO_E2E_WEKO_REF': '',
     'WEKO_E2E_WEKO_REPO_URL': 'https://raw.githubusercontent.com/RCOSDP/weko',
     'WEKO_E2E_DB_SERVICE': 'postgresql',
@@ -169,13 +174,24 @@ def _env(name):
     return DEFAULTS[name]
 
 
-OPTIONAL_SUITES = ('ark', 'coarnotify', 'crossref')
+OPTIONAL_SUITES = ('ark', 'coarnotify', 'crossref', 'shibboleth')
 """Optional suites, each of which has to be asked for by name.
 
 The base flow always runs.  These do not, because each needs something of
 the instance that not every instance has -- an ARK server, a Crossref
 prefix, an LDN inbox and a second account -- so running them where that
 is missing would only produce failures nobody asked for.
+"""
+
+LOCAL = 'local'
+"""Log in through WEKO's own login screen: the default."""
+
+SHIBBOLETH = 'shibboleth'
+"""Log in the way the Shibboleth SP brings a user in.
+
+WEKO is not what speaks SAML -- the SP does -- so a run does not need an
+IdP; it needs to send what the SP sends, from where the SP sends it.
+See :mod:`weko_e2e.shibstub`.
 """
 
 
@@ -252,6 +268,11 @@ class Settings(object):
         self.approver_password = _env('WEKO_E2E_APPROVER_PASSWORD')
         self.notify_timeout = int(_env('WEKO_E2E_NOTIFY_TIMEOUT'))
         self.inbox_service = _env('WEKO_E2E_INBOX_SERVICE')
+        self.nginx_service = _env('WEKO_E2E_NGINX_SERVICE')
+        self.login_as = _env('WEKO_E2E_LOGIN').strip().lower()
+        self.shib_eppn = _env('WEKO_E2E_SHIB_EPPN')
+        self.shib_mail = _env('WEKO_E2E_SHIB_MAIL') or self.shib_eppn
+        self.shib_user_name = _env('WEKO_E2E_SHIB_USER_NAME')
         self.weko_ref = _env('WEKO_E2E_WEKO_REF')
         self.weko_repo_url = _env('WEKO_E2E_WEKO_REPO_URL')
         self.db_service = _env('WEKO_E2E_DB_SERVICE')
@@ -385,6 +406,7 @@ class Settings(object):
             ('verify TLS', 'yes' if self.verify_tls else 'no'),
             ('account', self.email),
             ('approver account', self.approver_email),
+            ('logging in as', self._describe_login()),
             ('item type', self.item_type_name),
             ('label', self.label),
             ('optional suites', ', '.join(self.suites) or
@@ -405,10 +427,24 @@ class Settings(object):
             ('compose file', self.compose_file),
             ('web service', self.web_service),
             ('inbox service', self.inbox_service),
+            ('nginx service', self.nginx_service),
             ('database service', '{0} ({1}/{2})'.format(
                 self.db_service, self.db_user, self.db_name)),
             ('repository in container', self.container_repo),
         ]
+
+    def _describe_login(self):
+        """Return how a run logs in, and as whom."""
+        if self.login_as == SHIBBOLETH:
+            return 'Shibboleth, as {0} ({1})'.format(
+                self.shib_eppn, self.shib_mail)
+        return 'the login screen, as {0}'.format(self.email)
+
+    @property
+    def shib_attributes(self):
+        """Return the attributes a Shibboleth login is made with."""
+        return {'eppn': self.shib_eppn, 'mail': self.shib_mail,
+                'user_name': self.shib_user_name}
 
     def _describe_ark(self):
         """Return what the ARK suite would be minting against."""

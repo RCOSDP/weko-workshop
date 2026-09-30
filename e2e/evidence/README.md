@@ -265,10 +265,15 @@ read, or added, without the others.
 | `ark` | [`ark/README.md`](ark/README.md) | 6 passed | an ARK is minted for the item and becomes its permalink |
 | `coarnotify` | [`coarnotify/README.md`](coarnotify/README.md) | 14 passed | the approval request and the approval are announced over COAR Notify, reach the people they are meant to, and arrive as a web push |
 | `crossref` | [`crossref/README.md`](crossref/README.md) | 8 passed, 2 skipped | a Crossref DOI is granted to the item and becomes its permalink |
+| `shibboleth` | [`shibboleth/README.md`](shibboleth/README.md) | 9 passed | a Shibboleth user logs in, and `mail` -- not `eppn` -- becomes the account's email |
 
 The two skips are the Crossref deposit, which this instance has no account
 for; `crossref/README.md` records the deposit path being verified
 separately.
+
+`shibboleth` was run on its own, after this run, and records its own run id
+accordingly; it needs the Shibboleth switch turned on, which it does itself
+and puts back.
 
 ---
 

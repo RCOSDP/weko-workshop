@@ -15,6 +15,12 @@ import re
 import tempfile
 import time
 
+from .client import SHIB_CONFIRM_PATH
+from .config import SHIBBOLETH
+
+NEW_SHIB_USER_LINK = 'a[href*="/weko/auto/login"]'
+"""The confirmation screen's "Login (New WEKO users)" way through."""
+
 BEGIN = 'begin_action'
 ITEM_REGISTRATION = 'item_login'
 ITEM_LINK = 'item_link'
@@ -84,12 +90,57 @@ def dismiss_cookie_banner(page):
     return False
 
 
-def login(page, settings):
+def login(page, settings, how=None):
     """Log in, and get the cookie banner out of the way of the screenshots.
 
     Does nothing when this page is logged in already: several suites in
     one session share the browser, and WEKO sends an authenticated
     visitor away from the login screen rather than showing it again.
+
+    :param how: ``'local'`` for the login screen, ``'shibboleth'`` to
+        come in the way the Shibboleth SP brings a user in; defaults to
+        what the environment asked for
+    :raise AssertionError: when the credentials are refused
+    """
+    if (how or settings.login_as) == SHIBBOLETH:
+        return login_shibboleth(page, settings)
+    return login_locally(page, settings)
+
+
+def login_shibboleth(page, settings):
+    """Bring this browser in the way the Shibboleth SP brings a user in.
+
+    The SP is stood in for -- see :mod:`weko_e2e.shibstub` -- and what
+    comes back is a path.  In a real deployment the SP's script answers
+    the browser with a redirect to it; here the browser is simply sent
+    there, which is the same walk with the same session.
+
+    The new-user way through the confirmation screen is the one taken,
+    because the other way overwrites the email of the account it binds
+    to.  See :meth:`~weko_e2e.client.WekoClient.login_shibboleth`.
+
+    :raise AssertionError: when the login does not end in a session
+    """
+    from .cli import shib_login
+
+    answer = shib_login(settings)
+    assert answer and answer.get('next'), \
+        'WEKO refused the attributes of {0}: {1}'.format(
+            settings.shib_eppn,
+            (answer or {}).get('said') or 'the stand-in could not be run')
+    page.goto(settings.url(answer['next']))
+    page.wait_for_load_state('networkidle')
+    if page.locator(NEW_SHIB_USER_LINK).count():
+        page.click(NEW_SHIB_USER_LINK)
+        page.wait_for_load_state('networkidle')
+    assert '/login/' not in page.url and SHIB_CONFIRM_PATH not in page.url, \
+        'the Shibboleth login of {0} did not end in a session; Shibboleth ' \
+        'login has to be on (/admin/shibboleth/)'.format(settings.shib_eppn)
+    dismiss_cookie_banner(page)
+
+
+def login_locally(page, settings):
+    """Log in through the login screen.
 
     :raise AssertionError: when the credentials are refused
     """

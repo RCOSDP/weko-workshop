@@ -259,9 +259,13 @@ DOI 付与は派生版で扱う（先行例: `works/crossref-doi-manual/e2e/`）
 | `ark` | [`ark/README.ja.md`](ark/README.ja.md) | 6 passed | ARK が発行され、アイテムのパーマリンクになる |
 | `coarnotify` | [`coarnotify/README.ja.md`](coarnotify/README.ja.md) | 14 passed | 承認依頼と承認が COAR Notify で意図した相手に届き、Web Push でも届く |
 | `crossref` | [`crossref/README.ja.md`](crossref/README.ja.md) | 8 passed, 2 skipped | Crossref DOI が付与され、パーマリンクになる |
+| `shibboleth` | [`shibboleth/README.ja.md`](shibboleth/README.ja.md) | 9 passed | Shibboleth ログインで、`eppn` ではなく `mail` がアカウントのメールアドレスになる |
 
 skip 2 件は Crossref の deposit で、この環境にはアカウントがありません。
 別途検証した deposit 経路は `crossref/README.ja.md` に記録しています。
+
+`shibboleth` はこの実行の後に単独で流したため、実行 ID も別になっています。
+Shibboleth ログインの有効化が必要ですが、スイート自身が有効化し、元に戻します。
 
 ---
 
