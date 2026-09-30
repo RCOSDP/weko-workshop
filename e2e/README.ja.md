@@ -50,6 +50,27 @@ python3 -m venv .venv-e2e
 .venv-e2e/bin/playwright install chromium
 ```
 
+Python は 3.10 以上が必要です（playwright と pytest の要件で、スイート自身の
+コードが要求しているわけではありません）。
+
+**Windows の場合**、仮想環境の実行ファイルは `bin` ではなく `Scripts` に置かれ、
+`e2ectl` はインタプリタに渡して実行します。PowerShell では:
+
+```powershell
+py -3 -m venv .venv-e2e
+.venv-e2e\Scripts\python -m pip install -r e2e\requirements.txt
+.venv-e2e\Scripts\python -m playwright install chromium
+
+cd e2e
+..\.venv-e2e\Scripts\python .\e2ectl env
+..\.venv-e2e\Scripts\python -m pytest
+```
+
+違いはこれだけです。スイート自身が行うこと（ブラウザ操作・HTTP・ツール）に
+OS 依存はありません。以下の記述は Linux 形式なので、Windows では
+`bin/python` を `Scripts\python`、`./e2ectl` を `.\e2ectl` と読み替えて
+ください。`./e2ectl package` が作る配布物には `setup.ps1` が入っています。
+
 テスト対象の WEKO3 環境も必要です。手元に立てる場合は WEKO のチェックアウトで:
 
 ```bash

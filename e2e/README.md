@@ -52,6 +52,29 @@ python3 -m venv .venv-e2e
 .venv-e2e/bin/playwright install chromium
 ```
 
+Python 3.10 or newer, which is what playwright and pytest ask for; the
+suite's own code is not what needs it.
+
+**On Windows**, a virtual environment keeps its programs in `Scripts`
+rather than in `bin`, and `e2ectl` is handed to the interpreter rather
+than run as a program. So, in PowerShell:
+
+```powershell
+py -3 -m venv .venv-e2e
+.venv-e2e\Scripts\python -m pip install -r e2e\requirements.txt
+.venv-e2e\Scripts\python -m playwright install chromium
+
+cd e2e
+..\.venv-e2e\Scripts\python .\e2ectl env
+..\.venv-e2e\Scripts\python -m pytest
+```
+
+That is the whole of the difference: the suite itself -- the browser, the
+HTTP, the tool -- does nothing that is not the same on either. The
+commands below are written the Linux way; read `bin/python` as
+`Scripts\python` and `./e2ectl` as `.\e2ectl` on Windows.
+`./e2ectl package` builds an archive that carries a `setup.ps1` for it.
+
 You also need a WEKO3 instance to test. For a local one, in a WEKO
 checkout:
 
