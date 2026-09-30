@@ -751,6 +751,20 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 
 ## うまく動かないとき
 
+- **ブラウザが起動しない（`error while loading shared libraries`）** —
+  playwright は chromium 本体を取得しますが、それがリンクする OS 側の
+  共有ライブラリは入れません。Debian / Ubuntu なら root で
+  `.venv-e2e/bin/playwright install --with-deps chromium` が入れてくれます。
+  **RHEL / Rocky / Alma では動きません**（`install-deps` が `apt-get` を
+  呼ぶため）。手で入れてください:
+  ```bash
+  sudo dnf install -y nss nspr atk at-spi2-atk at-spi2-core cups-libs \
+      libdrm libxkbcommon libXcomposite libXdamage libXext libXfixes \
+      libXrandr libXi libXrender mesa-libgbm pango cairo alsa-lib
+  ```
+  `e2ectl package` が作る配布物の `setup.sh` は終了前にブラウザを 1 度
+  起動して確認するので、その場で気づけます。この README を見て手で venv を
+  作った場合は確認が入らないため、最初の実行時に判明します。
 - **想定と違う動きをする** — まず `./e2ectl doctor`、次に `./e2ectl env`。
   「環境がテスト可能な状態にない」場合と「設定が思っているのと別の場所を
   指している」場合の両方を、この 2 つでカバーできます

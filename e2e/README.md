@@ -798,6 +798,20 @@ only delete what is in the ledger, and what `--discover` finds.
 
 ## When it does not work
 
+- **The browser will not start: `error while loading shared libraries`**
+  -- playwright fetches chromium but not the system libraries it links
+  against, so the browser is there and cannot run. On Debian and Ubuntu,
+  `.venv-e2e/bin/playwright install --with-deps chromium` as root
+  installs them. **On RHEL, Rocky and Alma that does not work** --
+  `install-deps` shells out to `apt-get` -- so install them by hand:
+  ```bash
+  sudo dnf install -y nss nspr atk at-spi2-atk at-spi2-core cups-libs \
+      libdrm libxkbcommon libXcomposite libXdamage libXext libXfixes \
+      libXrandr libXi libXrender mesa-libgbm pango cairo alsa-lib
+  ```
+  The `setup.sh` in `e2ectl package`'s archive starts the browser once
+  before it finishes, so a package sets up or says this; a venv built by
+  hand from this README does not, and finds out during the first run.
 - **Anything unexpected** -- `./e2ectl doctor` first, then `./e2ectl env`:
   between them they cover both halves of it, the instance not being in a
   fit state and a setting pointing somewhere other than where you think.
