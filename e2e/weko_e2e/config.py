@@ -40,6 +40,8 @@ DEFAULTS = {
     'WEKO_E2E_APPROVER_PASSWORD': 'uspass123',
     'WEKO_E2E_NOTIFY_TIMEOUT': '120',
     'WEKO_E2E_INBOX_SERVICE': 'inbox',
+    'WEKO_E2E_WEKO_REF': '',
+    'WEKO_E2E_WEKO_REPO_URL': 'https://raw.githubusercontent.com/RCOSDP/weko',
     'WEKO_E2E_DB_SERVICE': 'postgresql',
     'WEKO_E2E_DB_USER': 'invenio',
     'WEKO_E2E_DB_NAME': 'invenio',
@@ -250,6 +252,8 @@ class Settings(object):
         self.approver_password = _env('WEKO_E2E_APPROVER_PASSWORD')
         self.notify_timeout = int(_env('WEKO_E2E_NOTIFY_TIMEOUT'))
         self.inbox_service = _env('WEKO_E2E_INBOX_SERVICE')
+        self.weko_ref = _env('WEKO_E2E_WEKO_REF')
+        self.weko_repo_url = _env('WEKO_E2E_WEKO_REPO_URL')
         self.db_service = _env('WEKO_E2E_DB_SERVICE')
         self.db_user = _env('WEKO_E2E_DB_USER')
         self.db_name = _env('WEKO_E2E_DB_NAME')
@@ -396,6 +400,8 @@ class Settings(object):
             ('upload timeout', '{0} s'.format(self.upload_timeout)),
             ('search timeout', '{0} s'.format(self.search_timeout)),
             ('WEKO checkout', self.weko_repo or '(not found)'),
+            ('WEKO version for SQL', self.weko_ref or
+             '(none; "e2ectl seed <ref>" takes one)'),
             ('compose file', self.compose_file),
             ('web service', self.web_service),
             ('inbox service', self.inbox_service),

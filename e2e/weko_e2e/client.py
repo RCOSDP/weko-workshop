@@ -9,7 +9,9 @@ without a browser.
 """
 
 import json
+import os
 import re
+import tempfile
 import time
 from urllib.parse import urlparse, urlunparse
 
@@ -75,6 +77,17 @@ The same six the shipped ``Registration Flow`` has, so that the base test
 walks the screens a default installation walks, and so that a derived test
 can drop or add one by passing its own list to :meth:`WekoClient.create_flow`.
 """
+
+
+WORKFLOW_FORM = '/admin/workflowsetting/0'
+"""The new-workflow screen, which lists the item types, flows and indexes.
+
+One page carries all three with the ids a workflow has to be created
+with, which is why the run reads them from there rather than guessing.
+"""
+
+ITEM_TYPE_SELECT = 'txt_itemtype'
+"""The control on that screen that holds the item types."""
 
 
 class WekoError(RuntimeError):
@@ -252,7 +265,7 @@ class WekoClient(object):
         :return: dict of ``{'itemtype': {name: id}, 'flow': {...},
             'index': {...}}``
         """
-        soup = self._soup(self.get('/admin/workflowsetting/0'))
+        soup = self._soup(self.get(WORKFLOW_FORM))
         options = {'itemtype': {}, 'flow': {}, 'index': {}}
         for key, select_id in (('itemtype', 'txt_itemtype'),
                                ('flow', 'txt_flow_name'),
@@ -272,16 +285,69 @@ class WekoClient(object):
                 options[key][text] = value
         return options
 
+    def offers_item_types(self):
+        """Return whether the new-workflow screen carries the list at all.
+
+        An empty list of item types has two quite different causes, and
+        the screen tells them apart: a list that is there and empty means
+        the instance has no item types loaded, and no list at all means
+        the screen was not the one expected -- this account may not see
+        it, or this WEKO builds it differently.
+
+        :return: True when the control is on the screen
+        """
+        soup = self._soup(self.get(WORKFLOW_FORM))
+        return soup.find(id=ITEM_TYPE_SELECT) is not None
+
     def item_type_id(self, name):
         """Return the id of an item type, by the name the screens show.
 
-        :raise WekoError: when no item type has that name
+        :raise WekoError: when no item type has that name, saying which
+            of the two reasons it is -- the screen offered a list this
+            name is not in, or it offered no list at all
         """
         types = self.workflow_form_options()['itemtype']
-        if name not in types:
-            raise WekoError('no item type named {0!r}; the instance has: '
-                            '{1}'.format(name, ', '.join(sorted(types))))
-        return int(types[name])
+        if name in types:
+            return int(types[name])
+        raise WekoError(self._no_item_type(name, types))
+
+    def _no_item_type(self, name, types):
+        """Return why an item type was not found, in as much detail as
+        the screen allows.
+
+        An empty list is the unhelpful case: it means the new-workflow
+        screen carried no item type list, which is not the same as an
+        instance with no item types, and the difference is what anybody
+        looking at this needs.  So the screen is fetched once more and
+        written out to be looked at.
+        """
+        if types:
+            return ('no item type named {0!r}; the instance offers: '
+                    '{1}'.format(name, ', '.join(sorted(types))))
+
+        response = self.get(WORKFLOW_FORM)
+        soup = self._soup(response)
+        path = os.path.join(tempfile.gettempdir(),
+                            'weko-e2e-workflowsetting.html')
+        try:
+            with open(path, 'w', encoding='utf-8') as handle:
+                handle.write(response.text)
+            saved = '; the screen is saved to {0}'.format(path)
+        except OSError:
+            saved = ''
+
+        if soup.find(id=ITEM_TYPE_SELECT) is None:
+            return (
+                'the new-workflow screen {0} carries no item type list at '
+                'all (no #{1}), so nothing could be read from it. Either '
+                'this account may not see it, or this WEKO builds the '
+                'screen differently{2}'.format(
+                    WORKFLOW_FORM, ITEM_TYPE_SELECT, saved))
+        return (
+            'this instance has no item types loaded: the list is on the '
+            'new-workflow screen {0} and is empty. An item type is what '
+            'an item is registered on, so nothing can be registered here '
+            'until one exists{1}'.format(WORKFLOW_FORM, saved))
 
     # -- flows ------------------------------------------------------------
 

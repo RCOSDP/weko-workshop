@@ -80,6 +80,21 @@ class Survey(object):
         self.worker = None
         self.report = None
         self.report_error = None
+        self.form_options = None
+        self.item_type_list_present = None
+
+    def offered(self, kind):
+        """Return what the new-workflow screen offers, or None.
+
+        The screen carries the item types, the flows and the indexes a
+        workflow can be built from, over plain HTTP.  It is what the run
+        itself reads them from, so it is also what a check should look
+        at -- and unlike the database it is there for an instance
+        reached over the network, with no checkout to ask through.
+        """
+        if self.form_options is None:
+            return None
+        return self.form_options.get(kind) or {}
 
     @property
     def counts(self):
@@ -165,13 +180,24 @@ def check_admin(survey):
 
 
 def check_item_type(survey):
-    """The item type the run registers on is loaded."""
-    report = survey.report
-    if not report:
-        return Finding(WARN, 'the item type under test',
-                       'not asked; the instance could not be inspected')
+    """The item type the run registers on is offered by the screens.
+
+    Asked of the new-workflow screen rather than of the database,
+    because that is where the run reads it from and because it is
+    answerable for an instance there is no checkout for.
+    """
     wanted = survey.settings.item_type_name
-    types = report.get('item_types') or []
+    offered = survey.offered('itemtype')
+    if offered is None:
+        types = (survey.report or {}).get('item_types') or []
+        if not survey.report:
+            return Finding(WARN, 'the item type under test',
+                           'not asked; the new-workflow screen could not '
+                           'be read')
+    else:
+        types = sorted(offered)
+        if not types:
+            return _no_item_types(survey)
     if wanted in types:
         return Finding(OK, 'the item type under test', wanted)
     if not types:
@@ -186,6 +212,29 @@ def check_item_type(survey):
         'ones -- which leaves these alone, because only the rows are '
         'added and never the file that would drop the tables.'.format(
             wanted, len(types), ', '.join(sorted(types)[:3])),
+        fix='item-types')
+
+
+def _no_item_types(survey):
+    """Return the finding for a screen that offered no item type.
+
+    Two different faults look the same from the list alone, so the
+    screen is asked whether it carries the list at all: one that is
+    there and empty is an instance with nothing loaded, and one that is
+    not there was not the screen expected.
+    """
+    if survey.item_type_list_present is False:
+        return Finding(
+            FAIL, 'the item type under test',
+            'the new-workflow screen carries no item type list at all, so '
+            'nothing could be read from it. Either this account may not '
+            'see that screen, or this WEKO builds it differently.')
+    return Finding(
+        FAIL, 'the item type under test',
+        'this instance has no item types loaded. An item type is what an '
+        'item is registered on, so nothing can be registered here until '
+        'one exists: load the shipped ones on the instance, or make one '
+        'and set WEKO_E2E_ITEM_TYPE to its name.',
         fix='item-types')
 
 

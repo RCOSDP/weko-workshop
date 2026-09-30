@@ -52,6 +52,29 @@ python3 -m venv .venv-e2e
 .venv-e2e/bin/playwright install chromium
 ```
 
+Python 3.10 or newer, which is what playwright and pytest ask for; the
+suite's own code is not what needs it.
+
+**On Windows**, a virtual environment keeps its programs in `Scripts`
+rather than in `bin`, and `e2ectl` is handed to the interpreter rather
+than run as a program. So, in PowerShell:
+
+```powershell
+py -3 -m venv .venv-e2e
+.venv-e2e\Scripts\python -m pip install -r e2e\requirements.txt
+.venv-e2e\Scripts\python -m playwright install chromium
+
+cd e2e
+..\.venv-e2e\Scripts\python .\e2ectl env
+..\.venv-e2e\Scripts\python -m pytest
+```
+
+That is the whole of the difference: the suite itself -- the browser, the
+HTTP, the tool -- does nothing that is not the same on either. The
+commands below are written the Linux way; read `bin/python` as
+`Scripts\python` and `./e2ectl` as `.\e2ectl` on Windows.
+`./e2ectl package` builds an archive that carries a `setup.ps1` for it.
+
 You also need a WEKO3 instance to test. For a local one, in a WEKO
 checkout:
 
@@ -547,6 +570,40 @@ Anything `--fix` will not touch is reported with what to run by hand. An
 instance that is broken further than this is quicker to rebuild with
 `install.sh`.
 
+### Repairing an instance you cannot reach the containers of
+
+`--fix` works through `docker compose`, so it is no use for an instance
+somewhere else. `--sql` writes the same repairs out instead, to be taken
+to whoever can run SQL on it:
+
+```bash
+WEKO_E2E_WEKO_REF=v2.0.4 ../.venv-e2e/bin/python ./e2ectl doctor --sql \
+    > repair.sql
+```
+
+The reading of the instance goes to stderr and the script to stdout, so
+that is a file which can be run rather than one that has to be edited
+first. It is one transaction, it only adds rows, and a row whose id is
+already in use undoes the whole of it -- the same properties `--fix` has.
+
+**The version matters.** The rows are WEKO's own data, and an instance
+built from an older WEKO wants that WEKO's: between `v2.0.3` and
+`release_v2.1.0` the shipped item types go from 173 rows to 210.
+`WEKO_E2E_WEKO_REF` is the branch, tag or commit to take them from, and
+naming one is asking for it -- they are fetched from GitHub over HTTP
+(nothing is cloned) and kept, so the second time needs no network.
+
+| | |
+| --- | --- |
+| `e2ectl seed <ref>` | take a version now, to have it later |
+| `e2ectl seed --list` | what has been taken |
+| `e2ectl seed --from-checkout` | take it from the WEKO checkout here instead |
+| `WEKO_E2E_WEKO_REPO_URL` | somewhere other than GitHub to take it from |
+
+A package built after `seed` carries what was taken, so one can be handed
+to somebody with the version their instance needs already in it, for a
+machine with no network.
+
 `doctor` exits non-zero when something failed, so it works as a gate in
 front of a run.
 
@@ -775,6 +832,20 @@ only delete what is in the ledger, and what `--discover` finds.
 
 ## When it does not work
 
+- **The browser will not start: `error while loading shared libraries`**
+  -- playwright fetches chromium but not the system libraries it links
+  against, so the browser is there and cannot run. On Debian and Ubuntu,
+  `.venv-e2e/bin/playwright install --with-deps chromium` as root
+  installs them. **On RHEL, Rocky and Alma that does not work** --
+  `install-deps` shells out to `apt-get` -- so install them by hand:
+  ```bash
+  sudo dnf install -y nss nspr atk at-spi2-atk at-spi2-core cups-libs \
+      libdrm libxkbcommon libXcomposite libXdamage libXext libXfixes \
+      libXrandr libXi libXrender mesa-libgbm pango cairo alsa-lib
+  ```
+  The `setup.sh` in `e2ectl package`'s archive starts the browser once
+  before it finishes, so a package sets up or says this; a venv built by
+  hand from this README does not, and finds out during the first run.
 - **Anything unexpected** -- `./e2ectl doctor` first, then `./e2ectl env`:
   between them they cover both halves of it, the instance not being in a
   fit state and a setting pointing somewhere other than where you think.

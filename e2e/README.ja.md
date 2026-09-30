@@ -50,6 +50,27 @@ python3 -m venv .venv-e2e
 .venv-e2e/bin/playwright install chromium
 ```
 
+Python は 3.10 以上が必要です（playwright と pytest の要件で、スイート自身の
+コードが要求しているわけではありません）。
+
+**Windows の場合**、仮想環境の実行ファイルは `bin` ではなく `Scripts` に置かれ、
+`e2ectl` はインタプリタに渡して実行します。PowerShell では:
+
+```powershell
+py -3 -m venv .venv-e2e
+.venv-e2e\Scripts\python -m pip install -r e2e\requirements.txt
+.venv-e2e\Scripts\python -m playwright install chromium
+
+cd e2e
+..\.venv-e2e\Scripts\python .\e2ectl env
+..\.venv-e2e\Scripts\python -m pytest
+```
+
+違いはこれだけです。スイート自身が行うこと（ブラウザ操作・HTTP・ツール）に
+OS 依存はありません。以下の記述は Linux 形式なので、Windows では
+`bin/python` を `Scripts\python`、`./e2ectl` を `.\e2ectl` と読み替えて
+ください。`./e2ectl package` が作る配布物には `setup.ps1` が入っています。
+
 テスト対象の WEKO3 環境も必要です。手元に立てる場合は WEKO のチェックアウトで:
 
 ```bash
@@ -511,6 +532,38 @@ DB には正しい手順ですが、独自のアイテムタイプを持つ環�
 `--fix` が触らないものは、手で実行すべきコマンドとともに報告されます。
 これ以上に壊れている環境は `install.sh` で作り直すほうが早いはずです。
 
+### コンテナに手が届かない環境を直す
+
+`--fix` は `docker compose` 経由なので、別の場所にあるインスタンスには
+効きません。`--sql` は同じ修復を SQL として書き出すので、その DB を
+触れる人に渡せます。
+
+```bash
+WEKO_E2E_WEKO_REF=v2.0.4 ../.venv-e2e/bin/python ./e2ectl doctor --sql \
+    > repair.sql
+```
+
+点検結果は stderr、SQL は stdout に出るので、リダイレクト先はそのまま
+実行できるファイルになります。単一トランザクション・追加のみ・id が
+衝突すれば全体が巻き戻る、という `--fix` と同じ性質を持ちます。
+
+**バージョンが重要です。** 投入する行は WEKO 自身のデータで、古い WEKO で
+構築されたインスタンスにはその WEKO のものが要ります。実際 `v2.0.3` と
+`release_v2.1.0` では同梱アイテムタイプが 173 行と 210 行で違います。
+`WEKO_E2E_WEKO_REF` に取得元のブランチ・タグ・コミットを指定してください。
+指定した時点で取得の許可とみなし、GitHub から HTTP で取得します
+（clone はしません）。取得結果は保存され、2 回目以降はネットワーク不要です。
+
+| | |
+| --- | --- |
+| `e2ectl seed <ref>` | 事前に取得しておく |
+| `e2ectl seed --list` | 取得済みの一覧 |
+| `e2ectl seed --from-checkout` | 手元の WEKO チェックアウトから取る |
+| `WEKO_E2E_WEKO_REPO_URL` | GitHub 以外（社内ミラー等）から取る |
+
+`seed` 後に作った配布 zip は取得済みのバージョンを同梱するので、
+ネットワークの無い現地へ「相手の環境のバージョン入り」で渡せます。
+
 `doctor` は FAIL があると終了コード 1 を返すので、実行前のゲートとしても
 使えます。
 
@@ -730,6 +783,20 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 
 ## うまく動かないとき
 
+- **ブラウザが起動しない（`error while loading shared libraries`）** —
+  playwright は chromium 本体を取得しますが、それがリンクする OS 側の
+  共有ライブラリは入れません。Debian / Ubuntu なら root で
+  `.venv-e2e/bin/playwright install --with-deps chromium` が入れてくれます。
+  **RHEL / Rocky / Alma では動きません**（`install-deps` が `apt-get` を
+  呼ぶため）。手で入れてください:
+  ```bash
+  sudo dnf install -y nss nspr atk at-spi2-atk at-spi2-core cups-libs \
+      libdrm libxkbcommon libXcomposite libXdamage libXext libXfixes \
+      libXrandr libXi libXrender mesa-libgbm pango cairo alsa-lib
+  ```
+  `e2ectl package` が作る配布物の `setup.sh` は終了前にブラウザを 1 度
+  起動して確認するので、その場で気づけます。この README を見て手で venv を
+  作った場合は確認が入らないため、最初の実行時に判明します。
 - **想定と違う動きをする** — まず `./e2ectl doctor`、次に `./e2ectl env`。
   「環境がテスト可能な状態にない」場合と「設定が思っているのと別の場所を
   指している」場合の両方を、この 2 つでカバーできます

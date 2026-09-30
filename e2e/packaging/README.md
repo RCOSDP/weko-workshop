@@ -1,0 +1,98 @@
+# WEKO3 end to end tests
+
+An end to end test suite for a WEKO3 instance, and the tool that looks
+one over and puts right what it can.  Taken from
+<https://github.com/RCOSDP/weko-workshop>, built {when} from {revision}.
+
+## Set it up
+
+**Linux and macOS**
+
+```
+./setup.sh
+```
+
+**Windows, in PowerShell**
+
+```
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+`setup.sh` is a shell script and PowerShell has no shell to run it with,
+which is why there are two. The `-ExecutionPolicy` is because Windows
+refuses unsigned scripts by default; it applies to that one call and
+changes nothing about the machine.
+
+Either makes `.venv-e2e/` beside this file and installs chromium into it,
+and each finds a Python for itself -- `python3`, `python` and the
+versioned names on Linux, the `py -3` launcher first on Windows. An
+*alias* for `python3` would not have helped on Linux: a shell does not
+expand aliases inside a script. If yours is somewhere unusual, name it:
+
+```
+WEKO_E2E_PYTHON=/usr/local/bin/python3.12 ./setup.sh
+```
+
+```
+$env:WEKO_E2E_PYTHON = 'C:\Python312\python.exe'
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+Python 3.10 or newer, which is what the playwright and pytest in
+`requirements.txt` ask for -- the suite's own code is not what needs it.
+And enough disk for the browser.
+
+## Run it
+
+```
+cd e2e
+../.venv-e2e/bin/python ./e2ectl env      # what a run would use
+../.venv-e2e/bin/python ./e2ectl ping     # can it reach the instance
+../.venv-e2e/bin/python -m pytest         # the base flow, about two minutes
+```
+
+On Windows a virtual environment keeps its programs in `Scripts` rather
+than in `bin`, and `e2ectl` is handed to the interpreter rather than run
+as a program, so the same three are:
+
+```
+cd e2e
+..\.venv-e2e\Scripts\python .\e2ectl env
+..\.venv-e2e\Scripts\python .\e2ectl ping
+..\.venv-e2e\Scripts\python -m pytest
+```
+
+That is the whole of the difference. Everything the suite itself does --
+the browser, the HTTP, the tool -- is the same on either.
+
+Nothing about the instance is built in.  It runs against whatever you
+point it at -- `WEKO_BASE_URL`, `WEKO_TEST_EMAIL`, `WEKO_TEST_PASSWORD`,
+or an environment file copied from `e2e/environments/`.
+
+**A WEKO checkout is not needed.** The tests reach the instance over HTTP
+and through a browser. A checkout of WEKO that owns the compose file is
+wanted only for the parts that run inside the containers -- the physical
+clean-up, the stand-in servers, and eleven of the doctor's checks -- and
+each of those says so and steps aside when there is none.
+
+## Is my instance fit to be tested?
+
+```
+cd e2e
+../.venv-e2e/bin/python ./e2ectl doctor         # what is wrong, if anything
+../.venv-e2e/bin/python ./e2ectl doctor --fix   # put right what can be
+```
+
+Looking changes nothing.  Every repair *adds* what is missing and
+replaces nothing, and nothing here deletes: what could only be put right
+by removing something is reported and left alone.
+
+## The rest
+
+[`e2e/README.md`](e2e/README.md) is the whole of it -- every setting,
+each optional suite, cleaning up, deriving a suite of your own, and what
+to do when it does not work.  [`e2e/README.ja.md`](e2e/README.ja.md) is
+the same in Japanese.
+
+This package does not carry the screenshots of a run; they are
+[in the repository]({evidence}).
