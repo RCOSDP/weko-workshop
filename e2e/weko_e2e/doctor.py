@@ -14,11 +14,13 @@ container, and this turns them into findings.  A finding that can be
 repaired names its repair, and the tool holds the repairs -- they need
 the containers, and this file is only judgement.
 
-**What is already there wins.** A repair fills in what is missing and
-never replaces what is not: an instance with a file location of its own
-keeps it, and the shipped item types, flow, index and identifier
-settings are added a row at a time rather than by running the files that
-would drop the tables first -- see :mod:`weko_e2e.dataload`.
+**What is already there wins.** Every repair adds what is missing and
+takes nothing away.  An instance with a file location of its own keeps
+it; the shipped item types, flow, index and identifier settings are
+added a row at a time rather than by running the files that would drop
+the tables first (see :mod:`weko_e2e.dataload`); and a finding that
+could only be put right by deleting something names no repair at all,
+because whose that something is not a thing to guess at.
 """
 
 OK = 'ok'
@@ -425,10 +427,12 @@ def check_leftovers(survey):
         for kind, found in sorted(survey.leftovers.items()) if found)
     return Finding(
         WARN, 'nothing left from an earlier run',
-        '{0} left behind ({1}). A run does not collide with them -- every '
-        'name carries its own run id -- but they are somebody\'s '
-        'leftovers.'.format(counted, survey.settings.label),
-        fix='leftovers')
+        '{0} named {1}* ({2}). A run does not collide with them -- every '
+        'name carries its own run id -- so this is a note, not a fault. '
+        'Whether they are an earlier run\'s or somebody\'s work is not '
+        'something to guess at, so nothing here removes them: '
+        '"./e2ectl clean --discover --hard" does, when you mean it.'.format(
+            counted, survey.settings.label, survey.settings.base_url))
 
 
 def check_baseline(survey):

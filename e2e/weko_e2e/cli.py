@@ -8,6 +8,7 @@ gives its resources.
 
     e2ectl env                    the settings a run would use
     e2ectl doctor                 is this instance fit to be tested
+    e2ectl package                a zip of the suite, to hand to somebody
     e2ectl doctor --fix           put right what can be put right
     e2ectl ark-account enable     a real ARK server, for the ark suite
     e2ectl ark-stub enable        a stand-in ARK server, when there is none
@@ -29,12 +30,13 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 import requests
 
 from . import dataload, doctor, notify
 from .client import WekoClient, WekoError
-from .config import HERE, Settings
+from .config import E2E_DIR, HERE, Settings
 from .inboxpurge import MARKER as INBOX_MARKER
 from .inspect import MARKER as INSPECT_MARKER
 from .ledger import KINDS, Ledger
@@ -420,6 +422,185 @@ def _purge_inbox(settings, targets):
         print('inbox purge error: {0}'.format(error))
 
 
+# -- handing the suite to somebody else ------------------------------------
+
+PACKAGE_FILES = ('README.md', 'README.ja.md', 'requirements.txt',
+                 'pytest.ini', 'conftest.py', 'e2ectl')
+PACKAGE_TREES = {'tests': '.py', 'weko_e2e': '.py', 'environments': '.env'}
+"""What a package holds, named rather than filtered.
+
+An allowlist because of what is *not* here: ``e2e.env`` is somebody's own
+settings and can hold a Crossref password or an ARK key, ``.e2e-state.json``
+is one instance's ledger, and ``evidence/`` is three megabytes of
+screenshots of a run the reader did not make.  A list of what to exclude
+would let the next file added to this directory ship by accident; this
+cannot.
+"""
+
+PACKAGE_EVIDENCE = ('https://github.com/RCOSDP/weko-workshop/blob/main'
+                    '/e2e/evidence/README.md')
+"""Where the report of a run is, since the package does not carry it."""
+
+PACKAGE_SETUP = '''#!/bin/sh
+# Set the test suite up: a Python environment of its own, and the
+# browser it drives.  Run this once, from the directory it is in.
+set -e
+cd "$(dirname "$0")"
+python3 -m venv .venv-e2e
+.venv-e2e/bin/pip install --upgrade pip
+.venv-e2e/bin/pip install -r e2e/requirements.txt
+.venv-e2e/bin/playwright install chromium
+echo
+echo "Ready.  Now:"
+echo "    cd e2e"
+echo "    ../.venv-e2e/bin/python ./e2ectl env     # what a run would use"
+echo "    ../.venv-e2e/bin/python ./e2ectl ping    # can it reach the instance"
+echo "    ../.venv-e2e/bin/python ./e2ectl doctor  # is it fit to test"
+echo "    ../.venv-e2e/bin/python -m pytest        # run the base flow"
+'''
+
+PACKAGE_README = '''# WEKO3 end to end tests
+
+An end to end test suite for a WEKO3 instance, and the tool that looks
+one over and puts right what it can.  Taken from
+<https://github.com/RCOSDP/weko-workshop>, built {when} from {revision}.
+
+## Set it up
+
+```
+./setup.sh
+```
+
+That makes `.venv-e2e/` beside this file and installs chromium into it.
+Python 3.8 or newer, and enough disk for the browser.
+
+## Run it
+
+```
+cd e2e
+../.venv-e2e/bin/python ./e2ectl env      # what a run would use
+../.venv-e2e/bin/python ./e2ectl ping     # can it reach the instance
+../.venv-e2e/bin/python -m pytest         # the base flow, about two minutes
+```
+
+Nothing about the instance is built in.  It runs against whatever you
+point it at -- `WEKO_BASE_URL`, `WEKO_TEST_EMAIL`, `WEKO_TEST_PASSWORD`,
+or an environment file copied from `e2e/environments/`.
+
+**A WEKO checkout is not needed.** The tests reach the instance over HTTP
+and through a browser. A checkout of WEKO that owns the compose file is
+wanted only for the parts that run inside the containers -- the physical
+clean-up, the stand-in servers, and eleven of the doctor's checks -- and
+each of those says so and steps aside when there is none.
+
+## Is my instance fit to be tested?
+
+```
+cd e2e
+../.venv-e2e/bin/python ./e2ectl doctor         # what is wrong, if anything
+../.venv-e2e/bin/python ./e2ectl doctor --fix   # put right what can be
+```
+
+Looking changes nothing.  Every repair *adds* what is missing and
+replaces nothing, and nothing here deletes: what could only be put right
+by removing something is reported and left alone.
+
+## The rest
+
+[`e2e/README.md`](e2e/README.md) is the whole of it -- every setting,
+each optional suite, cleaning up, deriving a suite of your own, and what
+to do when it does not work.  [`e2e/README.ja.md`](e2e/README.ja.md) is
+the same in Japanese.
+
+This package does not carry the screenshots of a run; they are
+[in the repository]({evidence}).
+'''
+
+
+def _package_name(settings):
+    """Return what to call the package, by date and revision."""
+    return 'weko-e2e-{0}'.format(datetime.now().strftime('%Y%m%d'))
+
+
+def _revision():
+    """Return the revision this package was built from, or a note."""
+    result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
+                            cwd=E2E_DIR, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL)
+    if result.returncode:
+        return 'an unknown revision'
+    return result.stdout.decode('ascii', 'replace').strip()
+
+
+def _package_contents():
+    """Return ``[(path in the package, bytes)]`` for the suite's own files.
+
+    The two READMEs have their one link to ``evidence/`` pointed at the
+    repository, because the package does not carry it; every other
+    relative link in them is to something that travels with them.
+    """
+    found = []
+    for name in PACKAGE_FILES:
+        with open(os.path.join(E2E_DIR, name), 'rb') as handle:
+            content = handle.read()
+        if name.startswith('README'):
+            content = content.replace(
+                b'](evidence/README.md)',
+                ']({0})'.format(PACKAGE_EVIDENCE).encode('utf-8')).replace(
+                b'](evidence/README.ja.md)',
+                ']({0})'.format(
+                    PACKAGE_EVIDENCE.replace('README.md', 'README.ja.md')
+                ).encode('utf-8'))
+        found.append((os.path.join('e2e', name), content))
+
+    for tree, suffix in sorted(PACKAGE_TREES.items()):
+        directory = os.path.join(E2E_DIR, tree)
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(suffix):
+                continue
+            with open(os.path.join(directory, name), 'rb') as handle:
+                found.append((os.path.join('e2e', tree, name), handle.read()))
+    return found
+
+
+def command_package(args, settings, ledger):
+    """Build a zip of the suite, for somebody who has not got this repo.
+
+    What goes in is named rather than filtered, so that the settings
+    somebody has put in ``e2e.env`` -- which can hold a Crossref password
+    or an ARK key -- and the ledger of an instance they have never seen
+    cannot travel by accident.
+    """
+    import zipfile
+
+    root = _package_name(settings)
+    target = os.path.abspath(os.path.join(
+        args.run or os.getcwd(), '{0}.zip'.format(root)))
+    written = [
+        ('README.md', PACKAGE_README.format(
+            when=datetime.now().strftime('%Y-%m-%d'), revision=_revision(),
+            evidence=PACKAGE_EVIDENCE).encode('utf-8'), 0o644),
+        ('setup.sh', PACKAGE_SETUP.encode('utf-8'), 0o755),
+    ]
+    for name, content in _package_contents():
+        written.append((name, content, 0o755 if name.endswith('e2ectl')
+                        else 0o644))
+
+    with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for name, content, mode in written:
+            info = zipfile.ZipInfo(os.path.join(root, name))
+            info.external_attr = mode << 16
+            info.date_time = datetime.now().timetuple()[:6]
+            archive.writestr(info, content)
+
+    print('{0}  ({1} files, {2:.0f} kB)'.format(
+        target, len(written), os.path.getsize(target) / 1024.0))
+    print('it does not carry e2e.env, the ledger, or the evidence '
+          'screenshots')
+    print('unzip it and run ./setup.sh')
+    return 0
+
+
 # -- is the instance fit to be tested --------------------------------------
 
 def _inspect(settings):
@@ -671,12 +852,6 @@ def _load_demo_rows(settings, name):
     ]
 
 
-def _fix_leftovers(settings, survey):
-    """Delete what an earlier run left behind, the way ``clean`` does."""
-    main(['clean', '--discover', '--hard'])
-    return []
-
-
 def _fix_partition(settings, survey):
     """Create this month's partition of the activity log."""
     month = (survey.report or {}).get('today')
@@ -827,13 +1002,19 @@ FIXES = {
     'location': (_fix_location, False),
     'partition': (_fix_partition, False),
     'language': (_fix_language, False),
-    'leftovers': (_fix_leftovers, False),
 }
 """Every repair, and whether it adds to or changes an account.
 
-The ones that do are held back behind ``--fix-accounts``, because an
-account is not something a tool should quietly create on somebody's
-instance.
+**Every one of them only adds.**  None deletes, drops or overwrites, and
+none may be added here that does: a repair runs before a test run, on an
+instance the tool has been given no reason to trust is disposable.  What
+could only be put right by removing something -- the leftovers of an
+earlier run, which may as easily be somebody's work -- is reported and
+left alone, for ``clean --discover --hard`` to take when it is meant.
+
+The ones that touch an account are held back behind ``--fix-accounts``
+on top of that, because an account is not something a tool should
+quietly create on somebody's instance.
 """
 
 
@@ -1639,6 +1820,7 @@ COMMANDS = {
     'crossref-account': command_crossref_account,
     'doi-log': command_doi_log,
     'doctor': command_doctor,
+    'package': command_package,
     'env': command_env,
     'inbox': command_inbox,
     'status': command_status,
