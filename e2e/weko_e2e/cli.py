@@ -575,7 +575,7 @@ def command_package(args, settings, ledger):
 
     root = _package_name(settings)
     target = os.path.abspath(os.path.join(
-        args.run or os.getcwd(), '{0}.zip'.format(root)))
+        args.output or os.getcwd(), '{0}.zip'.format(root)))
     written = [
         ('README.md', PACKAGE_README.format(
             when=datetime.now().strftime('%Y-%m-%d'), revision=_revision(),
@@ -1858,6 +1858,9 @@ def build_parser():
     parser.add_argument('--fix-accounts', action='store_true',
                         help='for doctor --fix: also create accounts and '
                              'give them the roles the suites need')
+    parser.add_argument('--output', metavar='DIR',
+                        help='for package: where to write the zip, '
+                             'defaulting to the current directory')
     parser.add_argument('--verbose', action='store_true',
                         help='for doctor: say what was found, not only what '
                              'was wrong')
