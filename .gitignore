@@ -18,6 +18,7 @@ _book
 # e2e test suite
 .venv-e2e/
 e2e/.e2e-state.json
+e2e/weko-e2e-*.zip
 e2e/e2e.env
 e2e/.pytest_cache/
 __pycache__/

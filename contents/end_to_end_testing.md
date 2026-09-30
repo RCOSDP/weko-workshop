@@ -50,8 +50,10 @@ account:
 
 Before its first test the run looks the instance over, and stops if what
 the tests depend on is not there — a missing item type, an account
-without the right role, a month with no log partition. It says which one
-it is, and `--doctor-fix` puts right what can be put right:
+without the right role, a month with no log partition. Looking changes
+nothing; it says which one it is, and `--doctor-fix` puts right what can
+be put right by **adding** it. Nothing the tests do to your instance is
+ever a deletion you did not ask for:
 
 ```
 ../.venv-e2e/bin/python -m pytest --doctor-fix

@@ -486,8 +486,15 @@ and warns rather than fails.
 ../.venv-e2e/bin/python ./e2ectl doctor --fix --fix-accounts   # accounts and roles too
 ```
 
-**What is already there wins.** Every repair adds what is missing and
-replaces nothing:
+**Nothing here deletes.** The check itself only reads — a run that takes
+it changes nothing on the instance — and every repair adds what is
+missing and replaces nothing. A fault that could only be put right by
+removing something is reported and left alone: whether an index called
+`E2E ...` is an earlier run's leftover or somebody's work is not a thing
+for a tool to guess at, and `clean --discover --hard` is there for when
+you mean it.
+
+The repairs:
 
 | What is wrong | What `--fix` does |
 | --- | --- |
@@ -597,6 +604,27 @@ To clean up as part of the run, ask pytest:
 ../.venv-e2e/bin/python -m pytest --clean-after          # clean at the end
 ../.venv-e2e/bin/python -m pytest --clean-after --clean-hard
 ```
+
+## Handing it to somebody else
+
+```bash
+cd e2e
+../.venv-e2e/bin/python ./e2ectl package
+```
+
+A zip of the suite and the tool, for somebody who has not got this
+repository — `weko-e2e-<date>.zip`, about 370 kB. Unpack it and run
+`./setup.sh`, which makes the Python environment and installs chromium;
+the commands in it are the same ones this file gives, because the package
+keeps the same shape.
+
+What goes in is **named rather than filtered**, so that the things which
+must not travel cannot do so by accident: `e2e.env` is somebody's own
+settings and may hold a Crossref password or an ARK key, `.e2e-state.json`
+is one instance's ledger, and `evidence/` is three megabytes of
+screenshots of a run the reader did not make. A list of what to leave out
+would let the next file added here ship by mistake; a list of what to
+take cannot.
 
 ## Settings (environment variables)
 
