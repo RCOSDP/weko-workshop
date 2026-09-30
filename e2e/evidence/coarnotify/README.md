@@ -15,7 +15,7 @@ as they went.
 
 | | |
 | --- | --- |
-| Run id | `20260930-005832` |
+| Run id | `20260930-075808` |
 | Result | **14 passed** |
 | Asked for with | `--suite coarnotify`, with `e2ectl webpush-stub enable` for the four web push steps |
 
@@ -58,16 +58,16 @@ Read back as `repoadmin@example.org`, and then fetched from the inbox:
 
 ```json
 {
-  "id": "urn:uuid:2324b46a-a6f2-4698-b47b-a32c40aa48c9",
+  "id": "urn:uuid:6317322d-7750-468e-94f9-d64e2c690b6f",
   "@context": ["https://www.w3.org/ns/activitystreams", "https://coar-notify.net"],
   "type": ["Offer", "coar-notify:EndorsementAction"],
   "origin": {"id": "https://localhost/", "inbox": "…/inbox", "type": "Service"},
   "target": {"id": "https://weko3.example.org/users/2", "inbox": "…/inbox", "type": "Person"},
-  "object": {"id": "https://localhost/records/2000079",
+  "object": {"id": "https://localhost/records/2000087",
              "type": ["Page", "sorg:WebPage"],
-             "name": "E2E item 20260930-005832-coarnotify"},
+             "name": "E2E item 20260930-075808-coarnotify"},
   "actor":  {"id": "https://weko3.example.org/users/1", "type": "Person"},
-  "context": {"id": "https://localhost/workflow/activity/detail/A-20260930-00003",
+  "context": {"id": "https://localhost/workflow/activity/detail/A-20260930-00011",
               "type": ["Page", "sorg:WebPage"]}
 }
 ```
@@ -90,10 +90,10 @@ the approver lets go of anything an earlier run left them holding.
 ### The approval goes back to the registrant (test_11)
 
 ```
-urn:uuid:9581c6f3-3667-4ed6-b403-5501b5d44dbb
+urn:uuid:c7d8c0ac-0d2d-41a5-ac0f-f010873ab4f2
   Announce+coar-notify:EndorsementAction
   -> https://weko3.example.org/users/1
-  about 'E2E item 20260930-005832-coarnotify' (https://localhost/records/2000079)
+  about 'E2E item 20260930-075808-coarnotify' (https://localhost/records/2000087)
 ```
 
 `users/1` is the registrant, and the `actor` is `users/2` -- the account
@@ -105,17 +105,17 @@ it.
 `./e2ectl inbox --run <run id>` shows both ends of the loop:
 
 ```console
-$ ./e2ectl inbox --run 20260930-005832
+$ ./e2ectl inbox --run 20260930-075808
 registrant: wekosoftware@nii.ac.jp
   announced inbox: https://weko3.example.org/inbox
-  2026-09-19 01:02:34  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260930-005832-coarnotify'
-  2026-09-19 01:02:34  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260930-005832-coarnotify'
+  2026-09-30 08:02:13  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260930-075808-coarnotify'
+  2026-09-30 08:02:13  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260930-075808-coarnotify'
   2 of 2 notification(s) shown
 approver: repoadmin@example.org
-  2026-09-19 01:02:16  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832-coarnotify'
-  2026-09-19 01:04:02  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832-crossref'
-  2026-09-19 00:59:38  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832-ark'
-  2026-09-19 01:01:02  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832'
+  2026-09-30 08:01:54  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-075808-coarnotify'
+  2026-09-30 08:00:40  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-075808'
+  2026-09-30 07:59:15  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-075808-ark'
+  2026-09-30 08:03:40  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-075808-crossref'
   4 of 40 notification(s) shown
 ```
 
@@ -145,7 +145,7 @@ would sign nothing anyway.
 
 ```console
 $ curl -sk https://localhost/inbox/subscription/vapid-public-key
-BNu4cf2G6F9kcCKY...
+BC2j8jsLBLFkhXLT...
 
 $ ./e2ectl webpush-stub status
 settings in docker-compose2.yml: present
@@ -174,12 +174,12 @@ stand-in decrypts is what the browser would have shown:
 {
   "title": "Your item is now approved",
   "options": {
-    "body": "\"E2E item 20260930-005832-coarnotify\" has been approved by Unknown.",
-    "tag": "urn:uuid:9581c6f3-3667-4ed6-b403-5501b5d44dbb",
+    "body": "\"E2E item 20260930-075808-coarnotify\" has been approved by Unknown.",
+    "tag": "urn:uuid:c7d8c0ac-0d2d-41a5-ac0f-f010873ab4f2",
     "icon": "/static/images/weko-logo-256.png",
     "badge": "/static/images/weko-logo-256.png",
     "requireInteraction": false,
-    "data": {"url": "https://localhost/workflow/activity/detail/A-20260930-00003"}
+    "data": {"url": "https://localhost/workflow/activity/detail/A-20260930-00011"}
   }
 }
 ```

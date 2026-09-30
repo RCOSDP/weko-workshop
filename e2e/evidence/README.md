@@ -15,9 +15,9 @@ screenshots it is written from.
 
 | | |
 | --- | --- |
-| Run at | 2026-09-30 00:58:32 – 01:04:34 (UTC) |
-| Run id | `20260930-005832` |
-| Result | **41 passed, 2 skipped** (344.21 s) |
+| Run at | 2026-09-30 07:58:08 – 08:04:11 (UTC) |
+| Run id | `20260930-075808` |
+| Result | **41 passed, 2 skipped** (345.63 s) |
 | Against | `https://localhost` (`install.sh` / `docker-compose2.yml`) |
 | Suites | base, `ark` (against the stand-in ARK server), `coarnotify`, `crossref` |
 | Cleaned up with | `./e2ectl clean --hard`; the database, and the inbox, went back to how `install.sh` left them |
@@ -76,7 +76,7 @@ tests/test_crossref_doi.py::test_08_doi_is_published PASSED
 tests/test_crossref_doi.py::test_09_deposit_was_recorded SKIPPED
 tests/test_crossref_doi.py::test_10_deposit_reached_crossref SKIPPED
 
-============ 41 passed, 2 skipped, 22 warnings in 344.21s (0:05:44) ============
+============ 41 passed, 2 skipped, 22 warnings in 345.63s (0:05:45) ============
 ```
 
 The two skips are the Crossref deposit: this instance was given no
@@ -117,17 +117,17 @@ four suites can share one session:
 
 | Suite | index | flow / workflow | activity | item |
 | --- | --- | --- | --- | --- |
-| base | `1790729999857` | `ad57f5ec…` / `84e395c0…` | `A-20260930-00002` | `2000078` |
-| `ark` | `1790729934518` | `58e6bafc…` / `f6513f1e…` | `A-20260930-00001` | `2000077` |
-| `coarnotify` | `1790730091544` | `00e43918…` / `6c947580…` | `A-20260930-00003` | `2000079` |
-| `crossref` | `1790730194207` | `b11cb07f…` / `2f3e2066…` | `A-20260930-00004` | `2000080` |
+| base | `1790755177600` | `c546c21f…` / `701079a1…` | `A-20260930-00010` | `2000086` |
+| `ark` | `1790755110129` | `755de1a1…` / `4b7c3fbc…` | `A-20260930-00009` | `2000085` |
+| `coarnotify` | `1790755269712` | `b7a8a433…` / `a027ec8a…` | `A-20260930-00011` | `2000087` |
+| `crossref` | `1790755372450` | `7e28cfee…` / `cc822665…` | `A-20260930-00012` | `2000088` |
 
 What the optional suites were after:
 
 | | |
 | --- | --- |
 | ARK minted | `ark:/99999/fk400002` |
-| Crossref DOI granted | `10.5555/0002000080` |
+| Crossref DOI granted | `10.5555/0002000088` |
 | COAR Notify sent | 5 notifications: one approval request per suite that registered an item, and the approval announcement the `coarnotify` suite asked for |
 
 ---
@@ -156,7 +156,7 @@ As the system administrator `wekosoftware@nii.ac.jp`.
 ### 02. Create the test index (test_02_create_index)
 
 Create the index and publish it. The admin Index Tree shows
-`E2E Index 20260930-005832` next to the shipped `Sample Index`.
+`E2E Index 20260930-075808` next to the shipped `Sample Index`.
 
 A newly created index is private, which is why this step publishes it;
 without that, step 12 fails.
@@ -197,7 +197,7 @@ Title and Resource Type.
 
 ### 07. Designate the index (test_07_designate_index)
 
-Tick `E2E Index 20260930-005832` in the index tree; DESIGNATE INDEX shows
+Tick `E2E Index 20260930-075808` in the index tree; DESIGNATE INDEX shows
 it.
 
 ![The index designated](images/08-index-designated.png)
@@ -230,7 +230,7 @@ published.
 
 ### 11. The item is registered (test_11_record_is_registered)
 
-`/records/2000078` exists and shows the title the run registered.
+`/records/2000086` exists and shows the title the run registered.
 
 ![The item page, as the administrator](images/13-record-page.png)
 
@@ -279,41 +279,41 @@ looked at. The ledger says what is still there.
 
 ```console
 $ ./e2ectl status          # the run_id on the Settings line is this call's, not the run's
-Settings(base_url='https://localhost', run_id='20260930-010530', label='E2E')
+Settings(base_url='https://localhost', run_id='20260930-080500', label='E2E')
 ledger: /home/mhaya/weko-workshop/e2e/.e2e-state.json
-  run 20260930-005832  started 2026-09-30T00:58:54  20 resource(s)
-    index     1790729934518            E2E Index 20260930-005832-ark
-    flow      58e6bafc-b425-47ac-a42b-ca5240242c3b E2E Flow 20260930-005832-ark
-    workflow  f6513f1e-0566-4d05-9fb9-b13c03e64161 E2E Workflow 20260930-005832-ark
-    activity  A-20260930-00001         E2E Workflow 20260930-005832-ark
-    item      2000077                  E2E item 20260930-005832-ark
-    index     1790729999857            E2E Index 20260930-005832
+  run 20260930-075808  started 2026-09-30T07:58:30  20 resource(s)
+    index     1790755110129            E2E Index 20260930-075808-ark
+    flow      755de1a1-2504-47b4-abe7-7daf57e831ab E2E Flow 20260930-075808-ark
+    workflow  4b7c3fbc-9d94-4b33-897d-01041af3871a E2E Workflow 20260930-075808-ark
+    activity  A-20260930-00009         E2E Workflow 20260930-075808-ark
+    item      2000085                  E2E item 20260930-075808-ark
+    index     1790755177600            E2E Index 20260930-075808
     ...                                (the base suite's five)
-    index     1790730091544            E2E Index 20260930-005832-coarnotify
+    index     1790755269712            E2E Index 20260930-075808-coarnotify
     ...                                (the coarnotify suite's five)
-    index     1790730194207            E2E Index 20260930-005832-crossref
+    index     1790755372450            E2E Index 20260930-075808-crossref
     ...                                (the crossref suite's five)
 ```
 
 ```console
 $ ./e2ectl clean --hard
-deleted  item 2000077 E2E item 20260930-005832-ark
-deleted  item 2000078 E2E item 20260930-005832
-deleted  item 2000079 E2E item 20260930-005832-coarnotify
-deleted  item 2000080 E2E item 20260930-005832-crossref
-deleted  activity A-20260930-00001 ...
-deleted  workflow f6513f1e-0566-4d05-9fb9-b13c03e64161 ...
-deleted  flow 58e6bafc-b425-47ac-a42b-ca5240242c3b ...
-deleted  index 1790729934518 E2E Index 20260930-005832-ark
-deleted  index 1790729999857 E2E Index 20260930-005832
-deleted  index 1790730091544 E2E Index 20260930-005832-coarnotify
-deleted  index 1790730194207 E2E Index 20260930-005832-crossref
+deleted  item 2000085 E2E item 20260930-075808-ark
+deleted  item 2000086 E2E item 20260930-075808
+deleted  item 2000087 E2E item 20260930-075808-coarnotify
+deleted  item 2000088 E2E item 20260930-075808-crossref
+deleted  activity A-20260930-00009 ...
+deleted  workflow 4b7c3fbc-9d94-4b33-897d-01041af3871a ...
+deleted  flow 755de1a1-2504-47b4-abe7-7daf57e831ab ...
+deleted  index 1790755110129 E2E Index 20260930-075808-ark
+deleted  index 1790755177600 E2E Index 20260930-075808
+deleted  index 1790755269712 E2E Index 20260930-075808-coarnotify
+deleted  index 1790755372450 E2E Index 20260930-075808-crossref
 hard purge: docker compose -f docker-compose2.yml exec -T web invenio shell /tmp/weko-e2e-purge.py /tmp/weko-e2e-purge.json
-purged items: 2000077, 2000078, 2000079, 2000080
-purged activities: A-20260930-00001, A-20260930-00002, A-20260930-00003, A-20260930-00004
-purged workflows: f6513f1e-..., 84e395c0-..., 6c947580-..., 2f3e2066-...
-purged flows: 58e6bafc-..., ad57f5ec-..., 00e43918-..., b11cb07f-...
-purged indexes: 1790729934518, 1790729999857, 1790730091544, 1790730194207
+purged items: 2000085, 2000086, 2000087, 2000088
+purged activities: A-20260930-00009, A-20260930-00010, A-20260930-00011, A-20260930-00012
+purged workflows: 4b7c3fbc-..., 701079a1-..., a027ec8a-..., cc822665-...
+purged flows: 755de1a1-..., c546c21f-..., b7a8a433-..., 7e28cfee-...
+purged indexes: 1790755110129, 1790755177600, 1790755269712, 1790755372450
 purged notifications: 6
 ```
 
@@ -345,7 +345,7 @@ included, and the inbox to the 36 notifications it held before the run.
 The item's page is gone too.
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000078
+$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000086
 404
 ```
 
