@@ -115,18 +115,44 @@ verify, so leave `WEKO_E2E_VERIFY_TLS` off in that case.
 ```bash
 cd e2e
 
-# Check the settings, then that the instance answers and the account works.
+# What a run would use, and whether the instance answers as that account.
 ../.venv-e2e/bin/python ./e2ectl env
 ../.venv-e2e/bin/python ./e2ectl ping
 
-# Run the base test.
+# The base flow. The run looks the instance over first, by itself.
 ../.venv-e2e/bin/python -m pytest
+
+# Everything, once the two stand-ins are up (see the suites below).
+../.venv-e2e/bin/python ./e2ectl ark-stub enable
+../.venv-e2e/bin/python ./e2ectl webpush-stub enable
+WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite all
+
+# What the run created, and taking it away again.
+../.venv-e2e/bin/python ./e2ectl status
+../.venv-e2e/bin/python ./e2ectl clean --hard
 ```
+
+What happens, in order:
+
+1. **The instance is looked over.** Every run checks that what the suites
+   depend on is there and **stops if it is not**, rather than failing a
+   minute in for a reason that is not on screen. `--doctor-fix` repairs
+   what can be repaired first; `--no-doctor` skips it. See
+   [Is the instance fit to be tested?](#is-the-instance-fit-to-be-tested)
+2. **The suites run.** The base flow always; the others only when asked
+   for by name. See [Choosing what runs](#choosing-what-runs).
+3. **What each step saw is written to `evidence/`** -- the screenshots,
+   and the look from step 1. Re-running refreshes them in place.
+4. **What the run created stays**, so that a failure can be looked at,
+   until `clean` takes it away. `--clean-after --clean-hard` does that at
+   the end of the run instead. See [Cleaning up](#cleaning-up-the-tool).
 
 Set `WEKO_HEADED=1` to watch the browser.
 
 The account has to be a system administrator: the run creates an index, a
-flow and a workflow, and approves its own activity.
+flow and a workflow, and registers an item through them. The `coarnotify`
+suite needs a second account to approve, which `WEKO_E2E_APPROVER_EMAIL`
+names and `doctor` checks.
 
 ## Choosing what runs
 
@@ -793,6 +819,7 @@ screenshots it is written from:
 ```
 evidence/
 ├── README.md, README.ja.md      the run, and the base flow
+├── doctor.md                    what the instance looked like beforehand
 ├── images/                      what the base flow's steps photographed
 ├── ark/README.md, images/       the ark suite, and its own screenshots
 ├── coarnotify/README.md, …
@@ -800,5 +827,5 @@ evidence/
 ```
 
 The tests take the screenshots themselves as they go, under fixed names,
-so re-running a suite refreshes that suite's folder in place and the
-report cannot drift from the code.
+and the run writes `doctor.md` before its first test, so re-running
+refreshes both in place and the report cannot drift from the code.

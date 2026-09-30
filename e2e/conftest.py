@@ -23,6 +23,14 @@ from weko_e2e.config import (E2E_DIR, OPTIONAL_SUITES,  # noqa: E402
                              Settings, parse_suites)
 from weko_e2e.ledger import Ledger  # noqa: E402
 
+DOCTOR_REPORT = os.path.join(E2E_DIR, 'evidence', 'doctor.md')
+"""Where the look at the instance is written down.
+
+Left behind by the run the way the screenshots are, so that what the
+evidence says about the instance is what the run found rather than what
+somebody remembered.
+"""
+
 EVIDENCE = os.path.join(E2E_DIR, 'evidence')
 """Where the report of a run and its screenshots are written.
 
@@ -78,7 +86,7 @@ def pytest_sessionstart(session):
 
     from weko_e2e.cli import look_over, put_right
 
-    settings = Settings()
+    settings = settings_for()
     book = Ledger(settings.state_path)
     try:
         survey, findings = look_over(settings, book)
@@ -100,6 +108,7 @@ def pytest_sessionstart(session):
                         if not f.suite or f.suite in wanted]
 
     _report(findings, settings)
+    _write_doctor_report(findings, settings, wanted)
     failed = [f for f in findings if f.status == doctor.FAIL]
     if failed:
         pytest.exit(
@@ -108,6 +117,22 @@ def pytest_sessionstart(session):
             'to go ahead anyway.'.format(
                 '; '.join(f.name for f in failed)),
             returncode=pytest.ExitCode.USAGE_ERROR)
+
+
+def _write_doctor_report(findings, settings, suites):
+    """Leave the look behind under ``evidence``, for the record.
+
+    A run that stops here writes it too -- that is the run worth having
+    a record of.
+    """
+    try:
+        directory = os.path.dirname(DOCTOR_REPORT)
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+        with open(DOCTOR_REPORT, 'w', encoding='utf-8') as handle:
+            handle.write(doctor.as_markdown(findings, settings, suites))
+    except OSError as error:
+        print('could not write {0}: {1}'.format(DOCTOR_REPORT, error))
 
 
 def _report(findings, settings):
@@ -129,6 +154,23 @@ def pytest_configure(config):
         'is asked for by --suite or WEKO_E2E_SUITES')
 
 
+_SETTINGS = None
+"""The settings the whole session shares.
+
+Read once: a run id that is a timestamp would otherwise differ between
+the look at the instance and the run it belongs to, and the report of
+the one would name the other.
+"""
+
+
+def settings_for():
+    """Return the settings this session works with."""
+    global _SETTINGS
+    if _SETTINGS is None:
+        _SETTINGS = Settings()
+    return _SETTINGS
+
+
 def enabled_suites(config):
     """Return the optional suites this run was asked for.
 
@@ -136,7 +178,7 @@ def enabled_suites(config):
     replacing it, so a file that turns a suite on and a command line that
     turns another on both take effect.
     """
-    asked = set(Settings().suites)
+    asked = set(settings_for().suites)
     asked.update(parse_suites(' '.join(config.getoption('--suite'))))
     return tuple(name for name in OPTIONAL_SUITES if name in asked)
 
@@ -198,7 +240,7 @@ def base_settings():
     What the whole session shares: the instance, the account, the ledger.
     A test wants :func:`settings` instead, which adds names of its own.
     """
-    return Settings()
+    return settings_for()
 
 
 def _suite_of(module):
