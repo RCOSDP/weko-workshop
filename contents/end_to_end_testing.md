@@ -64,7 +64,7 @@ do it.
 
 ## Run the optional suites too
 
-Three more suites sit beside the base flow, each asked for by name,
+Four more suites sit beside the base flow, each asked for by name,
 because each needs something of the instance that not every instance has.
 
 | Suite | What it checks |
@@ -72,6 +72,7 @@ because each needs something of the instance that not every instance has.
 | `ark` | an ARK is minted for the item and becomes its permalink |
 | `coarnotify` | the approval request and the approval are announced over COAR Notify, and arrive as a web push |
 | `crossref` | a Crossref DOI is granted to the item |
+| `shibboleth` | a Shibboleth user logs in, and `mail` — not `eppn` — becomes the account's email |
 
 Two of them want a stand-in server, which the tool runs for you:
 
@@ -83,6 +84,18 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite all
 
 A suite nobody asked for is skipped rather than hidden, so a run always
 says what it did not do and how to ask for it.
+
+The `shibboleth` suite needs no IdP and nothing configured. WEKO is not
+what speaks SAML — the Service Provider does, in nginx — so the suite
+stands where the SP stands, inside the `nginx` container, and sends what
+the SP sends. It turns Shibboleth login on itself and puts the switch
+back afterwards, takes only the way through that *makes* an account
+rather than the one that renames an existing one, and removes what it
+made:
+
+```
+../.venv-e2e/bin/python -m pytest --suite shibboleth
+```
 
 ## Clean up afterwards
 

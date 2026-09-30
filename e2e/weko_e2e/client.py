@@ -20,6 +20,8 @@ import urllib3
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 
+from .config import SHIBBOLETH
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -79,6 +81,39 @@ can drop or add one by passing its own list to :meth:`WekoClient.create_flow`.
 """
 
 
+SHIB_ADMIN_PATH = '/admin/shibboleth/'
+"""The screen that turns Shibboleth login on and off."""
+
+SHIB_ADMIN_FIELDS = {
+    'role-lists0': 'gakunin-role-list',
+    'role-lists1': 'orthros-role-list',
+    'role-lists2': 'extra-role-list',
+    'attr-lists0': 'eppn-attr-list',
+    'attr-lists1': 'role-authority-attr-list',
+    'attr-lists2': 'mail-attr-list',
+    'attr-lists3': 'user-attr-list',
+}
+"""What the screen's own JavaScript names each of its select lists.
+
+The page carries the current value of each in a ``data-value``, and
+``shibuser.js`` turns it into a ``<select>`` at load; none of them is in
+the page as a form field.  So a save made over HTTP has to put them back
+itself, and this is where they go.
+"""
+
+SHIB_CONFIRM_PATH = '/weko/shib/login'
+"""The screen WEKO serves a Shibboleth identity it does not yet know."""
+
+SHIB_NEW_USER_PATH = '/weko/auto/login'
+"""That screen's "Login (New WEKO users)" way through.
+
+A plain link rather than a form: the session already carries the
+Shib-Session-ID by the time the screen is on it.
+"""
+
+WHOAMI_PATH = '/account/settings/profile/'
+"""The one screen that shows a user their own account and nothing else."""
+
 WORKFLOW_FORM = '/admin/workflowsetting/0'
 """The new-workflow screen, which lists the item types, flows and indexes.
 
@@ -88,6 +123,27 @@ with, which is why the run reads them from there rather than guessing.
 
 ITEM_TYPE_SELECT = 'txt_itemtype'
 """The control on that screen that holds the item types."""
+
+
+def _data_value(soup, holder):
+    """Return the value a screen is holding in a div's ``data-value``."""
+    div = soup.find(id=holder)
+    return (div.get('data-value') or '') if div else ''
+
+
+def _data_list(soup, holder):
+    """Return a ``data-value`` that holds a list, as a list.
+
+    Written by Python's ``repr``, so its quotes are single ones; the
+    screen's own JavaScript swaps them the same way before parsing.
+    """
+    raw = _data_value(soup, holder).strip()
+    if not raw:
+        return []
+    try:
+        return json.loads(raw.replace("'", '"'))
+    except ValueError:
+        return []
 
 
 class WekoError(RuntimeError):
@@ -153,8 +209,115 @@ class WekoClient(object):
 
     # -- session ----------------------------------------------------------
 
-    def login(self):
+    def login(self, how=None):
         """Log in as the configured account.
+
+        :param how: ``'local'`` for the login screen, ``'shibboleth'``
+            to come in the way the Shibboleth SP brings a user in;
+            defaults to what the environment asked for
+        :raise WekoError: when the credentials are refused
+        """
+        if (how or self.settings.login_as) == SHIBBOLETH:
+            return self.login_shibboleth()
+        return self.login_locally()
+
+    def login_shibboleth(self):
+        """Come in the way a Shibboleth user does.
+
+        The attributes are posted from where the SP posts them -- see
+        :mod:`weko_e2e.shibstub` -- and WEKO answers with the path that
+        turns them into a session.  Following it is this client's job,
+        exactly as it is the browser's job in a real deployment: the SP
+        only forwards the user to it.
+
+        Two paths come back.  ``/weko/auto/login`` is a Shibboleth
+        identity WEKO already knows, and following it is the whole of the
+        login.  ``/weko/shib/login`` is one it does not, and it serves
+        the screen asking whether this is a new user or an existing WEKO
+        account to bind to.  This takes the new-user way, which makes an
+        account out of the attributes; the other way **overwrites the
+        email of the account it binds to** with the one the IdP released,
+        so nothing here takes it and no account already on the instance
+        is touched.
+
+        :raise WekoError: when the login does not end in a session
+        """
+        from .cli import shib_login
+
+        answer = shib_login(self.settings)
+        if not answer:
+            raise WekoError(
+                'the Shibboleth stand-in could not be run in the {0} '
+                'container; it needs the WEKO checkout that owns the '
+                'compose file'.format(self.settings.nginx_service))
+        if not answer.get('next'):
+            raise WekoError(
+                'WEKO refused the attributes of {0} ({1}): {2}'.format(
+                    self.settings.shib_eppn, answer.get('status'),
+                    answer.get('said') or 'no reason given'))
+        self.get(answer['next'])
+        if SHIB_CONFIRM_PATH in answer['next']:
+            self.get(SHIB_NEW_USER_PATH)
+        if not self.is_logged_in():
+            raise WekoError(
+                'the Shibboleth login of {0} did not end in a session; '
+                'Shibboleth login has to be on (/admin/shibboleth/)'.format(
+                    self.settings.shib_eppn))
+        return self
+
+    def is_logged_in(self):
+        """Return whether this client holds a session."""
+        response = self.session.get(self._url(WHOAMI_PATH), timeout=120,
+                                    allow_redirects=False)
+        return response.status_code == 200
+
+    def whoami(self):
+        """Return the email of the account this client is logged in as."""
+        soup = self._soup(self.get(WHOAMI_PATH))
+        field = soup.find('input', {'name': 'profile-email'})
+        return (field.get('value') or '').strip() if field else None
+
+    def shib_login_enabled(self, enabled=None):
+        """Read, or set, whether the instance offers Shibboleth login.
+
+        The switch on ``/admin/shibboleth/``, which is a row in
+        ``admin_settings`` rather than instance configuration -- so a
+        suite can turn it on for its own run and put it back afterwards.
+
+        The screen saves the switch, the default roles, the attribute
+        mapping and the blocked users **together**, and builds the last
+        three in the browser rather than in the page -- so a save that
+        sends only the switch reaches the view with the rest empty and
+        blanks them.  This sends every one of them back exactly as the
+        screen is holding it, and changes only the switch.
+
+        :param enabled: True or False to set it, None to only read it
+        :return: what it was **before** this call
+        """
+        soup = self._soup(self.get(SHIB_ADMIN_PATH))
+        chosen = soup.find('input', {'name': 'shibbolethRadios',
+                                     'checked': True})
+        was = bool(chosen) and chosen.get('value') == '1'
+        if enabled is None or bool(enabled) == was:
+            return was
+
+        # The screen names the form in ``submit``.
+        form = {'submit': 'shib_form',
+                'shibbolethRadios': '1' if enabled else '0',
+                'block-eppn-option-list': json.dumps(
+                    _data_list(soup, 'block-user-list'))}
+        for field, holder in SHIB_ADMIN_FIELDS.items():
+            form[field] = _data_value(soup, holder)
+        response = self.session.post(self._url(SHIB_ADMIN_PATH), data=form,
+                                     timeout=120)
+        if not response.ok:
+            raise WekoError('{0} would not take the Shibboleth switch: '
+                            '{1}'.format(SHIB_ADMIN_PATH,
+                                         response.status_code))
+        return was
+
+    def login_locally(self):
+        """Log in through the login screen.
 
         :raise WekoError: when the credentials are refused
         """

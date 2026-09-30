@@ -23,9 +23,11 @@ WEKO のチェックアウトの中ではなくこのリポジトリに置いて
 | `tests/test_ark_mint.py` | オプション `ark`: ARK が発行されることを確認 |
 | `tests/test_coar_notify.py` | オプション `coarnotify`: ワークフローが COAR Notify で通知されることを確認 |
 | `tests/test_crossref_doi.py` | オプション `crossref`: Crossref DOI が付与されることを確認 |
+| `tests/test_shibboleth.py` | オプション `shibboleth`: Shibboleth ログインで正しいアカウントになることを確認 |
 | `conftest.py` | セッション共有のブラウザ・HTTP クライアント・台帳 |
 | `weko_e2e/flow.py` | 全スイートが共通で使う登録フロー |
 | `weko_e2e/arkstub.py` | `ark` 用のスタブ ARK サーバ |
+| `weko_e2e/shibstub.py` | Shibboleth SP のログインスクリプトの代役 |
 | `weko_e2e/notify.py` | COAR Notify で何が通知されたかを読む |
 | `weko_e2e/pushstub.py` | Web Push 用の代替ブラウザ購読 |
 | `weko_e2e/config.py` | 環境変数／環境ファイルから読む設定 |
@@ -181,6 +183,7 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite all
 | `ark` | ARK が発行され、アイテムのパーマリンクになる | ARK サーバ（`e2ectl ark-account enable`）、または代替スタブ（`e2ectl ark-stub enable`） |
 | `coarnotify` | 承認依頼と承認が COAR Notify で正しい相手に通知され、Web Push でも届く | LDN Inbox（`inbox` サービス）と承認役のもう 1 アカウント。Web Push の確認には `e2ectl webpush-stub enable` |
 | `crossref` | Crossref DOI が付与され、パーマリンクになる | なし。さらに Crossref へ登録（deposit）するにはアカウントが必要 |
+| `shibboleth` | Shibboleth ログインで、`eppn` ではなく `mail` がアカウントのメールアドレスになる | WEKO のチェックアウト（代役 SP を `nginx` コンテナで動かすため） |
 
 ```bash
 python -m pytest                      # 基本のみ。オプションは skip
@@ -369,6 +372,80 @@ WEKO_E2E_CROSSREF_PREFIX=10.80000        # そのアカウントで使えるプ�
 deposit の状態は web コンテナ内の `doi_deposit_log` から読むので、この 2
 ステップには WEKO チェックアウトが必要です（無ければ skip）。Crossref に
 拒否された場合は、Crossref が返した理由を添えて失敗します。
+
+### `shibboleth` スイート
+
+SAML を話すのは WEKO ではなく SP（nginx 側）です。WEKO に届くのは、IdP が
+返した属性を普通に POST したものだけで、それを作っているのが
+`nginx/login.py` です。したがってこのスイートに IdP は要りません。
+`weko_e2e/shibstub.py` を **nginx コンテナ**にコピーし、そのスクリプトと
+同じものを、同じ場所から送ります。
+
+```bash
+../.venv-e2e/bin/python -m pytest --suite shibboleth
+```
+
+事前設定は不要です。スイート自身が `/admin/shibboleth/` で Shibboleth
+ログインを有効化し、成功・失敗にかかわらず**元の状態に戻します**。
+
+#### 「どこから POST したか」が肝心
+
+`release_v2.1.0` では `POST /weko/shib/login` が
+`WEKO_ACCOUNTS_SHIB_SP_ALLOWED_ADDRS`（既定は `127.0.0.1` と `::1`）以外
+から拒否されます。SP と同じ場所に立つことが、このスイートがその検査の内側に
+留まる方法です。**ここでそのリストを広げることはしませんし、するべきでも
+ありません**。どこからでもこの属性を受け付ける環境は、誰でも誰にでも
+なりすませる環境です。
+
+そのため、代役を送り込む先として WEKO のチェックアウト（compose ファイルの
+持ち主）が必要です。無い場合は理由付きで skip します。
+
+#### 本当に確認したいこと
+
+    eppn   ->  shibboleth_user.shib_eppn（紐付け）
+    mail   ->  accounts_user.email（アカウントそのもの）
+
+テストする価値があるのは後者です。WEKO はアカウントのメールアドレスを
+`eppn` ではなく `mail` から作ります。つまり片方しか返さない IdP や、
+リポジトリが把握している宛先とは違う `mail` を返す IdP では、誰も予期しない
+名前のアカウントができます。この実行では `eppn` と `mail` を**意図的に別の
+値**にし（`WEKO_E2E_SHIB_EPPN` と `WEKO_E2E_SHIB_MAIL`）、どちらが入ったかを
+報告します。
+
+#### 既存アカウントには一切触れません
+
+未知の Shibboleth ID が飛ばされる確認画面には 2 つの道があり、両者はまったく
+別物です。
+
+| | |
+| --- | --- |
+| **Login as new ID** | 属性から新しいアカウントを作る |
+| **Login as registerd ID** | 指定したアカウントに紐付け、**そのアカウントのメールアドレスを IdP の `mail` で上書きする** |
+
+スイートは前者だけを通り、作ったアカウントは最後に削除します。つまり環境には
+アカウントも紐付けも残りません。後者は意図的に使いません。使えば誰かの
+アカウントの名前を書き換えることになるからです。
+
+#### 手で確かめる
+
+```bash
+../.venv-e2e/bin/python ./e2ectl shib status    # 有効か、何が紐付いているか
+../.venv-e2e/bin/python ./e2ectl shib enable    # /admin/shibboleth/ のスイッチ
+../.venv-e2e/bin/python ./e2ectl shib login     # POST して、次に行く先を表示
+../.venv-e2e/bin/python ./e2ectl shib forget    # ログインで出来たアカウントを削除
+../.venv-e2e/bin/python ./e2ectl shib disable
+```
+
+`shib login` は WEKO が返したパスを表示します。ブラウザでそこへ進むと
+セッションになります。実環境で SP のスクリプトが利用者を飛ばす先と同じです。
+
+#### 全スイートを Shibboleth でログインさせる
+
+`WEKO_E2E_LOGIN=shibboleth` にすると、**すべての**スイートがログイン画面
+ではなく SP 経由で入ります。既定は `local` で、指定しない限り他のスイートの
+挙動は変わりません。入ってくるのは属性から作られた新規アカウントなので、
+その環境で新規 Shibboleth ユーザに付くロールしか持ちません。多くのスイートには
+それでは足りないため、これは既定ではなく設定になっています。
 
 ## 基本テストが行うこと
 
@@ -681,10 +758,15 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 
 | 変数 | 既定値 | 内容 |
 | --- | --- | --- |
-| `WEKO_E2E_SUITES` | （なし） | 実行するオプション: `ark` / `coarnotify` / `crossref`、カンマ区切り、または `all` |
+| `WEKO_E2E_SUITES` | （なし） | 実行するオプション: `ark` / `coarnotify` / `crossref` / `shibboleth`、カンマ区切り、または `all` |
 | `WEKO_E2E_CROSSREF_PREFIX` | `10.5555` | `crossref` が設定し、期待するプレフィックス |
 | `WEKO_E2E_ARK_NAAN` | （空） | 発行に使い、`ark` が期待する NAAN |
 | `WEKO_E2E_NOTIFY_TIMEOUT` | `120` | `coarnotify` が通知の到着を待つ秒数 |
+| `WEKO_E2E_LOGIN` | `local` | `local` はログイン画面、`shibboleth` は SP 経由 |
+| `WEKO_E2E_SHIB_EPPN` | `e2e-shibboleth@example.org` | 代役 SP が返す `eppn`。紐付けになる |
+| `WEKO_E2E_SHIB_MAIL` | `e2e-shibboleth-mail@example.org` | 代役 SP が返す `mail`。アカウントのメールアドレスになる。意図的に `eppn` と別の値 |
+| `WEKO_E2E_SHIB_USER_NAME` | `WEKO E2E Shibboleth` | 代役 SP が返す `DisplayName` |
+| `WEKO_E2E_NGINX_SERVICE` | `nginx` | 代役 SP を動かす compose サービス名 |
 
 ### ARK サーバ（発行用）
 
@@ -752,6 +834,7 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 | `crossref` + deposit 有効（Crossref 代替スタブ宛て） | 10 passed、deposit が `success` に到達 |
 | `ark` + `ark-account`（ログイン方式）で設定したサーバ宛て | 6 passed、`ark:/12345/x9...` を発行 |
 | `coarnotify`（環境付属の `inbox` サービス宛て） | 10 passed、2 通ともそれぞれ正しい相手に到達 |
+| `shibboleth`（`install.sh` で作った環境） | 9 passed。`mail` がアカウントのメールアドレスになり、スイッチもアカウントも元に戻った |
 
 ## 派生版の作り方
 
@@ -867,7 +950,8 @@ evidence/
 ├── images/                      基本スイートの画像
 ├── ark/README.ja.md, images/    ark スイートとその画像
 ├── coarnotify/README.ja.md, …
-└── crossref/README.ja.md, …
+├── crossref/README.ja.md, …
+└── shibboleth/README.ja.md, …
 ```
 
 画像はテスト自身が固定の名前で撮り、`doctor.md` は実行が最初のテストの前に
