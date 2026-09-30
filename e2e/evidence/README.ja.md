@@ -13,9 +13,9 @@ English: [`README.md`](README.md)
 
 | | |
 | --- | --- |
-| 実行日時 | 2026-09-19 05:18:39 〜 05:24:29 (UTC) |
-| 実行 ID | `20260919-051839` |
-| 結果 | **41 passed, 2 skipped**（所要 349.85 秒） |
+| 実行日時 | 2026-09-30 00:58:32 〜 01:04:34 (UTC) |
+| 実行 ID | `20260930-005832` |
+| 結果 | **41 passed, 2 skipped**（所要 344.21 秒） |
 | 対象 | `https://localhost`（`install.sh` / `docker-compose2.yml`） |
 | スイート | 基本 / `ark`（代替 ARK サーバ使用） / `coarnotify` / `crossref` |
 | 後始末 | `./e2ectl clean --hard` で全削除、DB も Inbox も `install.sh` 直後の状態に復帰 |
@@ -74,7 +74,7 @@ tests/test_crossref_doi.py::test_08_doi_is_published PASSED
 tests/test_crossref_doi.py::test_09_deposit_was_recorded SKIPPED
 tests/test_crossref_doi.py::test_10_deposit_reached_crossref SKIPPED
 
-============ 41 passed, 2 skipped, 22 warnings in 349.85s (0:05:49) ============
+============ 41 passed, 2 skipped, 22 warnings in 344.21s (0:05:44) ============
 ```
 
 skip 2 件は Crossref の deposit です。この環境には Crossref アカウントを
@@ -115,18 +115,29 @@ requests  : 2.34.2 / beautifulsoup4 4.15.0
 
 | スイート | インデックス | フロー / ワークフロー | アクティビティ | アイテム |
 | --- | --- | --- | --- | --- |
-| 基本 | `1789795192785` | `3de1ac20…` / `6a53e140…` | `A-20260919-00026` | `2000065` |
-| `ark` | `1789795123751` | `6b7f3cb5…` / `314a4d35…` | `A-20260919-00025` | `2000064` |
-| `coarnotify` | `1789795285144` | `29306ba0…` / `8c94b678…` | `A-20260919-00027` | `2000066` |
-| `crossref` | `1789795389184` | `43dc3f27…` / `e4e8fec9…` | `A-20260919-00028` | `2000067` |
+| 基本 | `1790729999857` | `ad57f5ec…` / `84e395c0…` | `A-20260930-00002` | `2000078` |
+| `ark` | `1790729934518` | `58e6bafc…` / `f6513f1e…` | `A-20260930-00001` | `2000077` |
+| `coarnotify` | `1790730091544` | `00e43918…` / `6c947580…` | `A-20260930-00003` | `2000079` |
+| `crossref` | `1790730194207` | `b11cb07f…` / `2f3e2066…` | `A-20260930-00004` | `2000080` |
 
 オプションスイートが確認したもの:
 
 | | |
 | --- | --- |
-| 発行された ARK | `ark:/99999/fk400006` |
-| 付与された Crossref DOI | `10.5555/0002000067` |
+| 発行された ARK | `ark:/99999/fk400002` |
+| 付与された Crossref DOI | `10.5555/0002000080` |
 | COAR Notify で送られた通知 | 5 件。アイテムを登録した各スイートの承認依頼 1 件ずつと、`coarnotify` スイートが確認した承認通知 1 件 |
+
+---
+
+## 実行前の点検
+
+`pytest` は最初のテストの前に環境を点検し、通らない環境に実行を費やす前に
+停止します。そのとき何が見えていたかは [`doctor.md`](doctor.md) にあります。
+実行自身が書くので、画像と同じく実際の結果から乖離しません。
+
+ここでは全項目が通っており、だからこそ報告すべき実行があります。この
+ファイルは停止した実行でも書かれます。記録が最も要るのはその場合だからです。
 
 ---
 
@@ -141,7 +152,7 @@ requests  : 2.34.2 / beautifulsoup4 4.15.0
 ### 02. テスト用インデックスの作成（test_02_create_index）
 
 インデックスを作成し、公開状態にする。管理画面の Index Tree に
-`E2E Index 20260919-051839` が既定の `Sample Index` と並んで現れている。
+`E2E Index 20260930-005832` が既定の `Sample Index` と並んで現れている。
 
 新規作成したインデックスは非公開なので、ここで公開状態にする。
 これをしないと 12（未ログインからの閲覧）が失敗する。
@@ -182,7 +193,7 @@ Start / Item Registration / Item Link / Identifier Grant / Approval / End の
 
 ### 07. インデックス指定（test_07_designate_index）
 
-INDEX TREE で `E2E Index 20260919-051839` にチェックを入れ、
+INDEX TREE で `E2E Index 20260930-005832` にチェックを入れ、
 DESIGNATE INDEX に反映されていることを確認する。
 
 ![インデックス指定](images/08-index-designated.png)
@@ -213,7 +224,7 @@ DOI 付与は派生版で扱う（先行例: `works/crossref-doi-manual/e2e/`）
 
 ### 11. アイテムの登録確認（test_11_record_is_registered）
 
-`/records/2000065` にアイテムが登録され、登録したタイトルが表示される。
+`/records/2000078` にアイテムが登録され、登録したタイトルが表示される。
 
 ![アイテム詳細（管理者）](images/13-record-page.png)
 
@@ -261,41 +272,41 @@ skip 2 件は Crossref の deposit で、この環境にはアカウントがあ
 
 ```console
 $ ./e2ectl status          # status 行の run_id は status を呼んだ時刻のもの
-Settings(base_url='https://localhost', run_id='20260919-052532', label='E2E')
+Settings(base_url='https://localhost', run_id='20260930-010530', label='E2E')
 ledger: /home/mhaya/weko-workshop/e2e/.e2e-state.json
-  run 20260919-051839  started 2026-09-19T05:18:43  20 resource(s)
-    index     1789795123751            E2E Index 20260919-051839-ark
-    flow      6b7f3cb5-1a1d-4409-88f6-00fc25e81cae E2E Flow 20260919-051839-ark
-    workflow  314a4d35-654d-4ec5-a3c3-992571812aed E2E Workflow 20260919-051839-ark
-    activity  A-20260919-00025         E2E Workflow 20260919-051839-ark
-    item      2000064                  E2E item 20260919-051839-ark
-    index     1789795192785            E2E Index 20260919-051839
+  run 20260930-005832  started 2026-09-30T00:58:54  20 resource(s)
+    index     1790729934518            E2E Index 20260930-005832-ark
+    flow      58e6bafc-b425-47ac-a42b-ca5240242c3b E2E Flow 20260930-005832-ark
+    workflow  f6513f1e-0566-4d05-9fb9-b13c03e64161 E2E Workflow 20260930-005832-ark
+    activity  A-20260930-00001         E2E Workflow 20260930-005832-ark
+    item      2000077                  E2E item 20260930-005832-ark
+    index     1790729999857            E2E Index 20260930-005832
     ...                                （基本スイートの 5 件）
-    index     1789795285144            E2E Index 20260919-051839-coarnotify
+    index     1790730091544            E2E Index 20260930-005832-coarnotify
     ...                                （coarnotify スイートの 5 件）
-    index     1789795389184            E2E Index 20260919-051839-crossref
+    index     1790730194207            E2E Index 20260930-005832-crossref
     ...                                （crossref スイートの 5 件）
 ```
 
 ```console
 $ ./e2ectl clean --hard
-deleted  item 2000064 E2E item 20260919-051839-ark
-deleted  item 2000065 E2E item 20260919-051839
-deleted  item 2000066 E2E item 20260919-051839-coarnotify
-deleted  item 2000067 E2E item 20260919-051839-crossref
-deleted  activity A-20260919-00025 ...
-deleted  workflow 314a4d35-654d-4ec5-a3c3-992571812aed ...
-deleted  flow 6b7f3cb5-1a1d-4409-88f6-00fc25e81cae ...
-deleted  index 1789795123751 E2E Index 20260919-051839-ark
-deleted  index 1789795192785 E2E Index 20260919-051839
-deleted  index 1789795285144 E2E Index 20260919-051839-coarnotify
-deleted  index 1789795389184 E2E Index 20260919-051839-crossref
+deleted  item 2000077 E2E item 20260930-005832-ark
+deleted  item 2000078 E2E item 20260930-005832
+deleted  item 2000079 E2E item 20260930-005832-coarnotify
+deleted  item 2000080 E2E item 20260930-005832-crossref
+deleted  activity A-20260930-00001 ...
+deleted  workflow f6513f1e-0566-4d05-9fb9-b13c03e64161 ...
+deleted  flow 58e6bafc-b425-47ac-a42b-ca5240242c3b ...
+deleted  index 1790729934518 E2E Index 20260930-005832-ark
+deleted  index 1790729999857 E2E Index 20260930-005832
+deleted  index 1790730091544 E2E Index 20260930-005832-coarnotify
+deleted  index 1790730194207 E2E Index 20260930-005832-crossref
 hard purge: docker compose -f docker-compose2.yml exec -T web invenio shell /tmp/weko-e2e-purge.py /tmp/weko-e2e-purge.json
-purged items: 2000064, 2000065, 2000066, 2000067
-purged activities: A-20260919-00025, A-20260919-00026, A-20260919-00027, A-20260919-00028
-purged workflows: 314a4d35-..., 6a53e140-..., 8c94b678-..., e4e8fec9-...
-purged flows: 6b7f3cb5-..., 3de1ac20-..., 29306ba0-..., 43dc3f27-...
-purged indexes: 1789795123751, 1789795192785, 1789795285144, 1789795389184
+purged items: 2000077, 2000078, 2000079, 2000080
+purged activities: A-20260930-00001, A-20260930-00002, A-20260930-00003, A-20260930-00004
+purged workflows: f6513f1e-..., 84e395c0-..., 6c947580-..., 2f3e2066-...
+purged flows: 58e6bafc-..., ad57f5ec-..., 00e43918-..., b11cb07f-...
+purged indexes: 1790729934518, 1790729999857, 1790730091544, 1790730194207
 purged notifications: 6
 ```
 
@@ -324,7 +335,7 @@ DB を戻しても通知は残ります。`--hard` は `weko_e2e/inboxpurge.py` 
 削除後はアイテムのページも消えている。
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000065
+$ curl -s -o /dev/null -w '%{http_code}\n' --insecure https://localhost/records/2000078
 404
 ```
 

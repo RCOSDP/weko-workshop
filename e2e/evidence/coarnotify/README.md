@@ -15,7 +15,7 @@ as they went.
 
 | | |
 | --- | --- |
-| Run id | `20260919-051839` |
+| Run id | `20260930-005832` |
 | Result | **14 passed** |
 | Asked for with | `--suite coarnotify`, with `e2ectl webpush-stub enable` for the four web push steps |
 
@@ -58,16 +58,16 @@ Read back as `repoadmin@example.org`, and then fetched from the inbox:
 
 ```json
 {
-  "id": "urn:uuid:5075cf1b-c765-49e7-ac3b-7e33d3848f1a",
+  "id": "urn:uuid:2324b46a-a6f2-4698-b47b-a32c40aa48c9",
   "@context": ["https://www.w3.org/ns/activitystreams", "https://coar-notify.net"],
   "type": ["Offer", "coar-notify:EndorsementAction"],
   "origin": {"id": "https://localhost/", "inbox": "…/inbox", "type": "Service"},
   "target": {"id": "https://weko3.example.org/users/2", "inbox": "…/inbox", "type": "Person"},
-  "object": {"id": "https://localhost/records/2000066",
+  "object": {"id": "https://localhost/records/2000079",
              "type": ["Page", "sorg:WebPage"],
-             "name": "E2E item 20260919-051839-coarnotify"},
+             "name": "E2E item 20260930-005832-coarnotify"},
   "actor":  {"id": "https://weko3.example.org/users/1", "type": "Person"},
-  "context": {"id": "https://localhost/workflow/activity/detail/A-20260919-00027",
+  "context": {"id": "https://localhost/workflow/activity/detail/A-20260930-00003",
               "type": ["Page", "sorg:WebPage"]}
 }
 ```
@@ -90,10 +90,10 @@ the approver lets go of anything an earlier run left them holding.
 ### The approval goes back to the registrant (test_11)
 
 ```
-urn:uuid:77231c23-0b42-4712-adb4-078c9ac84950
+urn:uuid:9581c6f3-3667-4ed6-b403-5501b5d44dbb
   Announce+coar-notify:EndorsementAction
   -> https://weko3.example.org/users/1
-  about 'E2E item 20260919-051839-coarnotify' (https://localhost/records/2000066)
+  about 'E2E item 20260930-005832-coarnotify' (https://localhost/records/2000079)
 ```
 
 `users/1` is the registrant, and the `actor` is `users/2` -- the account
@@ -105,17 +105,17 @@ it.
 `./e2ectl inbox --run <run id>` shows both ends of the loop:
 
 ```console
-$ ./e2ectl inbox --run 20260919-051839
+$ ./e2ectl inbox --run 20260930-005832
 registrant: wekosoftware@nii.ac.jp
   announced inbox: https://weko3.example.org/inbox
-  2026-09-19 05:22:28  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260919-051839-coarnotify'
-  2026-09-19 05:22:28  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260919-051839-coarnotify'
+  2026-09-19 01:02:34  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260930-005832-coarnotify'
+  2026-09-19 01:02:34  … Announce+…EndorsementAction -> …/users/1 about 'E2E item 20260930-005832-coarnotify'
   2 of 2 notification(s) shown
 approver: repoadmin@example.org
-  2026-09-19 05:22:11  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-051839-coarnotify'
-  2026-09-19 05:23:57  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-051839-crossref'
-  2026-09-19 05:19:31  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-051839-ark'
-  2026-09-19 05:20:56  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260919-051839'
+  2026-09-19 01:02:16  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832-coarnotify'
+  2026-09-19 01:04:02  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832-crossref'
+  2026-09-19 00:59:38  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832-ark'
+  2026-09-19 01:01:02  … Offer+…EndorsementAction -> …/users/2 about 'E2E item 20260930-005832'
   4 of 40 notification(s) shown
 ```
 
@@ -174,12 +174,12 @@ stand-in decrypts is what the browser would have shown:
 {
   "title": "Your item is now approved",
   "options": {
-    "body": "\"E2E item 20260919-051839-coarnotify\" has been approved by Unknown.",
-    "tag": "urn:uuid:77231c23-0b42-4712-adb4-078c9ac84950",
+    "body": "\"E2E item 20260930-005832-coarnotify\" has been approved by Unknown.",
+    "tag": "urn:uuid:9581c6f3-3667-4ed6-b403-5501b5d44dbb",
     "icon": "/static/images/weko-logo-256.png",
     "badge": "/static/images/weko-logo-256.png",
     "requireInteraction": false,
-    "data": {"url": "https://localhost/workflow/activity/detail/A-20260919-00027"}
+    "data": {"url": "https://localhost/workflow/activity/detail/A-20260930-00003"}
   }
 }
 ```

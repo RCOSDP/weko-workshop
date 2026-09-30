@@ -487,6 +487,68 @@ def evaluate(survey):
     return findings + [check(survey) for check in CHECKS[1:]]
 
 
+MARKDOWN_MARKS = {OK: 'ok', WARN: 'warn', FAIL: '**FAIL**'}
+"""How each status is spelled in the report a run writes."""
+
+
+def as_markdown(findings, settings, suites=(), when=None):
+    """Return the report of a look, as a run leaves it behind.
+
+    Written by the run rather than by hand, the way the screenshots are,
+    so that what the evidence says about the instance is what the run
+    actually found rather than what somebody remembered.
+
+    :param suites: the optional suites the run was asked for
+    :param when: when the look happened, defaulting to now
+    """
+    from datetime import datetime
+
+    troubled = [finding for finding in findings if finding.status != OK]
+    lines = [
+        '# What the instance looked like before the run',
+        '',
+        'Written by the run itself, before its first test: every `pytest`',
+        'looks the instance over and stops rather than spending a run on',
+        'one that cannot pass.  Re-running rewrites this file, so it',
+        'cannot drift from what was actually found.',
+        '',
+        '| | |',
+        '| --- | --- |',
+        '| Looked at | {0} |'.format(
+            (when or datetime.now()).isoformat(timespec='seconds')),
+        '| Instance | {0} |'.format(settings.base_url),
+        '| Run id | `{0}` |'.format(settings.run_id),
+        '| Suites | {0} |'.format(', '.join(('base',) + tuple(suites))),
+        '| Result | {0} of {1} checks passed |'.format(
+            len(findings) - len(troubled), len(findings)),
+        '',
+        '| | Check | What was found |',
+        '| --- | --- | --- |',
+    ]
+    for finding in findings:
+        lines.append('| {0} | {1}{2} | {3} |'.format(
+            MARKDOWN_MARKS[finding.status], finding.name,
+            ' `[{0}]`'.format(finding.suite) if finding.suite else '',
+            finding.detail.replace('|', r'\|')))
+    lines += ['', _closing(troubled), '']
+    return '\n'.join(lines)
+
+
+def _closing(troubled):
+    """Return the line that says what the look came to."""
+    if not troubled:
+        return ('Everything the suites depend on was there, so the run went '
+                'ahead.')
+    failed = [finding for finding in troubled if finding.status == FAIL]
+    if not failed:
+        return ('Nothing the run itself depends on was missing, so it went '
+                'ahead; the warnings are what the other suites want, or '
+                'what an earlier run left behind.')
+    return ('The run stopped here: {0}. `./e2ectl doctor --fix` is what '
+            'puts right the ones that can be.'.format(
+                '; '.join(finding.name for finding in failed)))
+
+
 def worst(findings):
     """Return the worst status among findings, or :data:`OK` for none."""
     for status in (FAIL, WARN):
