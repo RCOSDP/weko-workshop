@@ -570,6 +570,40 @@ Anything `--fix` will not touch is reported with what to run by hand. An
 instance that is broken further than this is quicker to rebuild with
 `install.sh`.
 
+### Repairing an instance you cannot reach the containers of
+
+`--fix` works through `docker compose`, so it is no use for an instance
+somewhere else. `--sql` writes the same repairs out instead, to be taken
+to whoever can run SQL on it:
+
+```bash
+WEKO_E2E_WEKO_REF=v2.0.4 ../.venv-e2e/bin/python ./e2ectl doctor --sql \
+    > repair.sql
+```
+
+The reading of the instance goes to stderr and the script to stdout, so
+that is a file which can be run rather than one that has to be edited
+first. It is one transaction, it only adds rows, and a row whose id is
+already in use undoes the whole of it -- the same properties `--fix` has.
+
+**The version matters.** The rows are WEKO's own data, and an instance
+built from an older WEKO wants that WEKO's: between `v2.0.3` and
+`release_v2.1.0` the shipped item types go from 173 rows to 210.
+`WEKO_E2E_WEKO_REF` is the branch, tag or commit to take them from, and
+naming one is asking for it -- they are fetched from GitHub over HTTP
+(nothing is cloned) and kept, so the second time needs no network.
+
+| | |
+| --- | --- |
+| `e2ectl seed <ref>` | take a version now, to have it later |
+| `e2ectl seed --list` | what has been taken |
+| `e2ectl seed --from-checkout` | take it from the WEKO checkout here instead |
+| `WEKO_E2E_WEKO_REPO_URL` | somewhere other than GitHub to take it from |
+
+A package built after `seed` carries what was taken, so one can be handed
+to somebody with the version their instance needs already in it, for a
+machine with no network.
+
 `doctor` exits non-zero when something failed, so it works as a gate in
 front of a run.
 

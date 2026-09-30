@@ -19,6 +19,8 @@ _book
 .venv-e2e/
 e2e/.e2e-state.json
 e2e/weko-e2e-*.zip
+# WEKO's own data, fetched per version by "e2ectl seed"; a cache, not a source
+e2e/weko_e2e/seed/
 e2e/e2e.env
 e2e/.pytest_cache/
 __pycache__/

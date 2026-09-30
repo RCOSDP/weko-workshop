@@ -9,6 +9,7 @@ gives its resources.
     e2ectl env                    the settings a run would use
     e2ectl doctor                 is this instance fit to be tested
     e2ectl package                a zip of the suite, to hand to somebody
+    e2ectl seed                   refresh the copy of what install.sh loads
     e2ectl doctor --fix           put right what can be put right
     e2ectl ark-account enable     a real ARK server, for the ark suite
     e2ectl ark-stub enable        a stand-in ARK server, when there is none
@@ -27,6 +28,7 @@ gives its resources.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -426,7 +428,17 @@ def _purge_inbox(settings, targets):
 
 PACKAGE_FILES = ('README.md', 'README.ja.md', 'requirements.txt',
                  'pytest.ini', 'conftest.py', 'e2ectl')
-PACKAGE_TREES = {'tests': '.py', 'weko_e2e': '.py', 'environments': '.env'}
+PACKAGE_TREES = {'tests': ('.py',), 'weko_e2e': ('.py',),
+                 'environments': ('.env',)}
+"""``{directory: the suffixes taken from it}``, one level deep."""
+
+PACKAGE_SEED = ('.gz', '.json')
+"""What is taken from the versions of WEKO's data that have been fetched.
+
+Whatever is in the cache when the package is built travels with it, so a
+package can be handed to somebody with the version their instance needs
+already in it, and work where there is no network.
+"""
 """What a package holds, named rather than filtered.
 
 An allowlist because of what is *not* here: ``e2e.env`` is somebody's own
@@ -495,13 +507,24 @@ def _package_contents():
                 ).encode('utf-8'))
         found.append((os.path.join('e2e', name), content))
 
-    for tree, suffix in sorted(PACKAGE_TREES.items()):
+    for tree, suffixes in sorted(PACKAGE_TREES.items()):
         directory = os.path.join(E2E_DIR, tree)
+        if not os.path.isdir(directory):
+            continue
         for name in sorted(os.listdir(directory)):
-            if not name.endswith(suffix):
+            if not name.endswith(suffixes):
                 continue
             with open(os.path.join(directory, name), 'rb') as handle:
                 found.append((os.path.join('e2e', tree, name), handle.read()))
+
+    for root, _, names in sorted(os.walk(SEED)):
+        for name in sorted(names):
+            if not name.endswith(PACKAGE_SEED):
+                continue
+            path = os.path.join(root, name)
+            with open(path, 'rb') as handle:
+                found.append((os.path.join(
+                    'e2e', os.path.relpath(path, E2E_DIR)), handle.read()))
     return found
 
 
@@ -608,6 +631,12 @@ def _survey(settings, ledger):
             found.search_error = str(error)
         found.inbox = notify.announced_inbox(client.session, settings)
         try:
+            found.form_options = client.workflow_form_options()
+            if not found.form_options.get('itemtype'):
+                found.item_type_list_present = client.offers_item_types()
+        except (WekoError, requests.RequestException):
+            found.form_options = None
+        try:
             found.leftovers = _discover(client, settings, _targets(ledger))
         except (WekoError, requests.RequestException):
             found.leftovers = {}
@@ -676,14 +705,23 @@ def command_doctor(args, settings, ledger):
     survey = _survey(settings, ledger)
     findings = doctor.evaluate(survey)
 
+    # With --sql the answer is the script, so the reading of the instance
+    # goes to stderr and "doctor --sql > repair.sql" is a file that can
+    # be run rather than one that has to be edited first.
+    report = sys.stderr if args.sql else sys.stdout
     print('{0}  ({1})'.format(settings.base_url,
                               'inspected' if survey.report
-                              else 'not inspected: no WEKO checkout'))
+                              else 'not inspected: no WEKO checkout'),
+          file=report)
     for finding in findings:
         suite = ' [{0}]'.format(finding.suite) if finding.suite else ''
-        print('{0}  {1}{2}'.format(MARKS[finding.status], finding.name, suite))
+        print('{0}  {1}{2}'.format(MARKS[finding.status], finding.name, suite),
+              file=report)
         if finding.status != doctor.OK or args.verbose:
-            print('      {0}'.format(finding.detail))
+            print('      {0}'.format(finding.detail), file=report)
+
+    if args.sql:
+        return write_repair_sql(findings, settings, survey)
 
     repairable = [f for f in findings if f.fix and f.status != doctor.OK]
     if not args.fix:
@@ -702,6 +740,77 @@ def command_doctor(args, settings, ledger):
             ledger)
     print('\nnothing to repair')
     return 1 if doctor.worst(findings) == doctor.FAIL else 0
+
+
+def write_repair_sql(findings, settings, survey, out=print):
+    """Print the SQL that would put right what can be, and run nothing.
+
+    For an instance reached over the network there is no container to
+    repair through, so ``--fix`` cannot help; but whoever runs that
+    instance can run SQL on it.  This is the same repairs, written down
+    to be taken there.
+
+    The script is one transaction and adds only rows, so a statement the
+    instance refuses undoes the whole of it -- see
+    :mod:`weko_e2e.dataload` for why the foreign keys are put aside.
+    """
+    troubled = [f for f in findings if f.fix and f.status != doctor.OK]
+    out('-- Repairs for {0}, written {1}'.format(
+        settings.base_url, datetime.now().strftime('%Y-%m-%d %H:%M')))
+    out('-- by "e2ectl doctor --sql".  Run it on that instance\'s '
+        'database.')
+    if not troubled:
+        out('--')
+        out('-- Nothing to repair: every check that has one passed.')
+        return 0
+
+    statements = []
+    unwritable = []
+    for finding in troubled:
+        if finding.fix == 'partition':
+            statements.append((finding, _partition_sql(survey), 'this tool'))
+            continue
+        source = SQL_SOURCES.get(finding.fix)
+        text, where = _demo_rows_sql(settings, source) if source \
+            else (None, None)
+        if text:
+            statements.append((finding, text, where))
+        else:
+            unwritable.append((finding, where))
+
+    if statements:
+        out('--')
+        out('-- Every statement below adds rows.  None drops, deletes or')
+        out('-- overwrites, and the whole of it is one transaction: a row')
+        out('-- whose id is already in use undoes the lot rather than')
+        out('-- leaving half of it behind.')
+        out('')
+        out('BEGIN;')
+        out('')
+        out('-- The rows are in the order they were written out, which is')
+        out('-- not parent before child, so the foreign keys are put aside')
+        out('-- for this transaction only.  Primary keys still apply.')
+        out(dataload.WITHOUT_FK_CHECKS)
+        for finding, text, where in statements:
+            out('')
+            out('-- {0}: {1}'.format(
+                finding.name, finding.detail.split('.')[0]))
+            out('-- from {0}'.format(where))
+            out(text)
+        out('')
+        out('COMMIT;')
+
+    for finding, where in unwritable:
+        out('')
+        command = NOT_SQL.get(finding.fix)
+        out('-- {0}: {1}'.format(finding.name, finding.detail.split('.')[0]))
+        if command:
+            out('-- is not SQL.  On the instance, run:')
+            out('--     {0}'.format(command))
+        else:
+            out('-- could not be written out: {0}.'.format(
+                where or 'no source for it'))
+    return 0
 
 
 def _repair(finding, settings, survey, accounts=False, out=print):
@@ -798,19 +907,31 @@ def _load_demo_rows(settings, name):
     ]
 
 
-def _fix_partition(settings, survey):
-    """Create this month's partition of the activity log."""
-    month = (survey.report or {}).get('today')
-    if not month:
-        return ['this instance was not inspected, so the month is not known']
+def _partition_sql(survey):
+    """Return the statement that adds this month's log partition, or None.
+
+    The month comes from the instance rather than from here: a run and
+    the instance it is testing are not always in the same timezone, and
+    the partition the instance wants is the one it will write into.
+    """
+    month = (survey.report or {}).get('today') or datetime.now().strftime(
+        '%Y%m')
     year, number = int(month[:4]), int(month[4:])
     nxt = '{0:04d}-{1:02d}-01'.format(
         year + (1 if number == 12 else 0), 1 if number == 12 else number + 1)
-    name = 'user_activity_logs_{0}'.format(month)
-    ok, output = _psql(settings, (
-        'CREATE TABLE IF NOT EXISTS {0} PARTITION OF user_activity_logs '
-        "FOR VALUES FROM ('{1}-{2:02d}-01') TO ('{3}');").format(
-            name, year, number, nxt))
+    return (
+        'CREATE TABLE IF NOT EXISTS user_activity_logs_{0} PARTITION OF '
+        "user_activity_logs\n    FOR VALUES FROM ('{1}-{2:02d}-01') TO "
+        "('{3}');".format(month, year, number, nxt))
+
+
+def _fix_partition(settings, survey):
+    """Create this month's partition of the activity log."""
+    if not (survey.report or {}).get('today'):
+        return ['this instance was not inspected, so the month is not known']
+    statement = _partition_sql(survey)
+    ok, output = _psql(settings, statement)
+    name = statement.split()[5]
     return ['{0} {1}'.format('created' if ok else 'could not create', name)
             + (': {0}'.format(output) if not ok else '')]
 
@@ -935,6 +1056,283 @@ def _repo_role(survey):
 
 SYSTEM_ROLE = 'System Administrator'
 """The role the account a run works as has to hold."""
+
+
+SEED = os.path.join(HERE, 'seed')
+"""Where the rows ``install.sh`` loads are kept, one folder per version.
+
+They are WEKO's data, not this suite's, and the version that is right is
+the version of the instance being repaired -- so rather than carrying a
+copy of one of them, the tool takes the one it is asked for and keeps it
+here.  ``e2ectl seed <ref>`` is how, and the ref is a branch, a tag or a
+commit of the WEKO repository.
+
+Nothing is fetched behind anyone's back: ``--sql`` uses what is here and
+says what to run when what it needs is not.
+"""
+
+
+def _seed_dir(ref):
+    """Return the folder one version's rows are kept in.
+
+    A ref can be ``feature/nii_WACREN_pre``; a folder cannot, so the
+    name is flattened and the real ref kept in the manifest.
+    """
+    return os.path.join(SEED, re.sub(r'[^0-9A-Za-z._-]', '_', ref))
+
+
+def _seed_manifest(ref):
+    """Return what one version's copy says about itself, or None."""
+    try:
+        with open(os.path.join(_seed_dir(ref), 'manifest.json'),
+                  encoding='utf-8') as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def seeded_refs():
+    """Return the versions whose rows are here, as ``{ref: manifest}``."""
+    found = {}
+    for name in sorted(os.listdir(SEED) if os.path.isdir(SEED) else []):
+        try:
+            with open(os.path.join(SEED, name, 'manifest.json'),
+                      encoding='utf-8') as handle:
+                manifest = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        found[manifest.get('ref', name)] = manifest
+    return found
+
+
+def _fetch_demo_sql(settings, ref, name):
+    """Return one of install.sh's files, read from the WEKO repository.
+
+    :return: the text, or None when that version has no such file
+    """
+    url = '{0}/{1}/{2}/{3}'.format(
+        settings.weko_repo_url.rstrip('/'), ref, DEMO_SQL.replace(os.sep, '/'),
+        name)
+    response = requests.get(url, timeout=120)
+    if response.status_code == 404:
+        return None
+    if not response.ok:
+        raise WekoError('{0} -> {1}'.format(url, response.status_code))
+    response.encoding = response.encoding or 'utf-8'
+    return response.text
+
+
+def take_seed(settings, ref, checkout=None, out=print):
+    """Take one WEKO version's rows from GitHub, and keep them.
+
+    Nothing is cloned: the four files ``install.sh`` loads are fetched
+    over HTTP from the repository at that ref, and only the statements
+    that add rows are kept.
+
+    :param checkout: take them from this checkout instead of the network
+    :return: the manifest, or None when that ref yielded nothing
+    """
+    import gzip
+
+    directory = _seed_dir(ref)
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    manifest = {'ref': ref, 'source': checkout or settings.weko_repo_url,
+                'taken_on': datetime.now().strftime('%Y-%m-%d'), 'files': {}}
+
+    for name in sorted(set(SQL_SOURCES.values())):
+        if checkout:
+            path = os.path.join(checkout, DEMO_SQL, name)
+            text = None
+            if os.path.isfile(path):
+                with open(path, encoding='utf-8') as handle:
+                    text = handle.read()
+        else:
+            text = _fetch_demo_sql(settings, ref, name)
+        if text is None:
+            out('{0:24} not in {1}'.format(name, ref))
+            continue
+        statements = dataload.data_only(text)
+        if not statements:
+            out('{0:24} holds no rows'.format(name))
+            continue
+        with gzip.open(os.path.join(directory, name + '.gz'), 'wt',
+                       encoding='utf-8') as handle:
+            handle.write('\n'.join(statements) + '\n')
+        rows = sum(dataload.describe(statements).values())
+        manifest['files'][name] = {'statements': len(statements), 'rows': rows}
+        out('{0:24} {1} statements, {2} rows'.format(
+            name, len(statements), rows))
+
+    if not manifest['files']:
+        return None
+    with open(os.path.join(directory, 'manifest.json'), 'w',
+              encoding='utf-8') as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+        handle.write('\n')
+    return manifest
+
+
+def command_seed(args, settings, ledger):
+    """Take one WEKO version's rows, and keep them for ``doctor --sql``.
+
+    The version is the instance's, not this tool's: an instance built
+    from an older WEKO wants that WEKO's data, and writing newer rows
+    into it would be a repair that does not fit.  So the ref is asked
+    for rather than assumed.
+
+        e2ectl seed release_v2.1.0     from the WEKO repository
+        e2ectl seed v2.0.3             a tag, for an older instance
+        e2ectl seed --from-checkout    from the checkout already here
+        e2ectl seed --list             what has been taken so far
+    """
+    if args.list:
+        taken = seeded_refs()
+        if not taken:
+            print('nothing taken yet; "e2ectl seed <ref>" takes a version')
+            return 0
+        for ref, manifest in sorted(taken.items()):
+            print('{0:28} {1} rows, taken {2} from {3}'.format(
+                ref, sum(f.get('rows', 0)
+                         for f in manifest.get('files', {}).values()),
+                manifest.get('taken_on', '?'), manifest.get('source', '?')))
+        return 0
+
+    ref = args.action
+    checkout = None
+    if args.from_checkout:
+        if not settings.weko_repo:
+            print('there is no WEKO checkout here; set WEKO_E2E_REPO, or '
+                  'name a version to take from GitHub')
+            return 1
+        checkout = settings.weko_repo
+        ref = ref or _revision_of(checkout)
+    elif not ref:
+        print('which version? "e2ectl seed <branch|tag|commit>" takes it '
+              'from GitHub, or --from-checkout uses {0}'.format(
+                  settings.weko_repo or 'a checkout, if there were one'))
+        return 1
+
+    manifest = take_seed(settings, ref, checkout)
+    if manifest is None:
+        print('nothing was taken; is {0!r} a ref of that repository?'.format(
+            ref))
+        return 1
+    print('kept as {0}; "doctor --sql" uses it with '
+          'WEKO_E2E_WEKO_REF={1}'.format(_seed_dir(ref), ref))
+    return 0
+
+
+def _revision_of(repository):
+    """Return the revision of a checkout, or a note."""
+    result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
+                            cwd=repository, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL)
+    if result.returncode:
+        return 'an unknown revision'
+    return result.stdout.decode('ascii', 'replace').strip()
+
+
+def _sql_source(settings):
+    """Return where the rows for a repair should come from.
+
+    Named version first, because somebody who says which WEKO their
+    instance is means it; then a checkout, which is the live truth; then
+    the one version that has been taken, if there is exactly one.
+
+    :return: ``(ref or None, checkout or None, why not)``
+    """
+    taken = seeded_refs()
+    if settings.weko_ref:
+        if settings.weko_ref in taken:
+            return settings.weko_ref, None, None
+        # Naming a version is asking for it, so it is fetched rather than
+        # asked for a second time.  It is said out loud, on stderr, so a
+        # script being written to a file still says where it came from.
+        print('taking WEKO {0} from {1}...'.format(
+            settings.weko_ref, settings.weko_repo_url), file=sys.stderr)
+        try:
+            manifest = take_seed(settings, settings.weko_ref,
+                                 out=lambda line: print(line,
+                                                        file=sys.stderr))
+        except (WekoError, requests.RequestException) as error:
+            return None, None, 'could not take WEKO {0}: {1}'.format(
+                settings.weko_ref, error)
+        if manifest is None:
+            return None, None, (
+                'nothing came back for WEKO {0}; is it a branch, tag or '
+                'commit of {1}?'.format(settings.weko_ref,
+                                        settings.weko_repo_url))
+        return settings.weko_ref, None, None
+    if settings.weko_repo:
+        return None, settings.weko_repo, None
+    if len(taken) == 1:
+        return list(taken)[0], None, None
+    if taken:
+        return None, None, (
+            'several WEKO versions have been taken ({0}); say which with '
+            'WEKO_E2E_WEKO_REF'.format(', '.join(sorted(taken))))
+    return None, None, (
+        'no WEKO version has been taken and there is no checkout: run '
+        '"e2ectl seed <branch|tag|commit>" for the WEKO this instance '
+        'was built from')
+
+
+def _demo_rows_sql(settings, name):
+    """Return the row-adding statements of one of install.sh's files.
+
+    :return: ``(statements, where they came from)``, or ``(None, why not)``
+    """
+    import gzip
+
+    ref, checkout, problem = _sql_source(settings)
+    if problem:
+        return None, problem
+    if checkout:
+        path = os.path.join(checkout, DEMO_SQL, name)
+        if not os.path.isfile(path):
+            return None, '{0} is not in {1}'.format(name, checkout)
+        with open(path, encoding='utf-8') as handle:
+            statements = dataload.data_only(handle.read())
+        return ('\n'.join(statements) if statements else None,
+                'the checkout at {0}'.format(checkout))
+
+    path = os.path.join(_seed_dir(ref), name + '.gz')
+    if not os.path.isfile(path):
+        return None, '{0} was not taken with {1}'.format(name, ref)
+    with gzip.open(path, 'rt', encoding='utf-8') as handle:
+        statements = handle.read().strip()
+    manifest = _seed_manifest(ref) or {}
+    return statements or None, 'WEKO {0}, taken {1}'.format(
+        ref, manifest.get('taken_on', 'at an unrecorded time'))
+
+
+SQL_SOURCES = {
+    'item-types': 'item_type.sql',
+    'flow': 'defaultworkflow.sql',
+    'index-tree': 'indextree.sql',
+    'identifier-settings': 'doi_identifier.sql',
+}
+"""The repair each of ``install.sh``'s data files puts right."""
+"""The repairs that can be written down as SQL instead of being run.
+
+For an instance reached over the network there is no container to repair
+through, and ``--fix`` cannot help; but whoever runs that instance can
+run SQL on it.  So the same repairs are available as a script to take
+there.  The ones that are not here are not SQL -- they are ``invenio``
+commands -- and are named in the script rather than written out.
+"""
+
+NOT_SQL = {
+    'actions': 'invenio workflow init action_status,Action',
+    'language': ("invenio language create --active --registered "
+                 "en English 001"),
+    'location': 'invenio files location local /var/tmp --default',
+    'account': 'invenio users create <email> --password <password> --active',
+    'approver': 'invenio users create <email> --password <password> --active',
+    'approver-role': 'invenio roles add <email> <role>',
+}
+"""What to run on the instance for the repairs that are not SQL."""
 
 FIXES = {
     'account': (_fix_account, True),
@@ -1767,6 +2165,7 @@ COMMANDS = {
     'doi-log': command_doi_log,
     'doctor': command_doctor,
     'package': command_package,
+    'seed': command_seed,
     'env': command_env,
     'inbox': command_inbox,
     'status': command_status,
@@ -1804,6 +2203,17 @@ def build_parser():
     parser.add_argument('--fix-accounts', action='store_true',
                         help='for doctor --fix: also create accounts and '
                              'give them the roles the suites need')
+    parser.add_argument('--list', action='store_true',
+                        help='for seed: the WEKO versions taken so far')
+    parser.add_argument('--from-checkout', action='store_true',
+                        dest='from_checkout',
+                        help='for seed: take them from the WEKO checkout '
+                             'rather than from the repository')
+    parser.add_argument('--sql', action='store_true',
+                        help='for doctor: write out the SQL that would put '
+                             'things right, and run nothing -- for an '
+                             'instance you can reach the database of but '
+                             'not the containers')
     parser.add_argument('--output', metavar='DIR',
                         help='for package: where to write the zip, '
                              'defaulting to the current directory')
