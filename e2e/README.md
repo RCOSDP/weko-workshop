@@ -868,6 +868,19 @@ setting them alone changes nothing on the instance.
 | `WEKO_E2E_DB_NAME` | `invenio` | |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | Where the WEKO checkout is mounted in that container |
 
+### Repairing by SQL
+
+Only `doctor --sql` and `e2ectl seed` read these; see
+[Repairing an instance you cannot reach the containers of](#repairing-an-instance-you-cannot-reach-the-containers-of).
+
+| Variable | Default | |
+| --- | --- | --- |
+| `WEKO_E2E_WEKO_REF` | (none) | Branch, tag or commit of WEKO to take the rows from. **The version matters**: an instance built from an older WEKO wants that WEKO's data |
+| `WEKO_E2E_WEKO_REPO_URL` | `https://raw.githubusercontent.com/RCOSDP/weko` | Where to fetch them from, for an internal mirror. Fetched over HTTP; nothing is cloned |
+
+What is fetched is kept in `e2e/weko_e2e/seed/<ref>/`, one folder per
+version, and travels in a package built afterwards.
+
 ### Other
 
 | Variable | Default | |

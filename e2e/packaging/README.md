@@ -87,6 +87,32 @@ Looking changes nothing.  Every repair *adds* what is missing and
 replaces nothing, and nothing here deletes: what could only be put right
 by removing something is reported and left alone.
 
+## My instance is somewhere else
+
+`--fix` works through `docker compose`, so it is no use for an instance
+you cannot reach the containers of.  `--sql` writes the same repairs out
+instead, to be handed to whoever can run SQL on it:
+
+```
+WEKO_E2E_WEKO_REF=release_v2.1.0 ../.venv-e2e/bin/python ./e2ectl doctor --sql > repair.sql
+```
+
+The reading of the instance goes to stderr and the script to stdout, so
+that is a file which can be run rather than one that has to be edited
+first.  One transaction, rows added and nothing else, and a row whose id
+is already in use undoes the whole of it.
+
+**The version matters.**  The rows are WEKO's own data, and an instance
+built from an older WEKO wants that WEKO's -- between `v2.0.3` and
+`release_v2.1.0` the shipped item types go from 173 rows to 210.
+`WEKO_E2E_WEKO_REF` is the branch, tag or commit to take them from; they
+are fetched from GitHub over HTTP, nothing is cloned, and what is fetched
+is kept so the second time needs no network.
+
+If this package was built after `e2ectl seed`, it already carries the
+versions that were taken, and `--sql` works with no network at all.
+`./e2ectl seed --list` says which.
+
 ## The rest
 
 [`e2e/README.md`](e2e/README.md) is the whole of it -- every setting,

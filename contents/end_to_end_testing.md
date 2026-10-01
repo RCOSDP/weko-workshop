@@ -62,6 +62,30 @@ ever a deletion you did not ask for:
 Thirteen steps, a minute or two. Set `WEKO_HEADED=1` to watch the browser
 do it.
 
+## Repair an instance you cannot reach the containers of
+
+`--doctor-fix` works through `docker compose`, so it is no use for an
+instance somewhere else. The tool can write the same repairs out as SQL
+instead, to be handed to whoever can run it on that database:
+
+```
+WEKO_E2E_WEKO_REF=release_v2.1.0 ../.venv-e2e/bin/python ./e2ectl doctor --sql > repair.sql
+```
+
+The reading of the instance goes to stderr and the script to stdout, so
+that is a file you can run rather than one you have to edit first. It is
+one transaction, it only adds rows, and a row whose id is already in use
+undoes the whole of it.
+
+The version matters. The rows are WEKO's own data, and an instance built
+from an older WEKO wants that WEKO's — between `v2.0.3` and
+`release_v2.1.0` the shipped item types go from 173 rows to 210.
+`WEKO_E2E_WEKO_REF` is the branch, tag or commit to take them from; they
+are fetched from GitHub over HTTP, nothing is cloned, and what is fetched
+is kept, so the second time needs no network. `e2ectl seed <ref>` takes a
+version ahead of time, and a distribution package built afterwards
+carries it — for a machine that has no network at all.
+
 ## Run the optional suites too
 
 Four more suites sit beside the base flow, each asked for by name,

@@ -816,6 +816,19 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 | `WEKO_E2E_DB_NAME` | `invenio` | |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | そのコンテナ内でのチェックアウトのパス |
 
+### SQL での修復
+
+`doctor --sql` と `e2ectl seed` だけが読みます。
+[コンテナに手が届かない環境を直す](#コンテナに手が届かない環境を直す)を参照。
+
+| 変数 | 既定値 | 内容 |
+| --- | --- | --- |
+| `WEKO_E2E_WEKO_REF` | （なし） | 行を取得する WEKO のブランチ・タグ・コミット。**バージョンが重要**で、古い WEKO で構築した環境にはその WEKO のデータが要ります |
+| `WEKO_E2E_WEKO_REPO_URL` | `https://raw.githubusercontent.com/RCOSDP/weko` | 取得元。社内ミラー等を指定できます。HTTP で取得するだけで clone はしません |
+
+取得したものは `e2e/weko_e2e/seed/<ref>/` にバージョンごとに保存され、
+その後に作った配布 zip にも入ります。
+
 ### その他
 
 | 変数 | 既定値 | 内容 |
