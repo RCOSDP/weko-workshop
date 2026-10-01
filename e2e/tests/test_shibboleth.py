@@ -61,7 +61,18 @@ def shibboleth(client, settings):
 
     The account the run logs in as is removed on the way out too, so an
     instance is left holding neither the account nor the binding.
+
+    Skipped whole where there is no WEKO checkout.  Every step needs the
+    stand-in, and the stand-in is copied into the ``nginx`` container
+    through that checkout -- so skipping here skips the suite, rather
+    than letting the steps after the first fail one by one for a reason
+    that has nothing to do with Shibboleth.
     """
+    if not settings.weko_repo:
+        pytest.skip(
+            'the Shibboleth stand-in runs in the {0} container, so this '
+            'suite needs the WEKO checkout that owns the compose file; '
+            'set WEKO_E2E_REPO'.format(settings.nginx_service))
     was = client.shib_login_enabled()
     client.shib_login_enabled(True)
     yield was
@@ -93,16 +104,10 @@ def test_01_the_instance_can_be_reached_where_the_sp_stands(settings,
                                                             shibboleth):
     """Check the stand-in can be run where the SP's script runs.
 
-    Which needs the WEKO checkout that owns the compose file, because
-    that is what the stand-in is copied in through.  Everything after
-    this step depends on it, so it is asked first and says how to ask
-    for it.
+    Everything after this step depends on it, so it is asked first --
+    and asked by running it, because a checkout that is there is not the
+    same as a container that will take the script.
     """
-    if not settings.weko_repo:
-        pytest.skip(
-            'the Shibboleth stand-in runs in the {0} container, so this '
-            'suite needs the WEKO checkout that owns the compose file; set '
-            'WEKO_E2E_REPO'.format(settings.nginx_service))
     assert shib_login(settings, {'eppn': ''}) is not None, \
         'the stand-in could not be run in the {0} container'.format(
             settings.nginx_service)
