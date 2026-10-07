@@ -160,8 +160,9 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite all
    [環境がテスト可能な状態か](#環境がテスト可能な状態か)
 2. **スイートの実行。** 基本テストは常に、それ以外は名前で指定したときだけ →
    [実行するテストの選択](#実行するテストの選択)
-3. **各ステップが見たものを `evidence/` に記録。** スクリーンショットと、
-   1 の点検結果。再実行すると同じ場所で更新されます
+3. **各ステップが見たものを `evidence/` に記録。** スクリーンショット、
+   1 の点検結果（`doctor.md`）、実行記録（`run.md`）。再実行すると同じ場所で
+   更新されます
 4. **作成物は残ります**（失敗時に確認できるようにするため）。`clean` で
    削除します。実行の最後に自動で消すなら `--clean-after --clean-hard` →
    [後始末（テストツール）](#後始末テストツール)
@@ -766,7 +767,7 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 | `WEKO_E2E_SHIB_EPPN` | `e2e-shibboleth@example.org` | 代役 SP が返す `eppn`。紐付けになる |
 | `WEKO_E2E_SHIB_MAIL` | `e2e-shibboleth-mail@example.org` | 代役 SP が返す `mail`。アカウントのメールアドレスになる。意図的に `eppn` と別の値 |
 | `WEKO_E2E_SHIB_USER_NAME` | `WEKO E2E Shibboleth` | 代役 SP が返す `DisplayName` |
-| `WEKO_E2E_NGINX_SERVICE` | `nginx` | 代役 SP を動かす compose サービス名 |
+| `WEKO_E2E_NGINX_SERVICE` | `nginx` | 代役 SP を動かすサービス名 |
 
 ### ARK サーバ（発行用）
 
@@ -811,10 +812,51 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | WEKO が動く compose サービス名 |
 | `WEKO_E2E_INBOX_SERVICE` | `inbox` | LDN Inbox が動く compose サービス名。実行の通知を消す先であり、Web Push 代替の動作場所 |
-| `WEKO_E2E_DB_SERVICE` | `postgresql` | DB が動く compose サービス名。`doctor --fix` が SQL を流す先 |
+| `WEKO_E2E_EXEC` | （なし） | コンテナ内でコマンドを実行する方法。`{service}` にサービス名が入る。未設定なら `docker compose exec -T`。[docker で動いていない環境に届かせる](#docker-で動いていない環境に届かせる)を参照 |
+| `WEKO_E2E_DB_SERVICE` | `postgresql` | DB が動くサービス名。`doctor --fix` が SQL を流す先 |
+| `WEKO_E2E_WORKER_SERVICE` | `worker` | worker が動くサービス名 |
 | `WEKO_E2E_DB_USER` | `invenio` | |
 | `WEKO_E2E_DB_NAME` | `invenio` | |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | そのコンテナ内でのチェックアウトのパス |
+
+### docker で動いていない環境に届かせる
+
+コンテナ内で何かを実行する処理はすべて 1 本のコマンドラインを通ります。
+`WEKO_E2E_EXEC` がそのコマンドラインです。未設定ならチェックアウトに対する
+`docker compose exec -T`（`install.sh` の環境向け、従来どおり）。設定すれば
+それが使われます。Kubernetes の例:
+
+```bash
+WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
+WEKO_E2E_WEB_SERVICE=deploy/weko-web
+WEKO_E2E_DB_SERVICE=statefulset/postgresql
+WEKO_E2E_NGINX_SERVICE=deploy/weko-nginx
+WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
+WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
+```
+
+`{service}` にサービス名が入ります。名前は従来どおり `WEKO_E2E_*_SERVICE`
+から来るので、**指定したコマンドがそのコンテナを何と呼ぶか**を入れてください。
+`-i` は必須です。標準入力経由で渡している処理があります。
+
+これを設定すれば、以下は **WEKO のチェックアウト無しで**動きます。
+
+| | |
+| --- | --- |
+| `doctor` | HTTP だけで答えられる 7 項目ではなく、19 項目すべて |
+| `doctor --fix` | docker の場合と同様に DB に対して修復を実行 |
+| `clean --hard` | 物理削除 |
+| `--suite shibboleth` | `nginx` コンテナ内の代役 SP |
+
+修復が追加する行は、チェックアウトがあればそこから、無ければ
+`WEKO_E2E_WEKO_REF` から取るので、**チェックアウト無しでも `--fix` が通ります**。
+
+**チェックアウトが依然必要なもの**（コマンド実行ではなくファイル編集のため）:
+`ark-stub` / `ark-account` / `crossref-account` / `webpush-stub` の
+enable・disable。いずれもその旨を表示します。
+
+`./e2ectl env` がコンテナ内実行に使うコマンドを表示するので、最初の実行前に
+確認してください。
 
 ### SQL での修復
 
@@ -848,6 +890,7 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 | `ark` + `ark-account`（ログイン方式）で設定したサーバ宛て | 6 passed、`ark:/12345/x9...` を発行 |
 | `coarnotify`（環境付属の `inbox` サービス宛て） | 10 passed、2 通ともそれぞれ正しい相手に到達 |
 | `shibboleth`（`install.sh` で作った環境） | 9 passed。`mail` がアカウントのメールアドレスになり、スイッチもアカウントも元に戻った |
+| `WEKO_E2E_EXEC` 使用・チェックアウト無し | 13 passed、`shibboleth` も 9 passed。doctor は 19 項目すべてを点検 |
 
 ## 派生版の作り方
 
@@ -960,6 +1003,7 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 evidence/
 ├── README.md, README.ja.md      実行全体と基本スイート
 ├── doctor.md                    実行直前の環境点検の結果
+├── run.md                       実行記録（ステップごとの結果）
 ├── images/                      基本スイートの画像
 ├── ark/README.ja.md, images/    ark スイートとその画像
 ├── coarnotify/README.ja.md, …
@@ -967,6 +1011,12 @@ evidence/
 └── shibboleth/README.ja.md, …
 ```
 
-画像はテスト自身が固定の名前で撮り、`doctor.md` は実行が最初のテストの前に
-書きます。再実行すればどちらも同じ場所で更新されるので、記録が実装から
-乖離しません。
+画像はテスト自身が固定の名前で撮り、`doctor.md` は実行が最初のテストの前に、
+`run.md` は実行の終わりに書きます。`run.md` には対象環境、各ステップの結果と
+所要時間、skip の理由、失敗したステップとそのメッセージ、作成したリソース、
+各ステップが撮った画像が入ります。再実行すればすべて同じ場所で更新される
+ので、記録が実装から乖離しません。
+
+手で書くのは、残すと決めた実行についての `README.md` だけです。他の環境で
+実行した場合は、実行後の `evidence/`（`run.md`・`doctor.md`・画像）がそのまま
+その実行の記録になります。

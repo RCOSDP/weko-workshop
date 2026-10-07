@@ -30,6 +30,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -242,8 +243,8 @@ def command_ping(args, settings, ledger):
         settings.item_type_name,
         'id {0}'.format(found) if found else 'NOT FOUND'))
     print('hard purge: {0}'.format(
-        'available ({0})'.format(settings.weko_repo) if settings.weko_repo
-        else 'unavailable; set WEKO_E2E_REPO to the WEKO checkout'))
+        'available ({0})'.format(settings.weko_repo or settings.exec_template)
+        if settings.can_exec else 'unavailable; {0}'.format(NEEDS)))
     return 0 if found else 1
 
 
@@ -303,13 +304,46 @@ def _delete(client, kind, identifier):
         return False, str(error)
 
 
+NEEDS = ('set WEKO_E2E_REPO to the WEKO checkout that owns the compose '
+         'file, or WEKO_E2E_EXEC to a command that runs things in the '
+         'containers')
+"""What to say when there is no way into the containers at all."""
+
+
 def _compose(settings, *arguments):
-    """Return a ``docker compose`` command line for the WEKO checkout."""
+    """Return a ``docker compose`` command line for the WEKO checkout.
+
+    For the few things that are docker compose itself rather than a
+    command inside a container -- editing the compose file, bringing a
+    service back up, asking whether one is running.  Anything that only
+    needs to *run something somewhere* goes through :func:`_in_service`,
+    which has a way that is not docker's.
+    """
     return ['docker', 'compose', '-f', settings.compose_file] + list(arguments)
 
 
 def _in_service(settings, service, *arguments):
-    """Return a command line running something in one container."""
+    """Return a command line running something in one container.
+
+    Two ways.  ``WEKO_E2E_EXEC`` names the first word for word -- for an
+    instance on Kubernetes, say::
+
+        WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
+        WEKO_E2E_WEB_SERVICE=deploy/weko-web
+
+    ``{service}`` is where the service name goes, and the names come from
+    ``WEKO_E2E_*_SERVICE`` as they always did, so what they have to hold
+    is whatever the named command calls that container.  The rest of the
+    tool does not know the difference: it asks for a command line and
+    gets one.
+
+    Without it, ``docker compose exec -T`` against the checkout, which is
+    what a stack from ``install.sh`` wants and stays the default.
+    """
+    if settings.exec_template:
+        template = shlex.split(settings.exec_template)
+        return [word.replace('{service}', service)
+                for word in template] + list(arguments)
     return _compose(settings, 'exec', '-T', service, *arguments)
 
 
@@ -318,17 +352,30 @@ def _in_web(settings, *arguments):
     return _in_service(settings, settings.web_service, *arguments)
 
 
+def _run(settings, command, **kwargs):
+    """Run one of those command lines, and return what came of it.
+
+    ``docker compose -f <relative path>`` has to be run from the
+    checkout; ``kubectl`` has no checkout to be run from, and would fail
+    on a directory that is not there.  So the working directory is the
+    checkout only when there is one.
+    """
+    kwargs.setdefault('stdout', subprocess.PIPE)
+    kwargs.setdefault('stderr', subprocess.STDOUT)
+    return subprocess.run(command, cwd=settings.weko_repo or None, **kwargs)
+
+
 def _copy_into_container(settings, content, path, service=None):
     """Write bytes to a path inside a container.
 
-    :param service: the compose service, defaulting to ``web``
+    :param service: the service, defaulting to ``web``
     :return: True when the container took it
     """
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, service or settings.web_service,
                     'sh', '-c', 'cat > {0}'.format(path)),
-        cwd=settings.weko_repo, input=content,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        input=content)
     if result.returncode:
         print(result.stdout.decode('utf-8', 'replace')[-2000:])
     return result.returncode == 0
@@ -336,9 +383,8 @@ def _copy_into_container(settings, content, path, service=None):
 
 def _hard_purge(settings, targets):
     """Run the purge script inside the ``web`` container."""
-    if not settings.weko_repo:
-        print('hard purge needs the WEKO checkout that owns {0}; '
-              'set WEKO_E2E_REPO to it'.format(settings.compose_file))
+    if not settings.can_exec:
+        print('hard purge runs inside the web container: {0}'.format(NEEDS))
         return
     spec = {
         'items': [r['id'] for r in targets['item']],
@@ -362,8 +408,7 @@ def _hard_purge(settings, targets):
     command = _in_web(settings, 'invenio', 'shell',
                       PURGE_IN_CONTAINER, SPEC_IN_CONTAINER)
     print('hard purge: {0}'.format(' '.join(command)))
-    result = subprocess.run(command, cwd=settings.weko_repo,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    result = _run(settings, command)
     output = result.stdout.decode('utf-8', 'replace')
     report = None
     for line in output.splitlines():
@@ -404,11 +449,11 @@ def _purge_inbox(settings, targets):
               'are still in the inbox'.format(settings.inbox_service))
         return
 
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, settings.inbox_service, 'sh', '-c',
                     'cd /app && python {0} {1}'.format(
                         INBOX_PURGE_IN_CONTAINER, ' '.join(activities))),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     output = result.stdout.decode('utf-8', 'replace')
     report = None
@@ -585,19 +630,19 @@ def shib_login(settings, attributes=None, next_url='/'):
     :return: what the stand-in reported, or None when it could not be
         run at all
     """
-    if not settings.weko_repo:
+    if not settings.can_exec:
         return None
     with open(os.path.join(HERE, 'shibstub.py'), 'rb') as handle:
         script = handle.read()
     if not _copy_into_container(settings, script, SHIB_STUB_IN_CONTAINER,
                                 service=settings.nginx_service):
         return None
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, settings.nginx_service, 'python3',
                     SHIB_STUB_IN_CONTAINER, settings.base_url,
                     json.dumps(attributes or settings.shib_attributes),
                     ),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in result.stdout.decode('utf-8', 'replace').splitlines():
         if line.startswith(SHIB_MARKER):
@@ -689,10 +734,9 @@ def command_shib(args, settings, ledger):
             else 'nothing bound'))
         return 0
 
-    if not settings.weko_repo:
-        print('the stand-in runs in the {0} container, which needs the WEKO '
-              'checkout that owns {1}'.format(settings.nginx_service,
-                                              settings.compose_file))
+    if not settings.can_exec:
+        print('the stand-in runs in the {0} container: {1}'.format(
+            settings.nginx_service, NEEDS))
         return 1
 
     if action == 'forget':
@@ -733,15 +777,15 @@ def _inspect(settings):
     The script is copied in for the one call, the way the purge is; this
     suite is not on the container's bind mount.
     """
-    if not settings.weko_repo:
+    if not settings.can_exec:
         return None
     with open(os.path.join(HERE, 'inspect.py'), 'rb') as handle:
         script = handle.read()
     if not _copy_into_container(settings, script, INSPECT_IN_CONTAINER):
         return None
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_web(settings, 'invenio', 'shell', INSPECT_IN_CONTAINER),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in result.stdout.decode('utf-8', 'replace').splitlines():
         if line.startswith(INSPECT_MARKER):
@@ -751,13 +795,24 @@ def _inspect(settings):
 
 
 def _worker_is_up(settings):
-    """Return whether the worker container is running, or None."""
-    if not settings.weko_repo:
+    """Return whether the worker is running, or None when it cannot be asked.
+
+    ``docker compose ps`` is the plain answer where there is a compose
+    file.  Where the containers are reached some other way there is no
+    equivalent to ask, so instead the worker is asked to run ``true``:
+    if a command can be run in it, it is up.  That is a weaker question
+    -- a container can be up with a worker that has died inside it --
+    but it is a great deal better than not asking.
+    """
+    if not settings.can_exec:
         return None
-    result = subprocess.run(
-        _compose(settings, 'ps', '--status', 'running', 'worker'),
-        cwd=settings.weko_repo,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if settings.exec_template:
+        return _run(settings, _in_service(
+            settings, settings.worker_service, 'true')).returncode == 0
+    result = _run(
+        settings,
+        _compose(settings, 'ps', '--status', 'running',
+                 settings.worker_service))
     if result.returncode:
         return None
     return b'worker' in result.stdout
@@ -975,9 +1030,9 @@ def _repair(finding, settings, survey, accounts=False, out=print):
         out('  skipped {0}: it would add or change an account; pass '
             '--fix-accounts to allow that'.format(finding.name))
         return
-    if not settings.weko_repo:
-        out('  cannot repair {0}: there is no WEKO checkout to reach the '
-            'containers through'.format(finding.name))
+    if not settings.can_exec:
+        out('  cannot repair {0}: nothing can be run in the containers. '
+            '{1}'.format(finding.name, NEEDS))
         return
     out('  {0}...'.format(finding.name))
     for line in fixer(settings, survey) or []:
@@ -995,8 +1050,9 @@ def _invenio(settings, *arguments):
 
     :return: ``(ok, output)``
     """
-    result = subprocess.run(
-        _in_web(settings, 'invenio', *arguments), cwd=settings.weko_repo,
+    result = _run(
+        settings,
+        _in_web(settings, 'invenio', *arguments),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     output = result.stdout.decode('utf-8', 'replace').strip()
     return result.returncode == 0, output.splitlines()[-1] if output else ''
@@ -1013,10 +1069,10 @@ def _psql(settings, sql, atomic=False):
     if atomic:
         arguments.append('--single-transaction')
     arguments += ['-U', settings.db_user, '-d', settings.db_name, '-f', '-']
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, settings.db_service, *arguments),
-        cwd=settings.weko_repo, input=sql.encode('utf-8'),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        input=sql.encode('utf-8'))
     output = result.stdout.decode('utf-8', 'replace').strip()
     lines = [line for line in output.splitlines()
              if line.strip() and not line.startswith('INSERT ')]
@@ -1031,11 +1087,11 @@ def _psql_rows(settings, sql):
     """
     # compose writes its own warnings to stderr, and they would read as
     # rows, so this is the one place that keeps the two apart.
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, settings.db_service, 'psql', '-t', '-A',
                     '-F', '|', '-U', settings.db_user, '-d', settings.db_name,
                     '-c', sql),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     if result.returncode:
         return None
@@ -1056,14 +1112,17 @@ def _load_demo_rows(settings, name):
     It is one transaction.  The rows carry the ids they insert, so on an
     instance already using one of those ids the load is refused whole,
     and nothing is left half done.
+
+    The rows come from wherever ``--sql`` would have taken them -- the
+    checkout when there is one, and otherwise the version named by
+    ``WEKO_E2E_WEKO_REF`` -- so an instance reached by something other
+    than docker, which has no checkout beside it, can still be repaired
+    rather than only told what to run.
     """
-    path = os.path.join(settings.weko_repo, DEMO_SQL, name)
-    if not os.path.isfile(path):
-        return ['{0} is not in this checkout'.format(path)]
-    with open(path, encoding='utf-8') as handle:
-        statements = dataload.data_only(handle.read())
-    if not statements:
-        return ['{0} holds no rows to add'.format(name)]
+    text, where = _demo_rows_sql(settings, name)
+    if not text:
+        return [where or '{0} holds no rows to add'.format(name)]
+    statements = text.splitlines()
 
     adding = dataload.describe(statements)
     ok, output = _psql(settings, dataload.load_script(statements),
@@ -1071,7 +1130,7 @@ def _load_demo_rows(settings, name):
     if ok:
         return ['added {0} from {1}'.format(
             ', '.join('{0} {1}'.format(count, table)
-                      for table, count in sorted(adding.items())), name)]
+                      for table, count in sorted(adding.items())), where)]
     return [
         'the rows of {0} were refused, and nothing was changed: {1}'.format(
             name, output),
@@ -1618,9 +1677,9 @@ def _generate_vapid_keys(settings):
         "serialization.PublicFormat.UncompressedPoint))+' '"
         "+b(k.private_numbers().private_value.to_bytes(32,'big')))".format(
             PUSH_MARKER))
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, settings.inbox_service, 'python', '-c', snippet),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in result.stdout.decode('utf-8', 'replace').splitlines():
         if line.startswith(PUSH_MARKER):
@@ -1709,9 +1768,9 @@ def _remove_webpush_block(settings):
 def _recreate_inbox(settings):
     """Recreate the inbox container, so it reads the keys just written."""
     print('recreating {0}'.format(settings.inbox_service))
-    subprocess.run(
+    _run(
+        settings,
         _compose(settings, 'up', '-d', settings.inbox_service),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
@@ -1732,10 +1791,10 @@ def _stop_push_stub(settings):
     there in this session.
     """
     _copy_push_stub(settings)
-    subprocess.run(
+    _run(
+        settings,
         _in_service(settings, settings.inbox_service, 'python',
                     PUSH_STUB_IN_CONTAINER, '--stop'),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
@@ -1744,11 +1803,11 @@ def _start_push_stub(settings):
     if not _copy_push_stub(settings):
         return False
     _stop_push_stub(settings)
-    subprocess.run(
+    _run(
+        settings,
         _in_service(settings, settings.inbox_service, 'sh', '-c',
                     'cd /app && nohup python {0} {1} >/dev/null 2>&1 &'.format(
                         PUSH_STUB_IN_CONTAINER, PUSH_STUB_PORT)),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return push_stub(settings, '/subscription') is not None
 
@@ -1765,7 +1824,7 @@ def push_stub(settings, path, payload=None):
     :param payload: a body to POST, or None for a GET
     :return: what the stub answered, or None when it did not
     """
-    if not settings.weko_repo:
+    if not settings.can_exec:
         return None
     snippet = (
         "import json,urllib.request;"
@@ -1777,9 +1836,9 @@ def push_stub(settings, path, payload=None):
         "print('{3}'+json.dumps(json.load(urllib.request.urlopen(r,"
         "timeout=30))))".format(
             repr(payload), PUSH_STUB_PORT, path, PUSH_MARKER))
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_service(settings, settings.inbox_service, 'python', '-c', snippet),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in result.stdout.decode('utf-8', 'replace').splitlines():
         if line.startswith(PUSH_MARKER):
@@ -2001,9 +2060,9 @@ def deposit_log(settings, doi):
         "'poll':r.poll_attempt,'http':r.http_status,"
         "'tracking_id':r.tracking_id,"
         "'error':r.error_message}} for r in rows]))".format(doi, LOG_MARKER))
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_web(settings, 'invenio', 'shell', '-c', snippet),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in result.stdout.decode('utf-8', 'replace').splitlines():
         if line.startswith(LOG_MARKER):
@@ -2013,13 +2072,13 @@ def deposit_log(settings, doi):
 
 def command_doi_log(args, settings, ledger):
     """Print the DOI deposits WEKO has recorded."""
-    if not settings.weko_repo:
-        print('reading the deposit log needs the WEKO checkout; '
-              'set WEKO_E2E_REPO to it')
+    if not settings.can_exec:
+        print('reading the deposit log runs inside the web container: '
+              '{0}'.format(NEEDS))
         return 1
-    result = subprocess.run(
+    result = _run(
+        settings,
         _in_web(settings, 'invenio', 'workflow', 'doi', 'list'),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print(result.stdout.decode('utf-8', 'replace').strip())
     return result.returncode
@@ -2192,11 +2251,9 @@ def _write_cfg_block(settings, start, end, block, present):
 
 def _restart_weko(settings):
     """Restart the containers that read the instance configuration."""
-    for service in (settings.web_service, 'worker'):
+    for service in (settings.web_service, settings.worker_service):
         print('restarting {0}'.format(service))
-        subprocess.run(_compose(settings, 'restart', service),
-                       cwd=settings.weko_repo,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        _run(settings, _compose(settings, 'restart', service))
     _wait_for_weko(settings)
 
 
@@ -2227,10 +2284,10 @@ def _wait_for_weko(settings, timeout=300):
 
 def _stop_ark_stub(settings):
     """Stop the stub in the container, if one is running there."""
-    subprocess.run(
+    _run(
+        settings,
         _in_web(settings, 'sh', '-c',
                 'pkill -f {0} || true'.format(ARK_STUB_IN_CONTAINER)),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
@@ -2241,11 +2298,11 @@ def _start_ark_stub(settings):
     if not _copy_into_container(settings, script, ARK_STUB_IN_CONTAINER):
         return False
     _stop_ark_stub(settings)
-    subprocess.run(
+    _run(
+        settings,
         _in_web(settings, 'sh', '-c',
                 'nohup python {0} {1} >/dev/null 2>&1 &'.format(
                     ARK_STUB_IN_CONTAINER, ARK_STUB_PORT)),
-        cwd=settings.weko_repo,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return _ark_stub_answers(settings)
 
@@ -2260,8 +2317,9 @@ def _ark_stub_answers(settings):
         ".encode(),headers={{'Content-Type':'application/json'}}),"
         "timeout=5);"
         "print(json.load(r)['data']['ark'])".format(ARK_STUB_PORT))
-    result = subprocess.run(
-        _in_web(settings, 'python', '-c', probe), cwd=settings.weko_repo,
+    result = _run(
+        settings,
+        _in_web(settings, 'python', '-c', probe),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return result.returncode == 0 and b'ark:/' in result.stdout
 

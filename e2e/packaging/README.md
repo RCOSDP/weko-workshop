@@ -87,6 +87,23 @@ Looking changes nothing.  Every repair *adds* what is missing and
 replaces nothing, and nothing here deletes: what could only be put right
 by removing something is reported and left alone.
 
+## My instance is not run by docker
+
+Everything that runs inside a container goes through one command line,
+and `WEKO_E2E_EXEC` is what that command line is.  For Kubernetes:
+
+```
+WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
+WEKO_E2E_WEB_SERVICE=deploy/weko-web
+WEKO_E2E_DB_SERVICE=statefulset/postgresql
+WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
+```
+
+`{service}` is where the service name goes; the `WEKO_E2E_*_SERVICE`
+settings hold whatever your command calls each container.  With it the
+doctor asks all 19 of its checks and `--fix` repairs, with no WEKO
+checkout anywhere.  `./e2ectl env` says what it will use.
+
 ## My instance is somewhere else
 
 `--fix` works through `docker compose`, so it is no use for an instance
@@ -121,4 +138,7 @@ to do when it does not work.  [`e2e/README.ja.md`](e2e/README.ja.md) is
 the same in Japanese.
 
 This package does not carry the screenshots of a run; they are
-[in the repository]({evidence}).
+[in the repository]({evidence}). A run of your own writes its record to
+`e2e/evidence/` -- `run.md` (every step, what it found, the screenshots
+it took), `doctor.md` and `images/` -- and that folder is what to send
+back.
