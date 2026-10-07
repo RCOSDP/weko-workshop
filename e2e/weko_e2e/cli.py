@@ -595,9 +595,15 @@ def command_package(args, settings, ledger):
                   encoding='utf-8') as handle:
             content = handle.read()
         if name == 'README.md':
-            content = content.format(
-                when=datetime.now().strftime('%Y-%m-%d'),
-                revision=_revision(), evidence=PACKAGE_EVIDENCE)
+            # Only these three, by name.  str.format() over the whole
+            # file would make every brace in it a placeholder, and a
+            # README is prose: "{service}" in a kubectl example is
+            # content, not a field to fill.
+            for field, value in (
+                    ('when', datetime.now().strftime('%Y-%m-%d')),
+                    ('revision', _revision()),
+                    ('evidence', PACKAGE_EVIDENCE)):
+                content = content.replace('{' + field + '}', value)
         written.append((name, content.encode('utf-8'), mode))
     for name, content in _package_contents():
         written.append((name, content, 0o755 if name.endswith('e2ectl')
