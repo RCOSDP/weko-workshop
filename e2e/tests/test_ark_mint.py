@@ -80,10 +80,15 @@ def test_04_ark_was_minted(client, settings, flow_state):
         recid, response.status_code)
 
     assert ARK_PREFIX in response.text, (
-        'no ARK on /records/{0}. WEKO mints one only when the instance is '
-        'configured for it: WEKO_HANDLE_ALLOW_REGISTER_ARK with the mint '
-        'URL, NAAN and shoulder. For a local docker environment, run '
-        '"e2ectl ark-stub enable".'.format(recid))
+        'no ARK on /records/{0}. Two things to check, in this order. '
+        'First, whether this instance\'s WEKO has ARK at all: it is not '
+        'in every version -- release_v2.1.0 has none of it, while '
+        'feature/nii_WACREN_crossref_doi does -- and where the code is '
+        'absent no configuration will help. Second, whether the instance '
+        'is configured for it: WEKO_HANDLE_ALLOW_REGISTER_ARK with the '
+        'mint URL, NAAN and shoulder, which "e2ectl ark-stub config" '
+        'prints for the stand-in server and "e2ectl ark-stub enable" '
+        'writes for a local docker environment.'.format(recid))
 
     ark = _ark_in(response.text)
     flow_state['ark'] = ark
