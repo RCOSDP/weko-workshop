@@ -284,7 +284,9 @@ def _require_deposit(settings):
         pytest.skip(
             'depositing is off; set WEKO_E2E_CROSSREF_DEPOSIT=1 and give '
             'the instance an account with "e2ectl crossref-account enable"')
-    if not settings.weko_repo:
+    if not settings.can_exec:
         pytest.skip(
-            'the deposit log is read from inside the web container; '
-            'set WEKO_E2E_REPO to the WEKO checkout')
+            'the deposit log is read from inside the web container, and '
+            'nothing here can run a command in it: set WEKO_E2E_REPO to '
+            'the WEKO checkout, or WEKO_E2E_EXEC to a command that '
+            'reaches the containers')
