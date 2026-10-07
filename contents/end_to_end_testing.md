@@ -79,7 +79,16 @@ WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
 `{service}` is where the service name goes, and the `WEKO_E2E_*_SERVICE`
 settings hold whatever that command calls each container. With it the
 doctor asks all of its checks, `--doctor-fix` repairs, `clean --hard`
-works, and no WEKO checkout is needed for any of it.
+works, the optional suites run, and no WEKO checkout is needed for any of
+it. `./e2ectl env` says which way it will go.
+
+The one thing that does not cross over is the web push stand-in, which
+writes keys into the compose file — so the `coarnotify` suite's four push
+steps skip. The `ark` suite's stand-in does cross over, but its settings
+have to be applied by hand, because where a deployment keeps instance
+configuration is its own business: `./e2ectl ark-stub config` prints
+them, and `./e2ectl ark-stub start` then runs the stand-in in the web
+pod. [The suite in full](../e2e/README.md) has the detail.
 
 ## Repair an instance you cannot reach the containers of
 

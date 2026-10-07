@@ -207,6 +207,12 @@ enabled; run with --suite ark or WEKO_E2E_SUITES=ark)
 
 ### `ark` スイート
 
+**ARK はすべての WEKO にあるわけではありません。**
+`feature/nii_WACREN_crossref_doi` にはありますが、`release_v2.1.0` には
+コード自体がありません。無いバージョンではどう設定しても ARK は発行されず、
+スイートはその旨を伝えて失敗します。以下の設定より前に、まずここを確認して
+ください。
+
 WEKO は Item Registration アクションの完了時に ARK サーバを呼んで ARK を発行
 します。発行されるのは環境が ARK 設定済みのときだけです（mint URL・NAAN・
 shoulder と、API key またはログイン情報）。管理画面は無くインスタンス設定
@@ -256,6 +262,34 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite ark
 
 `WEKO_E2E_ARK_NAAN` を指定すると、発行された ARK がその NAAN 配下かどうかも
 確認します。未指定なら ARK であれば通ります。
+
+#### Kubernetes など docker で動いていない環境では
+
+`ark-stub enable` はチェックアウトの `scripts/instance.cfg` に書き込みますが、
+そのチェックアウトがありません。代わりにインスタンス設定がどこから来るのか
+（ConfigMap・Secret・マウントした `invenio.cfg`）はデプロイ側の事情なので、
+ツールは推測せず**設定を出力するだけ**にしてあります。
+
+```bash
+../.venv-e2e/bin/python ./e2ectl ark-stub config    # 出力するだけ。何も変更しない
+```
+
+出力された設定をデプロイのインスタンス設定に入れ、`web` と `worker` の Pod を
+再起動してください。スタンドイン自体はチェックアウト不要で、他と同じく
+`WEKO_E2E_EXEC` 経由で動きます。
+
+```bash
+../.venv-e2e/bin/python ./e2ectl ark-stub start
+../.venv-e2e/bin/python ./e2ectl ark-stub status    # "answering" と出れば OK
+WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite ark
+```
+
+設定内の URL が loopback なのは意図的で、スタンドインは WEKO と同じコンテナ内で
+動くためです。`ark-stub stop` で終了し、Pod の再起動でも終了します。終わったら
+設定は戻してください。
+
+`ark-account` も同じくチェックアウトに書き込むので、自前の ARK サーバを使う
+場合も設定は手で入れることになります（内容は上記の一覧と同じです）。
 
 ### `coarnotify` スイート
 
@@ -847,6 +881,22 @@ WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
 | `doctor --fix` | docker の場合と同様に DB に対して修復を実行 |
 | `clean --hard` | 物理削除 |
 | `--suite shibboleth` | `nginx` コンテナ内の代役 SP |
+| `--suite ark` | `web` コンテナ内のスタンドイン ARK サーバ（設定の適用が別途必要。[Kubernetes など docker で動いていない環境では](#kubernetes-など-docker-で動いていない環境では)を参照） |
+| `--suite crossref` | コンテナ内の deposit ログを読むステップを含む |
+
+チェックアウト無し・exec コマンド経由で実測した結果:
+
+| スイート | |
+| --- | --- |
+| （基本） | 13 passed |
+| `ark` | 6 passed（スタンドイン使用） |
+| `crossref` | 8 passed, 2 skipped（deposit。Crossref アカウント無しのため） |
+| `coarnotify` | 10 passed, 4 skipped（Web Push。下記参照） |
+| `shibboleth` | 9 passed |
+
+唯一そのまま移せないのが Web Push の 4 ステップです。`webpush-stub enable` は
+compose ファイルに VAPID 鍵を書き込みますが、その compose ファイルがありません。
+失敗ではなく理由付きで skip します。
 
 修復が追加する行は、チェックアウトがあればそこから、無ければ
 `WEKO_E2E_WEKO_REF` から取るので、**チェックアウト無しでも `--fix` が通ります**。

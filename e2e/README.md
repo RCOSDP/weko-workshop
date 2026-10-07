@@ -214,6 +214,11 @@ several in one session is no different from running them one at a time.
 
 ### The `ark` suite
 
+**ARK is not in every WEKO.** `feature/nii_WACREN_crossref_doi` has it;
+`release_v2.1.0` has none of the code at all. Where it is absent no
+configuration will make an ARK appear, and the suite fails saying so --
+which is the first thing to check, before any of the settings below.
+
 WEKO mints an ARK when the Item Registration action completes, by calling
 an ARK server, and only when the instance is configured for it: the mint
 URL, the NAAN and the shoulder, and then either an API key or login
@@ -268,6 +273,35 @@ the other way round.
 
 Set `WEKO_E2E_ARK_NAAN` to have the suite check the ARK came out under
 the NAAN this environment is configured for; without it, any ARK counts.
+
+#### On Kubernetes, or anywhere else docker does not run
+
+`ark-stub enable` writes into the checkout's `scripts/instance.cfg`, and
+there is no checkout. Where instance configuration comes from instead --
+a ConfigMap, a Secret, a mounted `invenio.cfg` -- is the deployment's
+business, so the tool prints the settings rather than guessing:
+
+```bash
+../.venv-e2e/bin/python ./e2ectl ark-stub config    # prints; changes nothing
+```
+
+Apply those where your deployment keeps instance settings, restart the
+`web` and `worker` pods, and then the stand-in itself needs no checkout
+-- it goes through `WEKO_E2E_EXEC` like everything else:
+
+```bash
+../.venv-e2e/bin/python ./e2ectl ark-stub start
+../.venv-e2e/bin/python ./e2ectl ark-stub status    # "answering"
+WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite ark
+```
+
+The URLs in those settings are loopback on purpose: the stand-in runs in
+the same container WEKO does. `ark-stub stop` ends it, and so does
+restarting the pod. Take the settings out again afterwards.
+
+`ark-account` writes into the checkout the same way, so an ARK server of
+your own is configured by hand there too -- the settings are the ones
+listed above.
 
 ### The `coarnotify` suite
 
@@ -900,6 +934,23 @@ With it, no WEKO checkout is needed for any of this:
 | `doctor --fix` | repairs run against the database, as on docker |
 | `clean --hard` | the physical purge |
 | `--suite shibboleth` | the stand-in SP in the `nginx` container |
+| `--suite ark` | the stand-in ARK server in the `web` container, once its settings are applied -- see [On Kubernetes, or anywhere else docker does not run](#on-kubernetes-or-anywhere-else-docker-does-not-run) |
+| `--suite crossref` | including the deposit steps, which read WEKO's log inside the container |
+
+What each suite comes to that way, measured against a stack reached by an
+exec command with no checkout anywhere:
+
+| Suite | |
+| --- | --- |
+| (base) | 13 passed |
+| `ark` | 6 passed, with the stand-in |
+| `crossref` | 8 passed, 2 skipped -- the deposit, off without a Crossref account |
+| `coarnotify` | 10 passed, 4 skipped -- the web push steps, see below |
+| `shibboleth` | 9 passed |
+
+The four web push steps are the one thing that does not cross over:
+`webpush-stub enable` writes VAPID keys into the compose file, and there
+is no compose file. They skip with the reason rather than failing.
 
 The rows a repair adds come from the checkout when there is one and from
 `WEKO_E2E_WEKO_REF` when there is not, so `--fix` works with a seeded

@@ -100,9 +100,36 @@ WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
 ```
 
 `{service}` is where the service name goes; the `WEKO_E2E_*_SERVICE`
-settings hold whatever your command calls each container.  With it the
-doctor asks all 19 of its checks and `--fix` repairs, with no WEKO
-checkout anywhere.  `./e2ectl env` says what it will use.
+settings hold whatever your command calls each container.  `-i` matters:
+some of what the tool does is piped in on standard input.  `./e2ectl env`
+says what it will use.
+
+With it, no WEKO checkout is needed for the doctor's full 19 checks, for
+`doctor --fix`, for `clean --hard`, or for the optional suites:
+
+| Suite | Measured that way |
+| --- | --- |
+| (base) | 13 passed |
+| `--suite ark` | 6 passed, with the stand-in (see below) |
+| `--suite crossref` | 8 passed, 2 skipped -- the deposit, off without a Crossref account |
+| `--suite coarnotify` | 10 passed, 4 skipped -- the web push steps need a stand-in only docker can set up |
+| `--suite shibboleth` | 9 passed |
+
+**For the `ark` suite**, `ark-stub enable` cannot help -- it writes into
+a checkout's `scripts/instance.cfg`.  Where your instance settings come
+from instead is your deployment's business, so the tool prints them:
+
+```
+./e2ectl ark-stub config     # prints; changes nothing
+```
+
+Apply those wherever your deployment keeps instance settings, restart the
+web and worker pods, then `./e2ectl ark-stub start` runs the stand-in in
+the web pod and `--suite ark` can run.
+
+**ARK is not in every WEKO.**  `feature/nii_WACREN_crossref_doi` has it;
+`release_v2.1.0` has none of the code.  Where it is absent no
+configuration will make an ARK appear -- check that first.
 
 ## My instance is somewhere else
 
