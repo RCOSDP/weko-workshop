@@ -2331,18 +2331,49 @@ def _ark_stub_answers(settings):
 
 
 def command_ark_stub(args, settings, ledger):
-    """Turn the stand-in ARK server in the web container on or off."""
+    """Turn the stand-in ARK server in the web container on or off.
+
+    ``enable`` and ``disable`` edit the instance configuration in the
+    WEKO checkout, so they want one.  The rest only run something in the
+    web container, which ``WEKO_E2E_EXEC`` can also do -- and ``config``
+    wants neither: it prints the settings for somebody to apply where
+    their own deployment keeps them.
+    """
     action = args.action or 'status'
-    if not settings.weko_repo:
-        print('the ARK stub needs the WEKO checkout that owns {0}; '
-              'set WEKO_E2E_REPO to it'.format(settings.compose_file))
+
+    if action == 'config':
+        # Where instance configuration comes from on Kubernetes is the
+        # deployment's business -- a ConfigMap, a Secret, a mounted file
+        # -- and not something this tool can know or should guess at.
+        # So it writes the settings out instead, the way "doctor --sql"
+        # writes repairs out.
+        print(_ark_stub_block_for_display())
+        return 0
+
+    if action in ('enable', 'disable'):
+        if not settings.weko_repo:
+            print('"{0}" edits the instance configuration in the WEKO '
+                  'checkout, and there is none here. Use "ark-stub config" '
+                  'for the settings to apply yourself, then "ark-stub '
+                  'start" to run the stand-in.'.format(action))
+            return 1
+    elif not settings.can_exec:
+        print('the stand-in runs in the {0} container: {1}'.format(
+            settings.web_service, NEEDS))
         return 1
 
     if action == 'status':
-        print('settings in {0}: {1}'.format(
-            _instance_cfg(settings),
-            'present' if _cfg_block_present(settings, ARK_BLOCK_START)
-            else 'absent'))
+        if settings.weko_repo:
+            print('settings in {0}: {1}'.format(
+                _instance_cfg(settings),
+                'present' if _cfg_block_present(settings, ARK_BLOCK_START)
+                else 'absent'))
+        else:
+            # The configuration is wherever the deployment keeps it, and
+            # this tool cannot see it; what it can see is whether the
+            # instance mints, which the suite asks anyway.
+            print('settings: not in a file this tool can see; '
+                  '"ark-stub config" prints what they should be')
         print('stub in the container: {0}'.format(
             'answering' if _ark_stub_answers(settings) else 'not answering'))
         return 0
@@ -2397,9 +2428,40 @@ def command_ark_stub(args, settings, ledger):
                 _instance_cfg(settings)))
         return 0
 
-    print('unknown action {0!r}; use enable, disable, start, stop or '
-          'status'.format(action))
+    print('unknown action {0!r}; use enable, disable, start, stop, status '
+          'or config'.format(action))
     return 1
+
+
+def _ark_stub_block_for_display():
+    """Return the stand-in's settings, with a note on how to use them.
+
+    The same settings ``enable`` writes into the checkout, for an
+    instance whose configuration this tool has no business editing.
+    """
+    body = '\n'.join(line for line in ARK_BLOCK.splitlines()
+                     if not line.startswith('#'))
+    return (
+        '# The stand-in ARK server settings, for an instance whose\n'
+        '# configuration does not come from a WEKO checkout.\n'
+        '#\n'
+        '# Put these wherever your deployment keeps instance settings --\n'
+        '# a ConfigMap, a Secret, a mounted invenio.cfg -- then restart\n'
+        '# the web and worker pods, and run:\n'
+        '#\n'
+        '#     ./e2ectl ark-stub start\n'
+        '#     WEKO_E2E_ARK_NAAN={naan} python -m pytest --suite ark\n'
+        '#\n'
+        '# The URLs are loopback on purpose: the stand-in runs inside the\n'
+        '# same container WEKO does, so nothing has to be reachable over\n'
+        '# the network and no ARK server anywhere is involved.\n'
+        '#\n'
+        '{body}\n'
+        '#\n'
+        '# "./e2ectl ark-stub stop" ends it; it is an ordinary process, so\n'
+        '# restarting the pod ends it too. Take these settings out again\n'
+        '# when you are done with them.'.format(naan=ARK_STUB_NAAN,
+                                                body=body))
 
 
 COMMANDS = {
@@ -2430,7 +2492,8 @@ def build_parser():
     parser.add_argument('action', nargs='?',
                         help='for ark-account, ark-stub and '
                              'crossref-account: enable, disable or status; '
-                             'ark-stub also takes start and stop; shib '
+                             'ark-stub also takes start, stop and '
+                             'config; shib '
                              'takes login, status, enable, disable or '
                              'forget')
     parser.add_argument('--run', help='act on one run id only')
