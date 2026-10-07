@@ -1066,7 +1066,7 @@ screenshots it is written from:
 evidence/
 ├── README.md, README.ja.md      the run, and the base flow
 ├── doctor.md                    what the instance looked like beforehand
-├── run.md                       what the run did, step by step
+├── run.md                       what the run did, step by step (not kept here)
 ├── images/                      what the base flow's steps photographed
 ├── ark/README.md, images/       the ark suite, and its own screenshots
 ├── coarnotify/README.md, …
@@ -1084,3 +1084,7 @@ all of it in place, so the report cannot drift from the code.
 `README.md` is the one part written by hand, for a run chosen to be
 kept. A run made somewhere else needs none of it: `evidence/` as the
 run left it -- `run.md`, `doctor.md` and the images -- is its record.
+
+`run.md` is the one file this repository does not keep a copy of. It is
+rewritten by whatever ran last, so a copy here would only disagree with
+the report beside it; yours appears the first time you run.

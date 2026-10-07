@@ -12,12 +12,13 @@ is what removes them.
 
 import os
 import sys
+from datetime import datetime
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from weko_e2e import doctor, ui  # noqa: E402
+from weko_e2e import doctor, runlog, ui  # noqa: E402
 from weko_e2e.client import WekoClient, anonymous_session  # noqa: E402
 from weko_e2e.config import (E2E_DIR, OPTIONAL_SUITES,  # noqa: E402
                              Settings, parse_suites)
@@ -34,11 +35,23 @@ somebody remembered.
 EVIDENCE = os.path.join(E2E_DIR, 'evidence')
 """Where the report of a run and its screenshots are written.
 
-The base flow's report is ``evidence/README.md`` and its screenshots are
-``evidence/images/``; each optional suite has a folder of its own beside
-them, so that a suite's report and the screenshots it is written from
-travel together.
+The run's own record is ``evidence/run.md`` (see :data:`RUN_REPORT`); the
+hand-written report of a kept run is ``evidence/README.md``.  The base
+flow's screenshots are ``evidence/images/``; each optional suite has a
+folder of its own beside them, so that a suite's report and the
+screenshots it is written from travel together.
 """
+
+RUN_REPORT = os.path.join(EVIDENCE, 'run.md')
+"""Where the run writes down what it did, when it finishes.
+
+Beside ``doctor.md``, and left behind the same way: a run made on
+somebody else's machine comes back with its own record.
+"""
+
+_RUN = {'started': None, 'doctor': False, 'cleaned': None, 'current': None,
+        'steps': [], 'created': []}
+"""What the run's record is gathered into as the run goes."""
 
 
 def pytest_addoption(parser):
@@ -81,8 +94,18 @@ def pytest_sessionstart(session):
     run's business.  ``--no-doctor`` skips the whole thing.
     """
     config = session.config
-    if config.getoption('--no-doctor') or config.option.collectonly:
+    _RUN['started'] = datetime.now()
+    if config.option.collectonly:
         return
+    # Whatever else happens, the record of the *previous* run must not be
+    # what somebody sends on as this one's.
+    try:
+        os.remove(RUN_REPORT)
+    except OSError:
+        pass
+    if config.getoption('--no-doctor'):
+        return
+    _RUN['doctor'] = True
 
     from weko_e2e.cli import look_over, put_right
 
@@ -111,6 +134,15 @@ def pytest_sessionstart(session):
     _write_doctor_report(findings, settings, wanted)
     failed = [f for f in findings if f.status == doctor.FAIL]
     if failed:
+        # pytest skips pytest_sessionfinish when a session is exited from
+        # pytest_sessionstart, so the record of a run that got no further
+        # than this has to be written here.
+        _write_run_report(config, stopped=(
+            'The run never started: the look at the instance found {0} '
+            'wanting, and stopped rather than produce failures that are '
+            'not about the tests. [`doctor.md`](doctor.md) is what it '
+            'found.'.format('; '.join(
+                '`{0}`'.format(f.name) for f in failed))))
         pytest.exit(
             'this instance is not in a state to be tested: {0}. Put it '
             'right with "./e2ectl doctor --fix", or run with --no-doctor '
@@ -190,6 +222,10 @@ def pytest_collection_modifyitems(config, items):
     what it did not do, and how to ask for it.
     """
     wanted = enabled_suites(config)
+    _RUN['steps'] = [runlog.Step(
+        item.nodeid, item.module.__name__, item.name,
+        getattr(item.obj, '__doc__', None), _suite_of(item.module))
+        for item in items]
     for item in items:
         marker = item.get_closest_marker('suite')
         if not marker or not marker.args:
@@ -200,6 +236,74 @@ def pytest_collection_modifyitems(config, items):
                 reason='optional suite {0!r} not enabled; '
                        'run with --suite {0} or WEKO_E2E_SUITES={0}'.format(
                            name)))
+
+
+def _step(nodeid):
+    """Return the record of one test, or None for one never collected."""
+    for step in _RUN['steps']:
+        if step.nodeid == nodeid:
+            return step
+    return None
+
+
+def pytest_runtest_logstart(nodeid, location):
+    """Note which test is running, for the screenshots and the ledger."""
+    _RUN['current'] = _step(nodeid)
+
+
+def pytest_runtest_logreport(report):
+    """Take each phase of a test into the run's record."""
+    step = _step(report.nodeid)
+    if step is None:
+        return
+    reason = None
+    if report.skipped and isinstance(report.longrepr, tuple):
+        reason = report.longrepr[2]
+        if reason.startswith('Skipped: '):
+            reason = reason[len('Skipped: '):]
+    elif report.failed:
+        crash = getattr(report.longrepr, 'reprcrash', None)
+        reason = crash.message if crash else report.longreprtext
+    step.report(report.when, report.outcome, report.duration, reason)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Write down what the run did, under ``evidence``."""
+    config = session.config
+    if config.option.collectonly:
+        return
+    _write_run_report(config, stopped=None if _RUN['steps'] else (
+        'No test ran: nothing matched what was asked for.'))
+
+
+def _write_run_report(config, stopped=None):
+    """Write the run's own record under ``evidence``.
+
+    :param stopped: why the run ended before any test ran, if it did.
+        Written down rather than left out, because an evidence folder
+        that somebody sends on should say what happened to *this* run.
+    """
+    settings = settings_for()
+    environment = [('suite', runlog.revision(os.path.dirname(
+        os.path.abspath(__file__))) or 'not a git checkout')]
+    if settings.weko_repo:
+        environment.append(('WEKO', '{0} {1}'.format(
+            settings.weko_repo,
+            runlog.revision(settings.weko_repo) or '')))
+    environment += runlog.versions()
+    try:
+        if not os.path.isdir(EVIDENCE):
+            os.makedirs(EVIDENCE)
+        with open(RUN_REPORT, 'w', encoding='utf-8') as handle:
+            handle.write(runlog.as_markdown(
+                _RUN['steps'], settings, enabled_suites(config),
+                _RUN['started'] or datetime.now(), datetime.now(),
+                _RUN['created'], cleaned=_RUN['cleaned'],
+                doctor=_RUN['doctor'], environment=environment,
+                stopped=stopped))
+        print('\nrecord of the run: {0}'.format(RUN_REPORT))
+    except OSError as error:
+        print('could not write {0}: {1}'.format(RUN_REPORT, error))
 
 
 _FAILED = {}
@@ -292,6 +396,9 @@ def record(ledger, base_settings):
     def note(kind, identifier, name=None):
         """Write one resource to the ledger and return its identifier."""
         ledger.add(base_settings.run_id, kind, identifier, name)
+        step = _RUN['current']
+        _RUN['created'].append((step.suite if step else None, kind,
+                                str(identifier), name))
         return identifier
 
     return note
@@ -372,6 +479,11 @@ def shot(request):
         page.wait_for_timeout(500)
         page.screenshot(path=path, full_page=full_page)
         print('screenshot: {0}'.format(path))
+        step = _RUN['current']
+        if step is not None:
+            image = os.path.relpath(path, EVIDENCE).replace(os.sep, '/')
+            if image not in step.images:
+                step.images.append(image)
         return path
 
     return take
@@ -404,5 +516,6 @@ def cleanup(request, base_settings):
     argv = ['clean', '--run', base_settings.run_id]
     if request.config.getoption('--clean-hard'):
         argv.append('--hard')
+    _RUN['cleaned'] = ' '.join(argv[:1] + argv[3:])
     print('\ncleaning up run {0}'.format(base_settings.run_id))
     main(argv)

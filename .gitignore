@@ -25,3 +25,9 @@ e2e/e2e.env
 e2e/.pytest_cache/
 __pycache__/
 *.pyc
+
+# The record a run writes for itself.  doctor.md and the screenshots beside
+# it belong to the one run this repository keeps (see e2e/evidence/README.md);
+# run.md is rewritten by whatever ran last, so keeping it here would only
+# make the kept report disagree with the file next to it.
+e2e/evidence/run.md
