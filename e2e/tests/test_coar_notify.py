@@ -217,10 +217,12 @@ def test_08_the_instance_can_send_a_web_push(client, settings, flow_state):
     nothing without a VAPID key, which the shipped compose file leaves
     empty.  ``e2ectl webpush-stub enable`` is what puts both in place.
     """
-    if not settings.weko_repo:
+    if not settings.can_exec:
         pytest.skip(
-            'the web push stand-in is reached through docker; set '
-            'WEKO_E2E_REPO to the WEKO checkout')
+            'the web push stand-in runs in the inbox container, and '
+            'nothing here can run a command in it: set WEKO_E2E_REPO to '
+            'the WEKO checkout, or WEKO_E2E_EXEC to a command that '
+            'reaches the containers')
     subscription = push_stub(settings, '/subscription')
     if not subscription:
         pytest.skip(
@@ -448,8 +450,18 @@ def _rendered_template(settings, activity_type, notification, language='en'):
     does the same, so the step compares what arrived with what the
     instance's own message file says rather than with a copy of the text.
 
+    The templates are read out of the checkout, which is the one thing
+    here that wants the checkout's *files* rather than a way into the
+    containers -- so where there is none this skips rather than fails.
+
     :raise AssertionError: when the file has no template for that type
     """
+    if not settings.weko_repo:
+        pytest.skip(
+            'the message texts are read from {0} in the WEKO checkout, so '
+            'that this step compares the push with the instance\'s own '
+            'words rather than with a copy of them; set '
+            'WEKO_E2E_REPO'.format(PUSH_TEMPLATES))
     path = os.path.join(settings.weko_repo, PUSH_TEMPLATES)
     assert os.path.isfile(path), \
         'the message templates are not at {0}; this is where WEKO reads ' \
