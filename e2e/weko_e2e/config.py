@@ -41,6 +41,8 @@ DEFAULTS = {
     'WEKO_E2E_NOTIFY_TIMEOUT': '120',
     'WEKO_E2E_INBOX_SERVICE': 'inbox',
     'WEKO_E2E_NGINX_SERVICE': 'nginx',
+    'WEKO_E2E_WORKER_SERVICE': 'worker',
+    'WEKO_E2E_EXEC': '',
     'WEKO_E2E_LOGIN': 'local',
     'WEKO_E2E_SHIB_EPPN': 'e2e-shibboleth@example.org',
     'WEKO_E2E_SHIB_MAIL': 'e2e-shibboleth-mail@example.org',
@@ -269,6 +271,8 @@ class Settings(object):
         self.notify_timeout = int(_env('WEKO_E2E_NOTIFY_TIMEOUT'))
         self.inbox_service = _env('WEKO_E2E_INBOX_SERVICE')
         self.nginx_service = _env('WEKO_E2E_NGINX_SERVICE')
+        self.worker_service = _env('WEKO_E2E_WORKER_SERVICE')
+        self.exec_template = _env('WEKO_E2E_EXEC').strip()
         self.login_as = _env('WEKO_E2E_LOGIN').strip().lower()
         self.shib_eppn = _env('WEKO_E2E_SHIB_EPPN')
         self.shib_mail = _env('WEKO_E2E_SHIB_MAIL') or self.shib_eppn
@@ -422,16 +426,38 @@ class Settings(object):
             ('upload timeout', '{0} s'.format(self.upload_timeout)),
             ('search timeout', '{0} s'.format(self.search_timeout)),
             ('WEKO checkout', self.weko_repo or '(not found)'),
+            ('running in containers by', self._describe_exec()),
             ('WEKO version for SQL', self.weko_ref or
              '(none; "e2ectl seed <ref>" takes one)'),
             ('compose file', self.compose_file),
             ('web service', self.web_service),
             ('inbox service', self.inbox_service),
             ('nginx service', self.nginx_service),
+            ('worker service', self.worker_service),
             ('database service', '{0} ({1}/{2})'.format(
                 self.db_service, self.db_user, self.db_name)),
             ('repository in container', self.container_repo),
         ]
+
+    @property
+    def can_exec(self):
+        """Return whether anything can be run inside the containers.
+
+        Either because something was named to run it with
+        (:attr:`exec_template`) or because there is a checkout to point
+        ``docker compose`` at.  The two are not the same as having the
+        checkout's *files*, which is a separate thing -- loading
+        ``scripts/demo`` needs those, running a command does not.
+        """
+        return bool(self.exec_template or self.weko_repo)
+
+    def _describe_exec(self):
+        """Return what commands inside the containers are run with."""
+        if self.exec_template:
+            return self.exec_template
+        if self.weko_repo:
+            return 'docker compose -f {0}'.format(self.compose_file)
+        return '(nothing; no WEKO checkout and no WEKO_E2E_EXEC)'
 
     def _describe_login(self):
         """Return how a run logs in, and as whom."""

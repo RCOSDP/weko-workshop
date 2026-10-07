@@ -167,7 +167,8 @@ What happens, in order:
 2. **The suites run.** The base flow always; the others only when asked
    for by name. See [Choosing what runs](#choosing-what-runs).
 3. **What each step saw is written to `evidence/`** -- the screenshots,
-   and the look from step 1. Re-running refreshes them in place.
+   the look from step 1 (`doctor.md`), and the record of the run
+   (`run.md`). Re-running refreshes them in place.
 4. **What the run created stays**, so that a failure can be looked at,
    until `clean` takes it away. `--clean-after --clean-hard` does that at
    the end of the run instead. See [Cleaning up](#cleaning-up-the-tool).
@@ -818,7 +819,7 @@ Every one of these can also be a line in an environment file.
 | `WEKO_E2E_SHIB_EPPN` | `e2e-shibboleth@example.org` | The `eppn` the stand-in SP releases, which becomes the binding |
 | `WEKO_E2E_SHIB_MAIL` | `e2e-shibboleth-mail@example.org` | The `mail` it releases, which becomes the account's email. Deliberately not the `eppn` |
 | `WEKO_E2E_SHIB_USER_NAME` | `WEKO E2E Shibboleth` | The `DisplayName` it releases |
-| `WEKO_E2E_NGINX_SERVICE` | `nginx` | The compose service the stand-in SP runs in |
+| `WEKO_E2E_NGINX_SERVICE` | `nginx` | The service the stand-in SP runs in |
 
 ### The ARK server (minting)
 
@@ -863,10 +864,53 @@ setting them alone changes nothing on the instance.
 | `WEKO_E2E_COMPOSE_FILE` | `docker-compose2.yml` | |
 | `WEKO_E2E_WEB_SERVICE` | `web` | Compose service running WEKO |
 | `WEKO_E2E_INBOX_SERVICE` | `inbox` | Compose service running the LDN inbox: cleared of the run's notifications, and where the web push stand-in runs |
-| `WEKO_E2E_DB_SERVICE` | `postgresql` | Compose service running the database, which `doctor --fix` applies SQL through |
+| `WEKO_E2E_EXEC` | (none) | Command that runs something in a container, with `{service}` where the name goes. Unset means `docker compose exec -T`. See [Reaching an instance docker does not run](#reaching-an-instance-docker-does-not-run) |
+| `WEKO_E2E_DB_SERVICE` | `postgresql` | Service running the database, which `doctor --fix` applies SQL through |
+| `WEKO_E2E_WORKER_SERVICE` | `worker` | Service running the worker |
 | `WEKO_E2E_DB_USER` | `invenio` | |
 | `WEKO_E2E_DB_NAME` | `invenio` | |
 | `WEKO_E2E_CONTAINER_REPO` | `/code` | Where the WEKO checkout is mounted in that container |
+
+### Reaching an instance docker does not run
+
+Everything that runs inside a container goes through one command line,
+and `WEKO_E2E_EXEC` is what that command line is. Unset, it is
+`docker compose exec -T` against the checkout, which is what a stack from
+`install.sh` wants. Set, it is yours — for Kubernetes:
+
+```bash
+WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
+WEKO_E2E_WEB_SERVICE=deploy/weko-web
+WEKO_E2E_DB_SERVICE=statefulset/postgresql
+WEKO_E2E_NGINX_SERVICE=deploy/weko-nginx
+WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
+WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
+```
+
+`{service}` is where the service name goes, and the names come from the
+`WEKO_E2E_*_SERVICE` settings as they always did — so what they have to
+hold is whatever *your* command calls that container. `-i` matters:
+some of what the tool does is piped in on standard input.
+
+With it, no WEKO checkout is needed for any of this:
+
+| | |
+| --- | --- |
+| `doctor` | all 19 checks, not the 7 that HTTP alone can answer |
+| `doctor --fix` | repairs run against the database, as on docker |
+| `clean --hard` | the physical purge |
+| `--suite shibboleth` | the stand-in SP in the `nginx` container |
+
+The rows a repair adds come from the checkout when there is one and from
+`WEKO_E2E_WEKO_REF` when there is not, so `--fix` works with a seeded
+version and no checkout at all.
+
+**What still needs a checkout**, because each edits a file in it rather
+than running a command: `ark-stub`, `ark-account`, `crossref-account` and
+`webpush-stub enable`/`disable`. Each says so.
+
+`./e2ectl env` prints what commands inside the containers will be run
+with, so it is worth looking at before the first run.
 
 ### Repairing by SQL
 
@@ -899,6 +943,7 @@ version, and travels in a package built afterwards.
 | `crossref` with depositing on, against a stand-in for Crossref | 10 passed; deposit reached `success` |
 | `coarnotify` against the stack's own `inbox` service | 10 passed; both notifications reached the right account |
 | `shibboleth` against a stack from `install.sh` | 9 passed; `mail` became the account's email, and the switch and the account were put back |
+| With `WEKO_E2E_EXEC`, no checkout at all | 13 passed and `shibboleth` 9 passed; the doctor asked all 19 checks |
 | `ark` against a server configured with `ark-account` (login flow) | 6 passed; minted `ark:/12345/x9...` |
 
 ## Deriving a suite from this one
@@ -1021,6 +1066,7 @@ screenshots it is written from:
 evidence/
 ├── README.md, README.ja.md      the run, and the base flow
 ├── doctor.md                    what the instance looked like beforehand
+├── run.md                       what the run did, step by step
 ├── images/                      what the base flow's steps photographed
 ├── ark/README.md, images/       the ark suite, and its own screenshots
 ├── coarnotify/README.md, …
@@ -1028,6 +1074,13 @@ evidence/
 └── shibboleth/README.md, …
 ```
 
-The tests take the screenshots themselves as they go, under fixed names,
-and the run writes `doctor.md` before its first test, so re-running
-refreshes both in place and the report cannot drift from the code.
+The tests take the screenshots themselves as they go, under fixed names;
+the run writes `doctor.md` before its first test and `run.md` when it
+finishes -- the instance, the outcome and duration of every step, why
+each skip skipped, what failed and with what message, what was created,
+and the screenshots under the step that took them. Re-running refreshes
+all of it in place, so the report cannot drift from the code.
+
+`README.md` is the one part written by hand, for a run chosen to be
+kept. A run made somewhere else needs none of it: `evidence/` as the
+run left it -- `run.md`, `doctor.md` and the images -- is its record.

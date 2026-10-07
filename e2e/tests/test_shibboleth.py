@@ -62,17 +62,19 @@ def shibboleth(client, settings):
     The account the run logs in as is removed on the way out too, so an
     instance is left holding neither the account nor the binding.
 
-    Skipped whole where there is no WEKO checkout.  Every step needs the
-    stand-in, and the stand-in is copied into the ``nginx`` container
-    through that checkout -- so skipping here skips the suite, rather
-    than letting the steps after the first fail one by one for a reason
-    that has nothing to do with Shibboleth.
+    Skipped whole where nothing can be run in the containers.  Every
+    step needs the stand-in, and the stand-in has to be copied into the
+    ``nginx`` container -- so skipping here skips the suite, rather than
+    letting the steps after the first fail one by one for a reason that
+    has nothing to do with Shibboleth.
     """
-    if not settings.weko_repo:
+    if not settings.can_exec:
         pytest.skip(
-            'the Shibboleth stand-in runs in the {0} container, so this '
-            'suite needs the WEKO checkout that owns the compose file; '
-            'set WEKO_E2E_REPO'.format(settings.nginx_service))
+            'the Shibboleth stand-in runs in the {0} container, and '
+            'nothing here can run a command in it: set WEKO_E2E_REPO to '
+            'the WEKO checkout that owns the compose file, or '
+            'WEKO_E2E_EXEC to a command that reaches the containers '
+            '(Kubernetes and the like)'.format(settings.nginx_service))
     was = client.shib_login_enabled()
     client.shib_login_enabled(True)
     yield was

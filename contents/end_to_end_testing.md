@@ -62,6 +62,25 @@ ever a deletion you did not ask for:
 Thirteen steps, a minute or two. Set `WEKO_HEADED=1` to watch the browser
 do it.
 
+## Run it against an instance docker does not run
+
+Everything the tool does inside a container goes through one command
+line, and `WEKO_E2E_EXEC` is what that command line is. Unset, it is
+`docker compose exec -T` against the checkout. For an instance on
+Kubernetes:
+
+```
+WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
+WEKO_E2E_WEB_SERVICE=deploy/weko-web
+WEKO_E2E_DB_SERVICE=statefulset/postgresql
+WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
+```
+
+`{service}` is where the service name goes, and the `WEKO_E2E_*_SERVICE`
+settings hold whatever that command calls each container. With it the
+doctor asks all of its checks, `--doctor-fix` repairs, `clean --hard`
+works, and no WEKO checkout is needed for any of it.
+
 ## Repair an instance you cannot reach the containers of
 
 `--doctor-fix` works through `docker compose`, so it is no use for an

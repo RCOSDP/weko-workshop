@@ -128,28 +128,37 @@ def check_reachable(survey):
 
 
 def check_checkout(survey):
-    """The WEKO checkout that owns the containers was found.
+    """Something can run a command inside the containers.
 
     Half of what there is to look at -- roles, partitions, what the
     running application believes its configuration is -- is only
-    reachable by running something in a container, and that means
-    knowing which checkout owns the compose file.
+    reachable by running something in a container.  Two things can:
+    ``docker compose``, which needs the checkout that owns the compose
+    file, or whatever ``WEKO_E2E_EXEC`` names, which is how an instance
+    that is not run by docker at all is reached.
     """
+    name = 'a way into the containers'
+    settings = survey.settings
     if survey.report:
-        return Finding(OK, 'the WEKO checkout', survey.settings.weko_repo)
-    if survey.settings.weko_repo:
+        return Finding(OK, name, settings.weko_repo or settings.exec_template)
+    if settings.can_exec:
         return Finding(
-            WARN, 'the WEKO checkout',
-            '{0} was found, but it could not be inspected ({1}). Is the '
-            'stack up?'.format(survey.settings.weko_repo,
-                               survey.report_error or 'no answer'))
+            WARN, name,
+            '{0}, but the instance could not be inspected through it ({1}). '
+            'Is it up, and does that command reach the {2} '
+            'container?'.format(
+                settings.weko_repo or settings.exec_template,
+                survey.report_error or 'no answer', settings.web_service))
     return Finding(
-        WARN, 'the WEKO checkout',
-        'not found, so the checks that run inside a container were not '
-        'asked. It is found automatically when it sits next to this '
-        'repository and is named {0}; otherwise set WEKO_E2E_REPO to the '
-        'one that holds {1}.'.format(
-            ', '.join(WEKO_REPO_NAMES), survey.settings.compose_file))
+        WARN, name,
+        'there is none, so the checks that run inside a container were not '
+        'asked. A WEKO checkout is found automatically when it sits next to '
+        'this repository and is named {0}; otherwise set WEKO_E2E_REPO to '
+        'the one that holds {1}, or -- for an instance docker does not run, '
+        'on Kubernetes say -- WEKO_E2E_EXEC to a command that runs things '
+        'in the containers, such as '
+        '"kubectl exec -i -n weko {{service}} --".'.format(
+            ', '.join(WEKO_REPO_NAMES), settings.compose_file))
 
 
 def check_login(survey):
@@ -394,8 +403,8 @@ def check_worker(survey):
     """The worker is running, because indexing is its job."""
     if survey.worker is None:
         return Finding(WARN, 'the worker is running',
-                       'not asked; there is no WEKO checkout to ask docker '
-                       'through')
+                       'not asked; nothing can be run in the containers '
+                       'to ask')
     if survey.worker:
         return Finding(OK, 'the worker is running', 'up')
     return Finding(
