@@ -1003,7 +1003,7 @@ enable・disable。いずれもその旨を表示します。
 evidence/
 ├── README.md, README.ja.md      実行全体と基本スイート
 ├── doctor.md                    実行直前の環境点検の結果
-├── run.md                       実行記録（ステップごとの結果）
+├── run.md                       実行記録（ステップごとの結果。リポジトリには入れていません）
 ├── images/                      基本スイートの画像
 ├── ark/README.ja.md, images/    ark スイートとその画像
 ├── coarnotify/README.ja.md, …
