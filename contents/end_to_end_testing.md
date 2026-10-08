@@ -88,7 +88,9 @@ steps skip. The `ark` suite's stand-in does cross over, but its settings
 have to be applied by hand, because where a deployment keeps instance
 configuration is its own business: `./e2ectl ark-stub config` prints
 them, and `./e2ectl ark-stub start` then runs the stand-in in the web
-pod. [The suite in full](../e2e/README.md) has the detail.
+pod. `./e2ectl crossref-account config` does the same for the Crossref
+deposit account — though granting a DOI needs no account at all.
+[The suite in full](../e2e/README.md) has the detail.
 
 ## Repair an instance you cannot reach the containers of
 

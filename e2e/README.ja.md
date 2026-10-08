@@ -405,8 +405,41 @@ WEKO_E2E_CROSSREF_PREFIX=10.80000        # そのアカウントで使えるプ�
 送った deposit の一覧を確認できます。
 
 deposit の状態は web コンテナ内の `doi_deposit_log` から読むので、この 2
-ステップには WEKO チェックアウトが必要です（無ければ skip）。Crossref に
-拒否された場合は、Crossref が返した理由を添えて失敗します。
+ステップにはコンテナ内で実行する手段が必要です（チェックアウト、または
+`WEKO_E2E_EXEC`）。無ければ skip します。Crossref に拒否された場合は、
+Crossref が返した理由を添えて失敗します。
+
+#### Kubernetes など docker で動いていない環境では
+
+`crossref-account enable` はチェックアウトの `scripts/instance.cfg` に書き
+込みますが、そのチェックアウトがありません。ARK のスタンドインと同様、
+ツールは設定の置き場所を推測せず**出力するだけ**にしてあります。
+
+```bash
+WEKO_E2E_CROSSREF_LOGIN_ID=you@example.org/role \
+WEKO_E2E_CROSSREF_LOGIN_PASSWD=... \
+WEKO_E2E_CROSSREF_DEPOSITOR_EMAIL=you@example.org \
+    ../.venv-e2e/bin/python ./e2ectl crossref-account config
+```
+
+この 3 つが無いと出力を拒否します。認証情報が空のまま設定された
+インスタンスは deposit を試みて失敗するだけだからです。
+
+**出力にはパスワードが含まれます。** ConfigMap ではなく Secret に入れ、
+コミットしないでください。適用後に `web` と `worker` の Pod を再起動し、
+そのアカウントが登録できるプレフィックスを指定して実行します。
+
+```bash
+WEKO_E2E_CROSSREF_DEPOSIT=1 WEKO_E2E_CROSSREF_PREFIX=10.80000 \
+    ../.venv-e2e/bin/python -m pytest --suite crossref
+```
+
+deposit ログの読み戻しは `WEKO_E2E_EXEC` が設定してあればチェックアウト
+不要です。終わったら設定は戻してください。
+
+**付与（grant）だけならここは不要です。** Crossref アカウントが無い状態では
+8 passed, 2 skipped となり、これが仕様どおりの挙動です。この節は deposit
+そのものを検証する場合のためのものです。
 
 ### `shibboleth` スイート
 

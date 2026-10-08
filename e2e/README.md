@@ -429,8 +429,42 @@ prefix has to be one the account is allowed to register under, so
 where things stand, and `e2ectl doi-log` shows what WEKO has sent.
 
 The deposit is read from `doi_deposit_log` inside the `web` container, so
-these two steps need the WEKO checkout; they skip without it. A deposit
-that Crossref refuses fails the step with the reason Crossref gave.
+these two steps need a way in there -- the checkout, or `WEKO_E2E_EXEC`
+-- and skip without one. A deposit that Crossref refuses fails the step
+with the reason Crossref gave.
+
+#### On Kubernetes, or anywhere else docker does not run
+
+`crossref-account enable` writes into the checkout's
+`scripts/instance.cfg`, and there is none. As with the ARK stand-in, the
+tool prints the settings instead of guessing where your deployment keeps
+them:
+
+```bash
+WEKO_E2E_CROSSREF_LOGIN_ID=you@example.org/role \
+WEKO_E2E_CROSSREF_LOGIN_PASSWD=... \
+WEKO_E2E_CROSSREF_DEPOSITOR_EMAIL=you@example.org \
+    ../.venv-e2e/bin/python ./e2ectl crossref-account config
+```
+
+It refuses to print without those three, because an instance configured
+with blank credentials would try to deposit and fail.
+
+**What it prints contains a password.** Put it in a Secret rather than a
+ConfigMap, and do not commit it. Then restart the `web` and `worker`
+pods and run the suite with a prefix that account may register under:
+
+```bash
+WEKO_E2E_CROSSREF_DEPOSIT=1 WEKO_E2E_CROSSREF_PREFIX=10.80000 \
+    ../.venv-e2e/bin/python -m pytest --suite crossref
+```
+
+Reading the deposit log back needs no checkout once `WEKO_E2E_EXEC` is
+set. Take the settings out again afterwards.
+
+**Granting needs none of this.** Without a Crossref account the suite is
+8 passed and 2 skipped, which is the documented behaviour -- so this
+section is only for testing the deposit itself.
 
 ### The `shibboleth` suite
 

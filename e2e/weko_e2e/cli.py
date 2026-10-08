@@ -1991,18 +1991,42 @@ def command_crossref_account(args, settings, ledger):
     file the container renders its configuration from, and takes them away
     again on ``disable``.  The deposit URL defaults to Crossref's test
     system, which is where a test run belongs.
+
+    ``config`` prints the same settings instead of writing them, for an
+    instance whose configuration does not come from a checkout -- on
+    Kubernetes, where it comes from a ConfigMap or a Secret.
     """
     action = args.action or 'status'
-    if not settings.weko_repo:
-        print('the Crossref account needs the WEKO checkout that owns {0}; '
-              'set WEKO_E2E_REPO to it'.format(settings.compose_file))
-        return 1
+
+    if action == 'config':
+        missing = _crossref_missing(settings)
+        if missing:
+            print('set {0} first; there is nothing to print without '
+                  'them, and an instance configured with blank '
+                  'credentials would try to deposit and fail'.format(
+                      ', '.join(missing)))
+            return 1
+        print(_crossref_block_for_display(settings))
+        return 0
+
+    if action in ('enable', 'disable'):
+        if not settings.weko_repo:
+            print('"{0}" edits the instance configuration in the WEKO '
+                  'checkout, and there is none here. Use "crossref-account '
+                  'config" for the settings to apply yourself.'.format(
+                      action))
+            return 1
 
     if action == 'status':
-        print('settings in {0}: {1}'.format(
-            _instance_cfg(settings),
-            'present' if _cfg_block_present(settings, CROSSREF_BLOCK_START)
-            else 'absent'))
+        if settings.weko_repo:
+            print('settings in {0}: {1}'.format(
+                _instance_cfg(settings),
+                'present' if _cfg_block_present(settings,
+                                                CROSSREF_BLOCK_START)
+                else 'absent'))
+        else:
+            print('settings: not in a file this tool can see; '
+                  '"crossref-account config" prints what they should be')
         print('deposit to: {0}'.format(settings.crossref_deposit_url))
         print('account: {0}'.format(
             settings.crossref_login_id or '(WEKO_E2E_CROSSREF_LOGIN_ID '
@@ -2010,13 +2034,7 @@ def command_crossref_account(args, settings, ledger):
         return 0
 
     if action == 'enable':
-        missing = [name for name, value in (
-            ('WEKO_E2E_CROSSREF_LOGIN_ID', settings.crossref_login_id),
-            ('WEKO_E2E_CROSSREF_LOGIN_PASSWD',
-             settings.crossref_login_passwd),
-            ('WEKO_E2E_CROSSREF_DEPOSITOR_EMAIL',
-             settings.crossref_depositor_email),
-        ) if not value]
+        missing = _crossref_missing(settings)
         if missing:
             print('set {0} first; Crossref refuses a deposit without '
                   'them'.format(', '.join(missing)))
@@ -2044,9 +2062,47 @@ def command_crossref_account(args, settings, ledger):
                 _instance_cfg(settings)))
         return 0
 
-    print('unknown action {0!r}; use enable, disable or status'.format(
-        action))
+    print('unknown action {0!r}; use enable, disable, status or '
+          'config'.format(action))
     return 1
+
+
+def _crossref_missing(settings):
+    """Return the settings a deposit cannot be configured without."""
+    return [name for name, value in (
+        ('WEKO_E2E_CROSSREF_LOGIN_ID', settings.crossref_login_id),
+        ('WEKO_E2E_CROSSREF_LOGIN_PASSWD', settings.crossref_login_passwd),
+        ('WEKO_E2E_CROSSREF_DEPOSITOR_EMAIL',
+         settings.crossref_depositor_email),
+    ) if not value]
+
+
+def _crossref_block_for_display(settings):
+    """Return the Crossref settings, with a note on how to use them.
+
+    The same settings ``enable`` writes into the checkout, for an
+    instance whose configuration this tool has no business editing.
+    """
+    body = '\n'.join(line for line in _crossref_block(settings).splitlines()
+                     if line and not line.startswith('#'))
+    return (
+        '# The Crossref deposit account, for an instance whose\n'
+        '# configuration does not come from a WEKO checkout.\n'
+        '#\n'
+        '# WEKO_CROSSREF_LOGIN_PASSWD below is a password. Put these in a\n'
+        '# Secret rather than a ConfigMap, and do not commit them.\n'
+        '#\n'
+        '# Apply them, restart the web and worker pods, and run:\n'
+        '#\n'
+        '#     WEKO_E2E_CROSSREF_DEPOSIT=1 \\\n'
+        '#     WEKO_E2E_CROSSREF_PREFIX=<a prefix this account may use> \\\n'
+        '#         python -m pytest --suite crossref\n'
+        '#\n'
+        '# Deposits go to {where}, which is\n'
+        '# Crossref\'s test system unless WEKO_E2E_CROSSREF_DEPOSIT_URL\n'
+        '# said otherwise. Take these settings out again afterwards.\n'
+        '#\n'
+        '{body}'.format(where=settings.crossref_deposit_url, body=body))
 
 
 def deposit_log(settings, doi):
@@ -2491,7 +2547,8 @@ def build_parser():
                         help='what to do')
     parser.add_argument('action', nargs='?',
                         help='for ark-account, ark-stub and '
-                             'crossref-account: enable, disable or status; '
+                             'crossref-account: enable, disable, status or '
+                             'config; '
                              'ark-stub also takes start, stop and '
                              'config; shib '
                              'takes login, status, enable, disable or '

@@ -127,6 +127,12 @@ Apply those wherever your deployment keeps instance settings, restart the
 web and worker pods, then `./e2ectl ark-stub start` runs the stand-in in
 the web pod and `--suite ark` can run.
 
+**For the Crossref deposit**, `crossref-account enable` cannot help
+either, for the same reason.  `./e2ectl crossref-account config` prints
+the settings; what it prints holds a password, so it belongs in a Secret
+rather than a ConfigMap.  Granting a DOI needs none of this -- without a
+Crossref account the suite is 8 passed and 2 skipped, as documented.
+
 **ARK is not in every WEKO.**  `feature/nii_WACREN_crossref_doi` has it;
 `release_v2.1.0` has none of the code.  Where it is absent no
 configuration will make an ARK appear -- check that first.
