@@ -263,7 +263,7 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite ark
 `WEKO_E2E_ARK_NAAN` を指定すると、発行された ARK がその NAAN 配下かどうかも
 確認します。未指定なら ARK であれば通ります。
 
-#### Kubernetes など docker で動いていない環境では
+#### Kubernetes での ARK スタンドイン
 
 `ark-stub enable` はチェックアウトの `scripts/instance.cfg` に書き込みますが、
 そのチェックアウトがありません。代わりにインスタンス設定がどこから来るのか
@@ -412,7 +412,7 @@ deposit の状態は web コンテナ内の `doi_deposit_log` から読むので
 `WEKO_E2E_EXEC`）。無ければ skip します。Crossref に拒否された場合は、
 Crossref が返した理由を添えて失敗します。
 
-#### Kubernetes など docker で動いていない環境では
+#### Kubernetes での Crossref アカウント
 
 `crossref-account enable` はチェックアウトの `scripts/instance.cfg` に書き
 込みますが、そのチェックアウトがありません。ARK のスタンドインと同様、
@@ -973,7 +973,7 @@ web コンテナ経由で読んでいます。
 | `doctor --fix` | docker の場合と同様に DB に対して修復を実行 |
 | `clean --hard` | 物理削除 |
 | `--suite shibboleth` | `nginx` コンテナ内の代役 SP |
-| `--suite ark` | `web` コンテナ内のスタンドイン ARK サーバ（設定の適用が別途必要。[Kubernetes など docker で動いていない環境では](#kubernetes-など-docker-で動いていない環境では)を参照） |
+| `--suite ark` | `web` コンテナ内のスタンドイン ARK サーバ（設定の適用が別途必要。[Kubernetes での ARK スタンドイン](#kubernetes-での-ark-スタンドイン)を参照） |
 | `--suite crossref` | コンテナ内の deposit ログを読むステップを含む |
 
 チェックアウト無し・exec コマンド経由で実測した結果:

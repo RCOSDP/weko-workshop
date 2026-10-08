@@ -274,7 +274,7 @@ the other way round.
 Set `WEKO_E2E_ARK_NAAN` to have the suite check the ARK came out under
 the NAAN this environment is configured for; without it, any ARK counts.
 
-#### On Kubernetes, or anywhere else docker does not run
+#### The ARK stand-in on Kubernetes
 
 `ark-stub enable` writes into the checkout's `scripts/instance.cfg`, and
 there is no checkout. Where instance configuration comes from instead --
@@ -437,7 +437,7 @@ these two steps need a way in there -- the checkout, or `WEKO_E2E_EXEC`
 -- and skip without one. A deposit that Crossref refuses fails the step
 with the reason Crossref gave.
 
-#### On Kubernetes, or anywhere else docker does not run
+#### The Crossref account on Kubernetes
 
 `crossref-account enable` writes into the checkout's
 `scripts/instance.cfg`, and there is none. As with the ARK stand-in, the
@@ -1033,7 +1033,7 @@ With it, no WEKO checkout is needed for any of this:
 | `doctor --fix` | repairs run against the database, as on docker |
 | `clean --hard` | the physical purge |
 | `--suite shibboleth` | the stand-in SP in the `nginx` container |
-| `--suite ark` | the stand-in ARK server in the `web` container, once its settings are applied -- see [On Kubernetes, or anywhere else docker does not run](#on-kubernetes-or-anywhere-else-docker-does-not-run) |
+| `--suite ark` | the stand-in ARK server in the `web` container, once its settings are applied -- see [The ARK stand-in on Kubernetes](#the-ark-stand-in-on-kubernetes) |
 | `--suite crossref` | including the deposit steps, which read WEKO's log inside the container |
 
 What each suite comes to that way, measured against a stack reached by an
