@@ -1080,6 +1080,40 @@ def _invenio(settings, *arguments):
     return result.returncode == 0, output.splitlines()[-1] if output else ''
 
 
+def _psql_target(settings):
+    """Return the psql arguments that say which database to talk to.
+
+    Without ``WEKO_E2E_DB_HOST`` that is the socket in whatever container
+    psql is run in, which is what a compose stack wants.  With it, psql
+    connects over TCP instead -- which is what a replicated cluster
+    wants, where the container holding psql need not be the one holding
+    the primary, and the name that always points at the primary is a
+    service rather than a pod.
+    """
+    where = []
+    if settings.db_host:
+        where += ['-h', settings.db_host]
+    if settings.db_port:
+        where += ['-p', settings.db_port]
+    return where + ['-U', settings.db_user, '-d', settings.db_name]
+
+
+def _psql_command(settings, *arguments):
+    """Return the psql command line, with a password when one is needed.
+
+    A socket connection is usually trusted and wants none; a TCP one
+    usually does.  ``WEKO_E2E_DB_PASSWORD`` is put in the environment of
+    that one command rather than into the arguments psql is called with,
+    which is what ``PGPASSWORD`` is for -- though it is still a password
+    on a command line inside the container, so prefer reaching the
+    primary over its socket where that is possible.
+    """
+    line = ['psql'] + list(arguments)
+    if settings.db_password:
+        return ['env', 'PGPASSWORD={0}'.format(settings.db_password)] + line
+    return line
+
+
 def _psql(settings, sql, atomic=False):
     """Run SQL in the database container.
 
@@ -1087,13 +1121,14 @@ def _psql(settings, sql, atomic=False):
         statement the instance refuses leaves nothing behind
     :return: ``(ok, output)``
     """
-    arguments = ['psql', '-v', 'ON_ERROR_STOP=1']
+    arguments = ['-v', 'ON_ERROR_STOP=1']
     if atomic:
         arguments.append('--single-transaction')
-    arguments += ['-U', settings.db_user, '-d', settings.db_name, '-f', '-']
+    arguments += _psql_target(settings) + ['-f', '-']
     result = _run(
         settings,
-        _in_service(settings, settings.db_service, *arguments),
+        _in_service(settings, settings.db_service,
+                    *_psql_command(settings, *arguments)),
         input=sql.encode('utf-8'))
     output = result.stdout.decode('utf-8', 'replace').strip()
     lines = [line for line in output.splitlines()
@@ -1111,9 +1146,9 @@ def _psql_rows(settings, sql):
     # rows, so this is the one place that keeps the two apart.
     result = _run(
         settings,
-        _in_service(settings, settings.db_service, 'psql', '-t', '-A',
-                    '-F', '|', '-U', settings.db_user, '-d', settings.db_name,
-                    '-c', sql),
+        _in_service(settings, settings.db_service, *_psql_command(
+            settings, '-t', '-A', '-F', '|',
+            *(_psql_target(settings) + ['-c', sql]))),
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     if result.returncode:
         return None

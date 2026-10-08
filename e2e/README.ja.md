@@ -881,6 +881,9 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 | `WEKO_E2E_INBOX_SERVICE` | `inbox` | LDN Inbox が動く compose サービス名。実行の通知を消す先であり、Web Push 代替の動作場所 |
 | `WEKO_E2E_EXEC` | （なし） | コンテナ内でコマンドを実行する方法。`{service}` にサービス名が入る。未設定なら `docker compose exec -T`。[docker で動いていない環境に届かせる](#docker-で動いていない環境に届かせる)を参照 |
 | `WEKO_E2E_DB_SERVICE` | `postgresql` | DB が動くサービス名。`doctor --fix` が SQL を流す先 |
+| `WEKO_E2E_DB_HOST` | （なし） | psql の接続先。指定するとコンテナ内のソケットではなく TCP で接続します。レプリカ構成では「常にプライマリを指す名前」を入れます |
+| `WEKO_E2E_DB_PORT` | （なし） | `WEKO_E2E_DB_HOST` と併用 |
+| `WEKO_E2E_DB_PASSWORD` | （なし） | `PGPASSWORD` として渡します。TCP 接続では通常必要、ソケットでは通常不要 |
 | `WEKO_E2E_WORKER_SERVICE` | `worker` | worker が動くサービス名 |
 | `WEKO_E2E_DB_USER` | `invenio` | |
 | `WEKO_E2E_DB_NAME` | `invenio` | |

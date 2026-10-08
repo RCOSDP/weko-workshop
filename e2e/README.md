@@ -934,6 +934,9 @@ setting them alone changes nothing on the instance.
 | `WEKO_E2E_INBOX_SERVICE` | `inbox` | Compose service running the LDN inbox: cleared of the run's notifications, and where the web push stand-in runs |
 | `WEKO_E2E_EXEC` | (none) | Command that runs something in a container, with `{service}` where the name goes. Unset means `docker compose exec -T`. See [Reaching an instance docker does not run](#reaching-an-instance-docker-does-not-run) |
 | `WEKO_E2E_DB_SERVICE` | `postgresql` | Service running the database, which `doctor --fix` applies SQL through |
+| `WEKO_E2E_DB_HOST` | (none) | Connect psql over TCP to this host rather than over the socket of the container it runs in. For a replicated cluster, the name that always points at the primary |
+| `WEKO_E2E_DB_PORT` | (none) | With `WEKO_E2E_DB_HOST` |
+| `WEKO_E2E_DB_PASSWORD` | (none) | Passed as `PGPASSWORD`; a TCP connection usually wants one, a socket usually does not |
 | `WEKO_E2E_WORKER_SERVICE` | `worker` | Service running the worker |
 | `WEKO_E2E_DB_USER` | `invenio` | |
 | `WEKO_E2E_DB_NAME` | `invenio` | |

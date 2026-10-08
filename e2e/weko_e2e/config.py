@@ -50,7 +50,10 @@ DEFAULTS = {
     'WEKO_E2E_WEKO_REF': '',
     'WEKO_E2E_WEKO_REPO_URL': 'https://raw.githubusercontent.com/RCOSDP/weko',
     'WEKO_E2E_DB_SERVICE': 'postgresql',
+    'WEKO_E2E_DB_HOST': '',
+    'WEKO_E2E_DB_PORT': '',
     'WEKO_E2E_DB_USER': 'invenio',
+    'WEKO_E2E_DB_PASSWORD': '',
     'WEKO_E2E_DB_NAME': 'invenio',
     'WEKO_E2E_CROSSREF_PREFIX': '10.5555',
     'WEKO_E2E_CROSSREF_DEPOSIT': '',
@@ -280,7 +283,10 @@ class Settings(object):
         self.weko_ref = _env('WEKO_E2E_WEKO_REF')
         self.weko_repo_url = _env('WEKO_E2E_WEKO_REPO_URL')
         self.db_service = _env('WEKO_E2E_DB_SERVICE')
+        self.db_host = _env('WEKO_E2E_DB_HOST')
+        self.db_port = _env('WEKO_E2E_DB_PORT')
         self.db_user = _env('WEKO_E2E_DB_USER')
+        self.db_password = _env('WEKO_E2E_DB_PASSWORD')
         self.db_name = _env('WEKO_E2E_DB_NAME')
         self.crossref_prefix = _env('WEKO_E2E_CROSSREF_PREFIX')
         self.crossref_deposit = _flag('WEKO_E2E_CROSSREF_DEPOSIT')
@@ -434,8 +440,11 @@ class Settings(object):
             ('inbox service', self.inbox_service),
             ('nginx service', self.nginx_service),
             ('worker service', self.worker_service),
-            ('database service', '{0} ({1}/{2})'.format(
-                self.db_service, self.db_user, self.db_name)),
+            ('database service', '{0} ({1}/{2}){3}'.format(
+                self.db_service, self.db_user, self.db_name,
+                ', connecting to {0}{1}'.format(
+                    self.db_host, ':' + self.db_port if self.db_port else '')
+                if self.db_host else '')),
             ('repository in container', self.container_repo),
         ]
 
