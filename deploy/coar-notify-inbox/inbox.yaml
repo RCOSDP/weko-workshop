@@ -1,0 +1,87 @@
+# The LDN inbox: what WEKO POSTs COAR Notify messages to, what it reads
+# them back from, and what encrypts and delivers a Web Push.
+#
+# Reached in the cluster as http://repository-ren-ng-inbox:8080, which is
+# what WEKO_NOTIFICATIONS_INBOX_ADDRESS has to say; reached from outside
+# through the nginx that already fronts WEKO, which is what the LDN
+# "ldp#inbox" link a visitor is given points at.  See README.md.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: repository-ren-ng-inbox-configmap
+  namespace: weko3
+data:
+  MONGO_DB_NAME: inbox
+  ICON: /static/images/weko-logo-256.png
+  ENABLE_PUSH_NOTIFICATIONS: "True"
+  ON_RECEIVE_NOTIFICATION_WEBHOOK_URL: ""
+  # Who the push service should contact about this deployment's pushes.
+  SUBSCRIBER: mailto:you@example.org
+  # The compose stack allows every origin because it is a laptop. Name
+  # the site instead, so that a page somewhere else cannot drive this.
+  ALLOWED_ORIGINS: '["https://repository.ren.ng"]'
+  ALLOWED_ADMIN_ORIGINS: '["https://repository.ren.ng"]'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: repository-ren-ng-inbox
+  namespace: weko3
+spec:
+  selector:
+    app: repository-ren-ng-inbox
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: repository-ren-ng-inbox
+  namespace: weko3
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: repository-ren-ng-inbox
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: repository-ren-ng-inbox
+    spec:
+      containers:
+        - name: inbox
+          # Built and pushed from the Dockerfile beside this file.
+          image: mhayashi55/weko3-inbox:pre
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: repository-ren-ng-inbox-configmap
+            - secretRef:
+                name: repository-ren-ng-inbox-secret
+          resources:
+            requests:
+              memory: 300Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30

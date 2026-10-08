@@ -1,0 +1,76 @@
+# The inbox keeps its notifications in MongoDB.  Nothing else uses it,
+# and nothing outside the cluster needs to reach it, so the Service has
+# no external address.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: repository-ren-ng-mongo
+  namespace: weko3
+spec:
+  selector:
+    app: repository-ren-ng-mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: repository-ren-ng-mongo
+  namespace: weko3
+spec:
+  serviceName: repository-ren-ng-mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: repository-ren-ng-mongo
+  template:
+    metadata:
+      labels:
+        app: repository-ren-ng-mongo
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: mongo
+          image: mongo:7.0.14
+          ports:
+            - containerPort: 27017
+              protocol: TCP
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: repository-ren-ng-inbox-secret
+                  key: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: repository-ren-ng-inbox-secret
+                  key: MONGO_INITDB_ROOT_PASSWORD
+          resources:
+            requests:
+              memory: 300Mi
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --quiet
+                - --eval
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
