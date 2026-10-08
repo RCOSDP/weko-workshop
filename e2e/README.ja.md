@@ -906,6 +906,20 @@ WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
 から来るので、**指定したコマンドがそのコンテナを何と呼ぶか**を入れてください。
 `-i` は必須です。標準入力経由で渡している処理があります。
 
+**WEKO・nginx・worker が 1 つの Pod の 3 コンテナになっている場合**
+（Kubernetes では一般的な構成です）、Pod を指すだけでは足りず、各設定に
+コンテナ名まで含めます。
+
+```bash
+WEKO_E2E_EXEC='kubectl exec -i -n weko3 {service} --'
+WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
+WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
+WEKO_E2E_NGINX_SERVICE='deploy/weko-web -c nginx'
+```
+
+設定値は複数の単語でも構いません。空白を含む 1 単語ではなく、その単語数
+としてコマンドラインに展開されます。
+
 これを設定すれば、以下は **WEKO のチェックアウト無しで**動きます。
 
 | | |

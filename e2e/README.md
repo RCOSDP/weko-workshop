@@ -960,6 +960,20 @@ WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
 hold is whatever *your* command calls that container. `-i` matters:
 some of what the tool does is piped in on standard input.
 
+**Where WEKO, nginx and the worker are three containers of one pod** --
+which is how WEKO is usually deployed on Kubernetes -- naming the pod is
+not enough, and each setting carries its container too:
+
+```bash
+WEKO_E2E_EXEC='kubectl exec -i -n weko3 {service} --'
+WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
+WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
+WEKO_E2E_NGINX_SERVICE='deploy/weko-web -c nginx'
+```
+
+A setting may hold more than one word, and becomes that many words on
+the command line rather than one word with spaces in it.
+
 With it, no WEKO checkout is needed for any of this:
 
 | | |

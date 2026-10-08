@@ -104,6 +104,16 @@ settings hold whatever your command calls each container.  `-i` matters:
 some of what the tool does is piped in on standard input.  `./e2ectl env`
 says what it will use.
 
+Where nginx, web and the worker are three containers of **one** pod --
+the usual Kubernetes shape -- each setting carries its container too,
+and may be more than one word:
+
+```
+WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
+WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
+WEKO_E2E_NGINX_SERVICE='deploy/weko-web -c nginx'
+```
+
 With it, no WEKO checkout is needed for the doctor's full 19 checks, for
 `doctor --fix`, for `clean --hard`, or for the optional suites:
 
