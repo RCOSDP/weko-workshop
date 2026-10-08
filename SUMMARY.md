@@ -14,6 +14,7 @@
 * [Testing WEKO3 end to end](contents/end_to_end_testing.md)
   * [The test suite in full](e2e/README.md)
   * [The last run](e2e/evidence/README.md)
+  * [The COAR Notify inbox on Kubernetes](deploy/coar-notify-inbox/README.md)
 * [Operating Kubernetes](contents/Operating_Kubernetes.md)
 * [Developing WEKO3](contents/developing_weko3.md)
 * Cheat sheet

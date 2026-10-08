@@ -5,11 +5,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: repository-ren-ng-mongo
+  name: weko-mongo
   namespace: weko3
 spec:
   selector:
-    app: repository-ren-ng-mongo
+    app: weko-mongo
   ports:
     - name: mongo
       port: 27017
@@ -19,18 +19,18 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: repository-ren-ng-mongo
+  name: weko-mongo
   namespace: weko3
 spec:
-  serviceName: repository-ren-ng-mongo
+  serviceName: weko-mongo
   replicas: 1
   selector:
     matchLabels:
-      app: repository-ren-ng-mongo
+      app: weko-mongo
   template:
     metadata:
       labels:
-        app: repository-ren-ng-mongo
+        app: weko-mongo
     spec:
       securityContext:
         fsGroup: 999
@@ -44,12 +44,12 @@ spec:
             - name: MONGO_INITDB_ROOT_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: repository-ren-ng-inbox-secret
+                  name: weko-inbox-secret
                   key: MONGO_INITDB_ROOT_USERNAME
             - name: MONGO_INITDB_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: repository-ren-ng-inbox-secret
+                  name: weko-inbox-secret
                   key: MONGO_INITDB_ROOT_PASSWORD
           resources:
             requests:

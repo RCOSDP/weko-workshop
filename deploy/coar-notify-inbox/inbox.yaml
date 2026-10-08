@@ -1,7 +1,7 @@
 # The LDN inbox: what WEKO POSTs COAR Notify messages to, what it reads
 # them back from, and what encrypts and delivers a Web Push.
 #
-# Reached in the cluster as http://repository-ren-ng-inbox:8080, which is
+# Reached in the cluster as http://weko-inbox:8080, which is
 # what WEKO_NOTIFICATIONS_INBOX_ADDRESS has to say; reached from outside
 # through the nginx that already fronts WEKO, which is what the LDN
 # "ldp#inbox" link a visitor is given points at.  See README.md.
@@ -9,7 +9,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: repository-ren-ng-inbox-configmap
+  name: weko-inbox-configmap
   namespace: weko3
 data:
   MONGO_DB_NAME: inbox
@@ -20,17 +20,17 @@ data:
   SUBSCRIBER: mailto:you@example.org
   # The compose stack allows every origin because it is a laptop. Name
   # the site instead, so that a page somewhere else cannot drive this.
-  ALLOWED_ORIGINS: '["https://repository.ren.ng"]'
-  ALLOWED_ADMIN_ORIGINS: '["https://repository.ren.ng"]'
+  ALLOWED_ORIGINS: '["https://<your site>"]'
+  ALLOWED_ADMIN_ORIGINS: '["https://<your site>"]'
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: repository-ren-ng-inbox
+  name: weko-inbox
   namespace: weko3
 spec:
   selector:
-    app: repository-ren-ng-inbox
+    app: weko-inbox
   ports:
     - name: http
       port: 8080
@@ -39,14 +39,14 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: repository-ren-ng-inbox
+  name: weko-inbox
   namespace: weko3
 spec:
   replicas: 1
   revisionHistoryLimit: 0
   selector:
     matchLabels:
-      app: repository-ren-ng-inbox
+      app: weko-inbox
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -55,21 +55,21 @@ spec:
   template:
     metadata:
       labels:
-        app: repository-ren-ng-inbox
+        app: weko-inbox
     spec:
       containers:
         - name: inbox
           # Built and pushed from the Dockerfile beside this file.
-          image: mhayashi55/weko3-inbox:pre
+          image: <registry>/weko3-inbox:pre
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: repository-ren-ng-inbox-configmap
+                name: weko-inbox-configmap
             - secretRef:
-                name: repository-ren-ng-inbox-secret
+                name: weko-inbox-secret
           resources:
             requests:
               memory: 300Mi

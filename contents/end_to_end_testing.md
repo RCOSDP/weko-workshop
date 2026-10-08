@@ -76,8 +76,11 @@ WEKO_E2E_DB_SERVICE=statefulset/postgresql
 WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
 ```
 
-`{service}` is where the service name goes, and the `WEKO_E2E_*_SERVICE`
-settings hold whatever that command calls each container. With it the
+`{service}` is where the name goes, and the `WEKO_E2E_*_SERVICE`
+settings hold whatever that command calls each container. A setting may
+be several words, which is how each one carries its own `-c` where web,
+nginx and the worker are three containers of one pod, and its own `-n`
+where the database is in a namespace of its own. With it the
 doctor asks all of its checks, `--doctor-fix` repairs, `clean --hard`
 works, the optional suites run, and no WEKO checkout is needed for any of
 it. `./e2ectl env` says which way it will go.
@@ -90,7 +93,13 @@ configuration is its own business: `./e2ectl ark-stub config` prints
 them, and `./e2ectl ark-stub start` then runs the stand-in in the web
 pod. `./e2ectl crossref-account config` does the same for the Crossref
 deposit account — though granting a DOI needs no account at all.
-[The suite in full](../e2e/README.md) has the detail.
+[The suite in full](../e2e/README.md) has the detail, including what a
+replicated database needs.
+
+The `coarnotify` suite needs an LDN inbox to exist at all, which a
+cluster has to be given:
+[`deploy/coar-notify-inbox/`](../deploy/coar-notify-inbox/README.md) has
+the manifests for it.
 
 ## Repair an instance you cannot reach the containers of
 

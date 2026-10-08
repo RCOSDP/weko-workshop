@@ -104,14 +104,31 @@ settings hold whatever your command calls each container.  `-i` matters:
 some of what the tool does is piped in on standard input.  `./e2ectl env`
 says what it will use.
 
-Where nginx, web and the worker are three containers of **one** pod --
-the usual Kubernetes shape -- each setting carries its container too,
-and may be more than one word:
+A setting may be more than one word, which two ordinary things make
+necessary: nginx, web and the worker are often three containers of
+**one** pod, so each setting carries its own `-c`; and the database is
+usually in a namespace of its own, so the namespace goes in the settings
+rather than in the template.
 
 ```
-WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
-WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
-WEKO_E2E_NGINX_SERVICE='deploy/weko-web -c nginx'
+WEKO_E2E_EXEC='kubectl exec -i {service} --'
+WEKO_E2E_WEB_SERVICE='-n <ns> deploy/<weko> -c web'
+WEKO_E2E_WORKER_SERVICE='-n <ns> deploy/<weko> -c worker'
+WEKO_E2E_NGINX_SERVICE='-n <ns> deploy/<weko> -c nginx'
+WEKO_E2E_DB_SERVICE='-n <db ns> statefulset/<postgres>'
+```
+
+What every call shares -- `--context`, `--kubeconfig` -- belongs in
+`WEKO_E2E_EXEC` instead.
+
+**A replicated database** needs one thing more.  `psql` runs in whatever
+container `WEKO_E2E_DB_SERVICE` names and talks to the socket it finds
+there, but `kubectl exec statefulset/<name>` picks pod 0, which may be a
+standby.  Name the service that follows the primary and connect over TCP:
+
+```
+WEKO_E2E_DB_HOST=<primary service>.<db ns>.svc.cluster.local
+WEKO_E2E_DB_PASSWORD=<the password for WEKO_E2E_DB_USER>
 ```
 
 With it, no WEKO checkout is needed for the doctor's full 19 checks, for

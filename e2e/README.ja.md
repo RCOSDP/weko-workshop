@@ -293,6 +293,9 @@ WEKO_E2E_ARK_NAAN=99999 ../.venv-e2e/bin/python -m pytest --suite ark
 
 ### `coarnotify` スイート
 
+クラスタでは inbox 自体をデプロイしない限り何も動きません。マニフェストは
+[`deploy/coar-notify-inbox/`](../deploy/coar-notify-inbox/README.md) にあります。
+
 WEKO はワークフローの出来事を COAR Notify のメッセージに変換し、LDN Inbox
 へ POST します。Inbox は WEKO とは別のサービスで、`install.sh` の構成では
 `inbox` コンテナがそれにあたります。WEKO は送信側でしかなく、受け取った通知は
@@ -897,31 +900,70 @@ Python 環境と chromium が用意されます。パッケージ内の構成は
 それが使われます。Kubernetes の例:
 
 ```bash
-WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
-WEKO_E2E_WEB_SERVICE=deploy/weko-web
-WEKO_E2E_DB_SERVICE=statefulset/postgresql
-WEKO_E2E_NGINX_SERVICE=deploy/weko-nginx
-WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
-WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
+WEKO_E2E_EXEC='kubectl exec -i {service} --'
+WEKO_E2E_WEB_SERVICE='-n <ns> deploy/<weko> -c web'
+WEKO_E2E_WORKER_SERVICE='-n <ns> deploy/<weko> -c worker'
+WEKO_E2E_NGINX_SERVICE='-n <ns> deploy/<weko> -c nginx'
+WEKO_E2E_INBOX_SERVICE='-n <ns> deploy/<inbox>'
+WEKO_E2E_DB_SERVICE='-n <db ns> statefulset/<postgres>'
 ```
 
-`{service}` にサービス名が入ります。名前は従来どおり `WEKO_E2E_*_SERVICE`
-から来るので、**指定したコマンドがそのコンテナを何と呼ぶか**を入れてください。
+`{service}` に名前が入ります。名前は従来どおり `WEKO_E2E_*_SERVICE` から
+来るので、**指定したコマンドがそのコンテナを何と呼ぶか**を入れてください。
 `-i` は必須です。標準入力経由で渡している処理があります。
 
-**WEKO・nginx・worker が 1 つの Pod の 3 コンテナになっている場合**
-（Kubernetes では一般的な構成です）、Pod を指すだけでは足りず、各設定に
-コンテナ名まで含めます。
+**設定値は複数の単語で構いません。** 空白を含む 1 単語ではなく、その単語数
+としてコマンドラインに展開されます。これが必要になる理由は 2 つあり、
+どちらもよくある構成です。
+
+- **WEKO・nginx・worker が 1 つの Pod の 3 コンテナ**になっていることが多く、
+  Pod を指すだけでは不足するため、各設定が自分の `-c` を持ちます
+- **DB は別の名前空間にあることが多い**ため、名前空間はテンプレートではなく
+  各設定に入れます。`WEKO_E2E_EXEC` から `-n` を外し、上記のように設定側へ
+
+全呼び出しで共通するものはテンプレートに置きます（`--context` や
+`--kubeconfig` など）。
 
 ```bash
-WEKO_E2E_EXEC='kubectl exec -i -n weko3 {service} --'
-WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
-WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
-WEKO_E2E_NGINX_SERVICE='deploy/weko-web -c nginx'
+WEKO_E2E_EXEC='kubectl --context=<context> exec -i {service} --'
 ```
 
-設定値は複数の単語でも構いません。空白を含む 1 単語ではなく、その単語数
-としてコマンドラインに展開されます。
+`./e2ectl env` が使用するコマンドを表示し、`./e2ectl doctor` が最も手早い
+疎通確認になります。19 項目すべてが点検されれば、ここで指定した全コンテナに
+届いています。
+
+#### 名前の調べ方
+
+```bash
+kubectl get deploy,sts -A | grep -iE 'weko|postgres'
+kubectl get pod <name> -n <ns> -o jsonpath='{.spec.containers[*].name}'
+```
+
+#### レプリカ構成の DB
+
+`psql` は `WEKO_E2E_DB_SERVICE` が指すコンテナ内で動き、既定ではそこの
+ソケットに接続します。compose 環境なら postgres コンテナは 1 つなのでそれで
+済みますが、クラスタはそうとは限りません。postgres-operator のクラスタは
+2 台以上の Pod を「プライマリを指す Service」で束ねており、
+`kubectl exec statefulset/<name>` は pod 0 を選びます。それがスタンバイで
+あれば、修復はすべて失敗します。
+
+そこで**プライマリを指す Service 名**を指定し、psql を TCP で接続させます。
+
+```bash
+WEKO_E2E_DB_SERVICE='-n <db ns> statefulset/<postgres>'
+WEKO_E2E_DB_HOST=<プライマリを指す Service>.<db ns>.svc.cluster.local
+WEKO_E2E_DB_PASSWORD=<WEKO_E2E_DB_USER のパスワード>
+```
+
+TCP 接続では通常パスワードが必要です（ソケットでは通常不要）。
+`WEKO_E2E_DB_PASSWORD` は引数ではなく、そのコマンドの環境変数 `PGPASSWORD`
+として渡されます。とはいえコンテナ内のコマンドラインにパスワードが乗ること
+に変わりはないので、**プライマリの Pod 名を直接指定できる場合はそちらを選び**、
+この 3 つは未設定のままにしてください。
+
+psql を使うのは SQL 修復と `shibboleth` の後始末だけです。doctor の他の点検は
+web コンテナ経由で読んでいます。
 
 これを設定すれば、以下は **WEKO のチェックアウト無しで**動きます。
 

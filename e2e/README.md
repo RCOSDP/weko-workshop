@@ -305,6 +305,10 @@ listed above.
 
 ### The `coarnotify` suite
 
+On a cluster the inbox is a service that has to be deployed before any
+of this works; [`deploy/coar-notify-inbox/`](../deploy/coar-notify-inbox/README.md)
+has manifests for it.
+
 WEKO turns workflow events into COAR Notify messages and POSTs them to an
 LDN inbox, which is a service of its own -- the `inbox` container in a
 stack from `install.sh`. WEKO is only the sender; it reads them back for
@@ -950,32 +954,76 @@ and `WEKO_E2E_EXEC` is what that command line is. Unset, it is
 `install.sh` wants. Set, it is yours — for Kubernetes:
 
 ```bash
-WEKO_E2E_EXEC='kubectl exec -i -n weko {service} --'
-WEKO_E2E_WEB_SERVICE=deploy/weko-web
-WEKO_E2E_DB_SERVICE=statefulset/postgresql
-WEKO_E2E_NGINX_SERVICE=deploy/weko-nginx
-WEKO_E2E_WORKER_SERVICE=deploy/weko-worker
-WEKO_E2E_INBOX_SERVICE=deploy/weko-inbox
+WEKO_E2E_EXEC='kubectl exec -i {service} --'
+WEKO_E2E_WEB_SERVICE='-n <ns> deploy/<weko> -c web'
+WEKO_E2E_WORKER_SERVICE='-n <ns> deploy/<weko> -c worker'
+WEKO_E2E_NGINX_SERVICE='-n <ns> deploy/<weko> -c nginx'
+WEKO_E2E_INBOX_SERVICE='-n <ns> deploy/<inbox>'
+WEKO_E2E_DB_SERVICE='-n <db ns> statefulset/<postgres>'
 ```
 
-`{service}` is where the service name goes, and the names come from the
-`WEKO_E2E_*_SERVICE` settings as they always did — so what they have to
+`{service}` is where the name goes, and the names come from the
+`WEKO_E2E_*_SERVICE` settings as they always did -- so what they have to
 hold is whatever *your* command calls that container. `-i` matters:
 some of what the tool does is piped in on standard input.
 
-**Where WEKO, nginx and the worker are three containers of one pod** --
-which is how WEKO is usually deployed on Kubernetes -- naming the pod is
-not enough, and each setting carries its container too:
+**A setting may hold more than one word**, and becomes that many words on
+the command line rather than one word with spaces in it. Two things make
+that necessary, and both are ordinary:
+
+- **WEKO, nginx and the worker are often three containers of one pod**,
+  so naming the pod does not say which container to run in and each
+  setting carries its own `-c`.
+- **The database is usually in a namespace of its own**, so the
+  namespace belongs in the settings rather than in the template. Leave
+  `-n` out of `WEKO_E2E_EXEC` and put it in each setting, as above.
+
+Anything else that is the same for every call belongs in the template --
+`--context`, say, or `--kubeconfig`:
 
 ```bash
-WEKO_E2E_EXEC='kubectl exec -i -n weko3 {service} --'
-WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
-WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
-WEKO_E2E_NGINX_SERVICE='deploy/weko-web -c nginx'
+WEKO_E2E_EXEC='kubectl --context=<context> exec -i {service} --'
 ```
 
-A setting may hold more than one word, and becomes that many words on
-the command line rather than one word with spaces in it.
+`./e2ectl env` prints the whole of what it will use, and `./e2ectl
+doctor` is the quickest proof that it reaches: all 19 checks asked means
+every container named here answered.
+
+#### Finding the names
+
+```bash
+kubectl get deploy,sts -A | grep -iE 'weko|postgres'
+kubectl get pod <name> -n <ns> -o jsonpath='{.spec.containers[*].name}'
+```
+
+#### A replicated database
+
+`psql` runs inside whatever container `WEKO_E2E_DB_SERVICE` names, and
+by default talks to the socket it finds there. One postgres container is
+the whole of the problem on a compose stack; a cluster need not be like
+that. A postgres-operator cluster is two or more pods behind a service
+that points at whichever is primary, and
+`kubectl exec statefulset/<name>` picks pod 0 -- as likely as not the
+standby, where every repair would fail.
+
+So name the service that follows the primary, and psql connects to it
+over TCP instead:
+
+```bash
+WEKO_E2E_DB_SERVICE='-n <db ns> statefulset/<postgres>'
+WEKO_E2E_DB_HOST=<the service that points at the primary>.<db ns>.svc.cluster.local
+WEKO_E2E_DB_PASSWORD=<the password for WEKO_E2E_DB_USER>
+```
+
+A TCP connection usually wants a password where a socket does not;
+`WEKO_E2E_DB_PASSWORD` goes into the environment of that one command as
+`PGPASSWORD` rather than into its arguments. It is still a password on a
+command line inside the container, so where you can reach the primary's
+own socket -- by naming that pod rather than the StatefulSet -- prefer
+that and leave all three unset.
+
+Only the SQL repairs and the `shibboleth` suite's clean-up use psql; the
+rest of the doctor reads the instance through the web container.
 
 With it, no WEKO checkout is needed for any of this:
 

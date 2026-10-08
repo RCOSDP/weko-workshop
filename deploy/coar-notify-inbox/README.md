@@ -6,10 +6,27 @@ registers Web Push subscriptions with it. The inbox is a separate service
 with a MongoDB of its own; the docker-compose stack has both, and a
 cluster needs them deployed.
 
-Written against the `repository-ren-ng-web` deployment in namespace
-`weko3`: one pod with `nginx`, `web` and `worker` in it, instance
-configuration rendered by an init container from
-`/conf/instance.cfg`. Change the names to suit another deployment.
+Written against a WEKO whose web, nginx and worker are three containers
+of **one** pod, with instance configuration rendered by an init container
+from a template on a volume. That is a common shape, and the one the e2e
+suite's Kubernetes notes assume; a deployment built another way needs the
+same six pieces put together differently.
+
+**Names to change before applying.** They are placeholders, not a
+deployment:
+
+| | |
+| --- | --- |
+| `weko3` | the namespace WEKO is in |
+| `weko-inbox`, `weko-mongo` | whatever your deployment calls its own things |
+| `weko-web` | the deployment holding the web container |
+| `<registry>/weko3-inbox:pre` | where you push the image built here |
+| `<your site>` | the site's public origin, e.g. `https://repo.example.org` |
+| `weko-nginx-pvc`, `weko-config-pvc` | the volumes holding nginx's configuration and WEKO's |
+
+**One inbox per site.** It holds that site's notifications and that
+site's push subscriptions, so a cluster serving two WEKO sites wants two
+of these, named apart.
 
 ## What is here
 
@@ -51,11 +68,11 @@ notifications still work, the inbox simply sends no Web Push -- and
 ```bash
 kubectl apply -f mongo.yaml
 kubectl apply -f inbox.yaml
-kubectl -n weko3 rollout status deployment/repository-ren-ng-inbox
+kubectl -n weko3 rollout status deployment/weko-inbox
 ```
 
 **4. nginx.** Add the two rules in `nginx-inbox.conf` to the
-configuration on the `repository-ren-ng-nginx-pvc` volume, and reload.
+configuration on the `weko-nginx-pvc` volume, and reload.
 Without them WEKO still sends and reads its notifications -- it reaches
 the inbox inside the cluster -- but the address it *announces* to the
 world answers nothing, which is the half that makes it an LDN inbox.
@@ -63,7 +80,7 @@ world answers nothing, which is the half that makes it an LDN inbox.
 **5. WEKO.** Add `weko-settings.cfg` to the instance configuration, then:
 
 ```bash
-kubectl rollout restart deployment/repository-ren-ng-web -n weko3
+kubectl rollout restart deployment/weko-web -n weko3
 ```
 
 That re-runs the init container, which renders `invenio.cfg` again.
@@ -72,12 +89,12 @@ That re-runs the init container, which renders `invenio.cfg` again.
 
 ```bash
 # The inbox answers in the cluster
-kubectl -n weko3 exec deploy/repository-ren-ng-web -c web -- \
+kubectl -n weko3 exec deploy/weko-web -c web -- \
     python -c "import urllib.request; print(urllib.request.urlopen(
-    'http://repository-ren-ng-inbox:8080/health').status)"
+    'http://weko-inbox:8080/health').status)"
 
 # WEKO announces it to the world
-curl -sI https://repository.ren.ng/ | grep -i '^link:'
+curl -sI https://<your site>/ | grep -i '^link:'
 ```
 
 The second should name `.../inbox`, and that URL should answer rather
