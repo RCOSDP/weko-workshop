@@ -337,13 +337,29 @@ def _in_service(settings, service, *arguments):
     tool does not know the difference: it asks for a command line and
     gets one.
 
+    A name may be more than one word.  Where WEKO, nginx and the worker
+    are three containers of **one** pod -- which is how WEKO is usually
+    deployed on Kubernetes -- naming the pod is not enough and each
+    setting has to carry its container too::
+
+        WEKO_E2E_WEB_SERVICE='deploy/weko-web -c web'
+        WEKO_E2E_WORKER_SERVICE='deploy/weko-web -c worker'
+
+    So a word that is exactly ``{service}`` becomes however many words
+    the setting holds, rather than one word with spaces in it, which is
+    not a thing ``kubectl`` would accept.
+
     Without it, ``docker compose exec -T`` against the checkout, which is
     what a stack from ``install.sh`` wants and stays the default.
     """
     if settings.exec_template:
-        template = shlex.split(settings.exec_template)
-        return [word.replace('{service}', service)
-                for word in template] + list(arguments)
+        line = []
+        for word in shlex.split(settings.exec_template):
+            if word == '{service}':
+                line += shlex.split(service)
+            else:
+                line.append(word.replace('{service}', service))
+        return line + list(arguments)
     return _compose(settings, 'exec', '-T', service, *arguments)
 
 
