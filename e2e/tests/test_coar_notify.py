@@ -61,6 +61,25 @@ without writing that text down a second time.
 """
 
 
+@pytest.fixture(scope='module', autouse=True)
+def inbox_is_there(settings, visitor):
+    """Skip the suite where the announced inbox is not serving anything.
+
+    WEKO announces an inbox whether or not one is deployed -- the
+    ``Link:`` header is built from configuration -- so the announcement
+    passing says nothing about whether a sender could reach it.  Where
+    nothing is there, every step after the second fails on a 500 from
+    WEKO, which is a true answer to the wrong question.
+    """
+    if not notify.inbox_answers(visitor, settings):
+        pytest.skip(
+            'nothing is serving {0} on this instance, so there is no LDN '
+            'inbox for WEKO to send to or read from. A stack from '
+            'install.sh has one; on a cluster it is a service to deploy '
+            '-- see deploy/coar-notify-inbox in the repository this came '
+            'from'.format(notify.PROBE_PATH.rsplit('/', 1)[0]))
+
+
 @pytest.fixture(scope='module')
 def approver_settings(settings):
     """Return the settings, with the approver's credentials."""

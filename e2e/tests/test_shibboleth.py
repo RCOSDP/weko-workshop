@@ -42,7 +42,8 @@ what it was.
 import pytest
 
 from weko_e2e import ui
-from weko_e2e.cli import forget_shib_account, shib_account, shib_login
+from weko_e2e.cli import (database_reachable,  # noqa: I100
+                          forget_shib_account, shib_account, shib_login)
 from weko_e2e.client import (SHIB_CONFIRM_PATH, WHOAMI_PATH,  # noqa: I100
                              WekoClient, anonymous_session)
 from weko_e2e.config import SHIBBOLETH
@@ -75,6 +76,17 @@ def shibboleth(client, settings):
             'the WEKO checkout that owns the compose file, or '
             'WEKO_E2E_EXEC to a command that reaches the containers '
             '(Kubernetes and the like)'.format(settings.nginx_service))
+    if not database_reachable(settings):
+        # This suite makes an account, and the only way to take one away
+        # again is SQL.  Making one it could not remove would leave a
+        # login on somebody's repository that nobody asked for, so it
+        # does not start.
+        pytest.skip(
+            'this suite makes an account and removes it with SQL when it '
+            'is done, and the database cannot be reached to do either: '
+            'set WEKO_E2E_DB_SERVICE to where psql can be run, and '
+            'WEKO_E2E_DB_HOST and WEKO_E2E_DB_PASSWORD where that is not '
+            'the primary itself')
     was = client.shib_login_enabled()
     client.shib_login_enabled(True)
     yield was

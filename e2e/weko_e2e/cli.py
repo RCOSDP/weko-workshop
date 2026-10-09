@@ -694,6 +694,17 @@ def shib_account(settings, eppn=None):
             'user_id': int(rows[0][2]), 'shib_mail': rows[0][3]}
 
 
+def database_reachable(settings):
+    """Return whether SQL can be run against the instance's database.
+
+    Asked before anything that would have to be undone by SQL.  The
+    queries themselves answer None both for "nothing found" and for
+    "could not ask", which is the same answer to two very different
+    questions; this asks the second one on its own.
+    """
+    return _psql_rows(settings, 'SELECT 1') is not None
+
+
 def forget_shib_account(settings, eppn=None):
     """Take away the account a Shibboleth login made, and its binding.
 

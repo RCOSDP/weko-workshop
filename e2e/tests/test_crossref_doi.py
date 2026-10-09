@@ -51,7 +51,15 @@ def identifier_settings(page, settings, client):
     run that failed.
     """
     ui.login(page, settings)
-    _open_identifier_form(page, settings)
+    if not _open_identifier_form(page, settings, required=False):
+        # Nothing to turn the grant on in. The doctor says the same,
+        # and says it before the run; failing every step of the suite
+        # over it would only repeat that ten times.
+        pytest.skip(
+            'this instance has no row under /admin/identifier/, so '
+            'there is nothing to turn the Crossref grant on in. An '
+            'instance install.sh set up has one; add it under that '
+            'screen, or see what "./e2ectl doctor" says about it')
     before = {
         'enabled': page.locator('#jalc_crossref_flag').is_checked(),
         'prefix': page.locator('#jalc_crossref_doi').input_value(),
@@ -81,16 +89,24 @@ def identifier_settings(page, settings, client):
         'were before this run'.format(after, before)
 
 
-def _open_identifier_form(page, settings):
-    """Open the identifier settings of the first repository."""
+def _open_identifier_form(page, settings, required=True):
+    """Open the identifier settings of the first repository.
+
+    :param required: when False, return whether there was one to open
+        rather than failing -- for the first look, where an instance
+        with no row at all is a suite to skip and not a fault.
+    """
     page.goto(settings.url('/admin/identifier/'))
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(1000)
     edit = page.locator("a[href*='/admin/identifier/edit/']")
+    if not required and not edit.count():
+        return False
     assert edit.count(), 'this instance has no identifier settings row'
     edit.first.click()
     page.wait_for_load_state('networkidle')
     page.wait_for_timeout(1000)
+    return True
 
 
 def _enable_crossref(page, prefix):

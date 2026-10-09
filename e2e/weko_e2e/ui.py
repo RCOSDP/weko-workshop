@@ -16,7 +16,7 @@ import tempfile
 import time
 
 from .client import SHIB_CONFIRM_PATH
-from .config import SHIBBOLETH
+from .config import E2E_DIR, SHIBBOLETH
 
 NEW_SHIB_USER_LINK = 'a[href*="/weko/auto/login"]'
 """The confirmation screen's "Login (New WEKO users)" way through."""
@@ -345,10 +345,20 @@ def advance_to(page, name, timeout=300):
 
 
 def _stuck(page, name):
-    """Fail with what the screen was showing when a step did not arrive."""
+    """Fail with what the screen was showing when a step did not arrive.
+
+    The screenshot goes under ``evidence`` rather than into a temporary
+    directory, because what somebody sends back after a run elsewhere is
+    that folder -- and a picture of the screen a run stopped on is
+    exactly what is wanted and exactly what used to be left behind.
+    """
     modals = page.locator('.modal:visible')
     detail = modals.first.inner_text() if modals.count() else '(no dialog)'
-    evidence = os.path.join(tempfile.gettempdir(), 'weko-e2e-stuck.png')
+    evidence = os.path.join(E2E_DIR, 'evidence', 'stuck-{0}.png'.format(name))
+    try:
+        os.makedirs(os.path.dirname(evidence), exist_ok=True)
+    except OSError:  # a picture is never what fails a step
+        evidence = os.path.join(tempfile.gettempdir(), 'weko-e2e-stuck.png')
     page.screenshot(path=evidence, full_page=True)
     raise AssertionError(
         'stuck on step "{0}", waiting for "{1}"; showing: {2}; '

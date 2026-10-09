@@ -21,6 +21,8 @@ import re
 import time
 from urllib.parse import urlparse
 
+import requests
+
 API_PATH = '/api/notifications'
 """Where WEKO offers a logged in user the notifications addressed to them."""
 
@@ -56,6 +58,33 @@ def announced_inbox(session, settings):
     """
     response = session.head(settings.url('/'), timeout=60)
     return (response.links.get(LINK_REL) or {}).get('url')
+
+
+PROBE_PATH = '/inbox/weko-e2e-no-such-notification'
+"""A notification id no inbox has, for asking whether one is there.
+
+The inbox answers JSON even when it has nothing -- an id it does not know
+is a 404 with a body of its own -- while the 404 of a site that is not
+serving an inbox at all is a page.  That is the difference this looks
+for, because an announced inbox is only a `Link:` header and says
+nothing about whether anything is behind it.
+"""
+
+
+def inbox_answers(session, settings):
+    """Return whether something is serving the announced inbox path.
+
+    :param session: a :mod:`requests` session; it need not be logged in
+    """
+    try:
+        response = session.get(settings.url(PROBE_PATH), timeout=60)
+    except requests.RequestException:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and 'detail' in body
 
 
 def notifications(session, settings):
