@@ -15,6 +15,8 @@ import re
 import tempfile
 import time
 
+from playwright.sync_api import Error
+
 from .client import SHIB_CONFIRM_PATH
 from .config import E2E_DIR, SHIBBOLETH
 
@@ -344,6 +346,38 @@ def advance_to(page, name, timeout=300):
     _stuck(page, name)
 
 
+DIALOG_SELECTORS = (
+    '.modal:visible',
+    '[role=dialog]:visible',
+    '.modal-dialog:visible',
+    '.alert:visible',
+    '.panel-danger:visible',
+)
+"""Where WEKO puts what it wants to say when something has gone wrong.
+
+More than one, and every frame, because the screens that matter here are
+served in an iframe and the dialog itself is built by JavaScript rather
+than written in a template -- so there is no one selector to rely on.
+A run that stops and reports "(no dialog)" while the screen is showing
+"Server Error" is worse than no diagnosis at all.
+"""
+
+
+def _dialog_text(page):
+    """Return what a dialog on the page says, from any frame."""
+    for frame in page.frames:
+        for selector in DIALOG_SELECTORS:
+            try:
+                found = frame.locator(selector)
+                if found.count():
+                    said = found.first.inner_text().strip()
+                    if said:
+                        return said
+            except Error:  # a frame that went away mid-look
+                continue
+    return '(no dialog)'
+
+
 def _stuck(page, name):
     """Fail with what the screen was showing when a step did not arrive.
 
@@ -352,14 +386,19 @@ def _stuck(page, name):
     that folder -- and a picture of the screen a run stopped on is
     exactly what is wanted and exactly what used to be left behind.
     """
-    modals = page.locator('.modal:visible')
-    detail = modals.first.inner_text() if modals.count() else '(no dialog)'
+    detail = _dialog_text(page)
     evidence = os.path.join(E2E_DIR, 'evidence', 'stuck-{0}.png'.format(name))
     try:
         os.makedirs(os.path.dirname(evidence), exist_ok=True)
     except OSError:  # a picture is never what fails a step
         evidence = os.path.join(tempfile.gettempdir(), 'weko-e2e-stuck.png')
     page.screenshot(path=evidence, full_page=True)
+    try:
+        with open(evidence[:-len('.png')] + '.html', 'w',
+                  encoding='utf-8') as handle:
+            handle.write(page.content())
+    except (OSError, Error):  # neither is what fails a step
+        pass
     raise AssertionError(
         'stuck on step "{0}", waiting for "{1}"; showing: {2}; '
         'screen saved to {3}'.format(

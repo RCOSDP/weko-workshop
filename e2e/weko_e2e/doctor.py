@@ -399,6 +399,33 @@ def check_search(survey):
             survey.search_error))
 
 
+def check_search_takes_writes(survey):
+    """Elasticsearch is accepting writes, not only answering searches.
+
+    A disk that filled up leaves every index read-only, and Elasticsearch
+    does not always undo that when space comes back.  Searching still
+    works, so the check above still passes; registering an item does not,
+    and what the screen says is "Server Error. Please reload this page."
+    """
+    name = 'search takes writes'
+    blocked = (survey.report or {}).get('search_blocks')
+    if blocked is None:
+        return Finding(WARN, name, 'not asked; the instance could not be '
+                                   'inspected')
+    if not blocked:
+        return Finding(OK, name, 'no index is read-only')
+    return Finding(
+        FAIL, name,
+        'Elasticsearch has made {0} index(es) read-only, {1} among them, '
+        'so registering an item will fail with "Server Error. Please '
+        'reload this page." It does that when the disk crosses its '
+        'flood-stage watermark, and does not always undo it when space '
+        'comes back. Free some disk, then take the block off: '
+        'curl -XPUT <es>/_all/_settings -H "Content-Type: application/'
+        'json" -d \'{{"index.blocks.read_only_allow_delete": null}}\''
+        .format(len(blocked), ', '.join(blocked[:3])))
+
+
 def check_worker(survey):
     """The worker is running, because indexing is its job."""
     if survey.worker is None:
@@ -526,6 +553,7 @@ CHECKS = (
     check_partition,
     check_language,
     check_search,
+    check_search_takes_writes,
     check_worker,
     check_identifier_settings,
     check_approver,

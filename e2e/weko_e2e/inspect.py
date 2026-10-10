@@ -113,6 +113,36 @@ def partitions(db):
             " WHERE p.relname = 'user_activity_logs'"))
 
 
+def search_blocks():
+    """Return the indices Elasticsearch has stopped accepting writes to.
+
+    Elasticsearch puts every index into ``read_only_allow_delete`` when
+    the disk it is on crosses its flood-stage watermark, and does not
+    always take it off again when space comes back.  WEKO goes on
+    answering and searching while that is true, and registering an item
+    fails with "Server Error. Please reload this page." -- which names
+    neither Elasticsearch nor the disk.
+
+    :return: the blocked index names, or None when it could not be asked
+    """
+    try:
+        from invenio_search import current_search_client
+        state = current_search_client.cluster.state(metric='blocks')
+    except Exception:
+        return None
+    blocked = []
+    for name, blocks in ((state or {}).get('blocks', {})
+                         .get('indices', {}) or {}).items():
+        for block in (blocks or {}).values():
+            # By what it stops rather than by what it is called: the
+            # description is prose ("index read-only / allow delete
+            # (api)") and the levels are the thing itself.
+            if 'write' in ((block or {}).get('levels') or []):
+                blocked.append(str(name))
+                break
+    return sorted(blocked)
+
+
 def report():
     """Return everything ``doctor`` asks about this instance."""
     from flask import current_app
@@ -134,6 +164,7 @@ def report():
             db, 'SELECT lang_code FROM admin_lang_settings'
                 ' WHERE is_active')),
         'partitions': partitions(db),
+        'search_blocks': search_blocks(),
         'today': datetime.now().strftime('%Y%m'),
         'counts': {},
         'settings': {},
