@@ -421,8 +421,31 @@ def check_file_store(survey):
                                          found['uri']))
         return Finding(WARN, name, found.get('error') or 'no default '
                                                          'location')
+    if found.get('reading') is False:
+        # The one that bites: uploading works and reading back does not,
+        # so the failure lands on the way out of Item Registration.
+        return Finding(
+            FAIL, name,
+            'WEKO can write to {0} but has no credentials to read it back: '
+            'S3_READONLY_ACCESS_KEY_ID and S3_READONLY_SECRET_ACCESS_KEY '
+            'are unset, and so are the readonly columns on the location '
+            'row. invenio-s3 uses those for every read, so the file '
+            'uploads and then registering the item fails -- '
+            'get_content_files raises NoCredentialsError, the PUT to '
+            '/api/deposits/items/<id> 500s, and the screen says "Server '
+            'Error. Please reload this page." Set both, to credentials '
+            'that may read the bucket. Found set: {1}.'.format(
+                found['uri'], ', '.join(found.get('keys') or []) or 'none'))
+    if found.get('writing') is False:
+        return Finding(
+            FAIL, name,
+            'WEKO has no credentials to write to {0}: set '
+            'S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY. Found set: '
+            '{1}.'.format(found['uri'],
+                          ', '.join(found.get('keys') or []) or 'none'))
     if found.get('reachable'):
-        return Finding(OK, name, '{0} answers'.format(found['uri']))
+        return Finding(OK, name, '{0} answers, for reading and for '
+                                 'writing'.format(found['uri']))
     return Finding(
         FAIL, name,
         'WEKO puts files in {0} and cannot reach it: {1}. Registering an '

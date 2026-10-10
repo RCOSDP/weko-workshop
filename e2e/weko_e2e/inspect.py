@@ -148,15 +148,43 @@ def files_backend():
         return found
 
     found['kind'] = 's3'
+    # Writing and reading do not use the same credentials.  invenio-s3
+    # picks S3_ACCESS_KEY_ID for mode 'wb' and
+    # S3_READONLY_ACCESS_KEY_ID for everything else, falling back to
+    # per-location columns first -- so an instance can upload a file
+    # perfectly and then fail to read it back, which is what
+    # weko_deposit's get_content_files does on the way out of Item
+    # Registration.  Both are worked out the way invenio-s3 does.
     try:
         from flask import current_app as _app
+        settings = _app.config
+
+        def credentials(mode):
+            if mode == 'wb':
+                return (location.access_key
+                        or settings.get('S3_ACCESS_KEY_ID')
+                        or settings.get('S3_ACCCESS_KEY_ID'),
+                        location.secret_key
+                        or settings.get('S3_SECRET_ACCESS_KEY')
+                        or settings.get('S3_SECRECT_ACCESS_KEY'))
+            return (location.readonly_access_key
+                    or settings.get('S3_READONLY_ACCESS_KEY_ID'),
+                    location.readonly_secret_key
+                    or settings.get('S3_READONLY_SECRET_ACCESS_KEY'))
+
+        found['writing'] = all(credentials('wb'))
+        found['reading'] = all(credentials('rb'))
         found['keys'] = sorted(
             k for k in ('S3_ENDPOINT_URL', 'S3_ACCESS_KEY_ID',
                         'S3_ACCCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY',
-                        'S3_SECRECT_ACCESS_KEY')
-            if _app.config.get(k))
-    except Exception:
+                        'S3_SECRECT_ACCESS_KEY',
+                        'S3_READONLY_ACCESS_KEY_ID',
+                        'S3_READONLY_SECRET_ACCESS_KEY')
+            if settings.get(k))
+    except Exception as error:
         found['keys'] = None
+        found['writing'] = found['reading'] = None
+        found['error'] = str(error)[:160]
     try:
         import boto3
         from botocore.client import Config
