@@ -399,6 +399,41 @@ def check_search(survey):
             survey.search_error))
 
 
+def check_file_store(survey):
+    """Where files go answers, not only exists in a table.
+
+    A location row saying ``s3://...`` says where WEKO means to put
+    files.  It does not say that WEKO can: with the credentials missing,
+    that row still reads perfectly and everything else about the
+    instance looks well, and then registering an item with a file fails
+    with "Server Error. Please reload this page." -- which names neither
+    S3 nor the credentials.
+    """
+    name = 'the file store answers'
+    found = (survey.report or {}).get('files_backend')
+    if not found:
+        return Finding(WARN, name, 'not asked; the instance could not be '
+                                   'inspected')
+    if found.get('reachable') is None:
+        if found.get('uri'):
+            return Finding(OK, name, '{0} is a directory in the container, '
+                                     'which the check above covers'.format(
+                                         found['uri']))
+        return Finding(WARN, name, found.get('error') or 'no default '
+                                                         'location')
+    if found.get('reachable'):
+        return Finding(OK, name, '{0} answers'.format(found['uri']))
+    return Finding(
+        FAIL, name,
+        'WEKO puts files in {0} and cannot reach it: {1}. Registering an '
+        'item with a file attached will fail with "Server Error. Please '
+        'reload this page." -- the PUT to /api/deposits/items/<id> 500s '
+        'and the workflow never leaves Item Registration. Check '
+        'S3_ENDPOINT_URL, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in '
+        'the instance configuration.'.format(
+            found.get('uri'), found.get('error') or 'no reason given'))
+
+
 def check_search_takes_writes(survey):
     """Elasticsearch is accepting writes, not only answering searches.
 
@@ -553,6 +588,7 @@ CHECKS = (
     check_partition,
     check_language,
     check_search,
+    check_file_store,
     check_search_takes_writes,
     check_worker,
     check_identifier_settings,

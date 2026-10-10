@@ -113,6 +113,63 @@ def partitions(db):
             " WHERE p.relname = 'user_activity_logs'"))
 
 
+def files_backend():
+    """Return where files go, and whether that place answers.
+
+    ``files_location`` holding an ``s3://`` URI says where WEKO means to
+    put files; it does not say that WEKO can.  Where the credentials are
+    missing the location row still reads perfectly, searching still
+    works, and the instance looks well -- and then registering an item
+    with a file attached fails with
+
+        botocore.exceptions.NoCredentialsError: Unable to locate
+        credentials
+
+    which reaches the screen as "Server Error. Please reload this page."
+    So the bucket is asked, once and with a short timeout.
+
+    :return: ``{'uri', 'kind', 'reachable', 'error'}``; ``reachable`` is
+        None for a plain directory, which the location check covers
+    """
+    found = {'uri': None, 'kind': None, 'reachable': None, 'error': None}
+    try:
+        from invenio_files_rest.models import Location
+        location = Location.query.filter_by(default=True).one_or_none()
+    except Exception as error:
+        found['error'] = str(error)[:200]
+        return found
+    if location is None:
+        found['error'] = 'no default location'
+        return found
+
+    found['uri'] = str(location.uri)
+    if not found['uri'].startswith('s3://'):
+        found['kind'] = 'directory'
+        return found
+
+    found['kind'] = 's3'
+    try:
+        import boto3
+        from botocore.client import Config
+        from flask import current_app
+        settings = current_app.config
+        client = boto3.client(
+            's3',
+            endpoint_url=settings.get('S3_ENDPOINT_URL'),
+            aws_access_key_id=(settings.get('S3_ACCESS_KEY_ID')
+                               or settings.get('S3_ACCCESS_KEY_ID')),
+            aws_secret_access_key=settings.get('S3_SECRET_ACCESS_KEY'),
+            config=Config(connect_timeout=5, read_timeout=10,
+                          retries={'max_attempts': 1}))
+        client.head_bucket(Bucket=found['uri'][len('s3://'):].split('/')[0])
+        found['reachable'] = True
+    except Exception as error:
+        found['reachable'] = False
+        found['error'] = '{0}: {1}'.format(
+            error.__class__.__name__, str(error)[:160])
+    return found
+
+
 def search_blocks():
     """Return the indices Elasticsearch has stopped accepting writes to.
 
@@ -165,6 +222,7 @@ def report():
                 ' WHERE is_active')),
         'partitions': partitions(db),
         'search_blocks': search_blocks(),
+        'files_backend': files_backend(),
         'today': datetime.now().strftime('%Y%m'),
         'counts': {},
         'settings': {},
