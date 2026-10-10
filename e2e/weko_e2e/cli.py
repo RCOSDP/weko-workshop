@@ -39,7 +39,7 @@ from datetime import datetime
 import requests
 
 from . import dataload, doctor, notify
-from .client import WekoClient, WekoError
+from .client import WekoClient, WekoError, anonymous_session
 from .config import E2E_DIR, HERE, LOCAL, Settings
 from .inboxpurge import MARKER as INBOX_MARKER
 from .inspect import MARKER as INSPECT_MARKER
@@ -450,19 +450,28 @@ def _purge_inbox(settings, targets):
     does not go back to its baseline when the WEKO database does; the
     notifications a run sent would otherwise pile up there for ever.
 
-    Silent where the instance has no inbox container to speak to: an
-    instance reached over the network is not a stack this tool can run
-    ``docker compose`` in, and that is not an error.
+    Whether there is an inbox at all is asked first, and over HTTP.  An
+    instance with none sent no notifications in the first place, so
+    there is nothing to clear and nothing to report; going to the
+    container before asking that turned a deployment that simply has no
+    inbox into a page of error from whatever runs the containers.
     """
     activities = [resource['id'] for resource in targets['activity']]
     if not activities:
         return
+    if not notify.inbox_answers(anonymous_session(settings), settings):
+        print('no LDN inbox answers on this instance, so this run sent no '
+              'notifications for there to be anything to clear')
+        return
+
     with open(os.path.join(HERE, 'inboxpurge.py'), 'rb') as handle:
         script = handle.read()
     if not _copy_into_container(settings, script, INBOX_PURGE_IN_CONTAINER,
                                 service=settings.inbox_service):
-        print('no {0} container to clear; the notifications this run sent '
-              'are still in the inbox'.format(settings.inbox_service))
+        print('an inbox is answering, but nothing could be run in the {0} '
+              'container to clear it, so the notifications this run sent '
+              'are still there. "WEKO_E2E_INBOX_SERVICE" is what names '
+              'it.'.format(settings.inbox_service))
         return
 
     result = _run(
