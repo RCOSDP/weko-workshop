@@ -34,3 +34,9 @@ e2e/evidence/run.md
 
 # Filled-in secrets for the inbox deployment.
 deploy/coar-notify-inbox/secret.yaml
+
+# What a run saves of the screen it got stuck on. Diagnostics of one run,
+# like run.md: rewritten by the next, and not the record this repository
+# keeps.
+e2e/evidence/stuck-*.png
+e2e/evidence/stuck-*.html
