@@ -430,8 +430,11 @@ def check_file_store(survey):
         'reload this page." -- the PUT to /api/deposits/items/<id> 500s '
         'and the workflow never leaves Item Registration. Check '
         'S3_ENDPOINT_URL, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in '
-        'the instance configuration.'.format(
-            found.get('uri'), found.get('error') or 'no reason given'))
+        'the instance configuration -- invenio-s3 also accepts them '
+        'misspelled as S3_ACCCESS_KEY_ID and S3_SECRECT_ACCESS_KEY, and '
+        'the names it found set were: {2}.'.format(
+            found.get('uri'), found.get('error') or 'no reason given',
+            ', '.join(found.get('keys') or []) or 'none'))
 
 
 def check_search_takes_writes(survey):

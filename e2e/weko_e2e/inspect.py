@@ -149,6 +149,15 @@ def files_backend():
 
     found['kind'] = 's3'
     try:
+        from flask import current_app as _app
+        found['keys'] = sorted(
+            k for k in ('S3_ENDPOINT_URL', 'S3_ACCESS_KEY_ID',
+                        'S3_ACCCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY',
+                        'S3_SECRECT_ACCESS_KEY')
+            if _app.config.get(k))
+    except Exception:
+        found['keys'] = None
+    try:
         import boto3
         from botocore.client import Config
         from flask import current_app
@@ -156,9 +165,16 @@ def files_backend():
         client = boto3.client(
             's3',
             endpoint_url=settings.get('S3_ENDPOINT_URL'),
+            # invenio-s3 carries two misspellings of its own as
+            # supported names -- S3_ACCCESS_KEY_ID and
+            # S3_SECRECT_ACCESS_KEY -- and corrects them only when
+            # s3fs is started.  An instance configured under those
+            # names works, so a check that looked only for the
+            # corrected ones would call it broken.
             aws_access_key_id=(settings.get('S3_ACCESS_KEY_ID')
                                or settings.get('S3_ACCCESS_KEY_ID')),
-            aws_secret_access_key=settings.get('S3_SECRET_ACCESS_KEY'),
+            aws_secret_access_key=(settings.get('S3_SECRET_ACCESS_KEY')
+                                   or settings.get('S3_SECRECT_ACCESS_KEY')),
             config=Config(connect_timeout=5, read_timeout=10,
                           retries={'max_attempts': 1}))
         client.head_bucket(Bucket=found['uri'][len('s3://'):].split('/')[0])
