@@ -287,7 +287,15 @@ def check_flow(survey):
 
 
 def check_index_tree(survey):
-    """There is an index for the run to hang its own index under."""
+    """There is an index tree, which is what install.sh leaves behind.
+
+    A warning rather than a failure.  A run makes its own index at the
+    top level -- ``create_index(parent=0)`` -- so an empty tree may well
+    be enough, and stopping the run before it can find out would be
+    deciding something we have not established.  What an empty tree does
+    mean is that the instance is below the state ``install.sh`` leaves,
+    and that nothing has ever been published on it.
+    """
     report = survey.report
     if not report:
         return Finding(WARN, 'the index tree',
@@ -296,9 +304,12 @@ def check_index_tree(survey):
         return Finding(OK, 'the index tree',
                        '{0} index(es)'.format(survey.counts['indexes']))
     return Finding(
-        FAIL, 'the index tree',
-        'the index tree is empty; a run creates its own index but the '
-        'screens want a tree to put it in',
+        WARN, 'the index tree',
+        'the index tree is empty, so nothing has been published on this '
+        'instance. A run makes its own index at the top level and may '
+        'need nothing more; "doctor --fix" adds the sample index that '
+        'install.sh leaves, which is a visible change to the site and so '
+        'is asked for rather than assumed.',
         fix='index-tree')
 
 
