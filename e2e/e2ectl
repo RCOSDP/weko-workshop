@@ -4,7 +4,26 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+# "./e2ectl" starts whatever python3 is first on PATH, which is seldom the
+# one the requirements went into.  The tool's own messages say "./e2ectl",
+# so that has to work: when the requirements are missing here and the
+# virtualenv the README makes is beside this directory, run in that.
+try:
+    import bs4  # noqa: F401
+except ImportError:
+    VENV = os.path.realpath(os.path.join(HERE, '..', '.venv-e2e'))
+    PYTHON = os.path.join(VENV, 'bin', 'python')
+    if os.path.realpath(sys.prefix) != VENV and os.access(PYTHON, os.X_OK):
+        os.execv(PYTHON, [PYTHON] + sys.argv)
+    sys.exit('e2ectl: the requirements are not installed for {0}. Make the '
+             'virtualenv the README describes, beside this directory:\n'
+             '    python3 -m venv .venv-e2e\n'
+             '    .venv-e2e/bin/pip install -r e2e/requirements.txt\n'
+             'or install e2e/requirements.txt for this Python.'.format(
+                 sys.executable))
 
 from weko_e2e.cli import main  # noqa: E402
 

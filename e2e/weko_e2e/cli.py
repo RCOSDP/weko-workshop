@@ -946,6 +946,63 @@ def put_right(findings, settings, survey, accounts=False, out=print):
     return repairable
 
 
+def held_back(finding, settings, accounts=False):
+    """Say why the repair a finding names cannot run here, if it cannot.
+
+    Asked before anything is promised: a summary that says a finding
+    "can be put right" and a ``--fix`` that then answers "run seed first"
+    sends somebody round a loop for nothing.  Nothing is fetched or
+    changed in asking.
+
+    :param accounts: whether the repairs touching an account are allowed
+    :return: the reason, or None when the repair can be tried
+    """
+    _fixer, needs_accounts = FIXES[finding.fix]
+    if needs_accounts and not accounts:
+        return 'it would add or change an account; pass --fix-accounts ' \
+               'to allow that'
+    if not settings.can_exec:
+        return 'nothing can be run in the containers. {0}'.format(NEEDS)
+    if finding.fix in SQL_SOURCES and not settings.weko_ref:
+        # A named version is fetched when the repair runs, so only the
+        # cases that would end in "there is nothing to take the rows
+        # from" are held back here.
+        _ref, _checkout, problem = _sql_source(settings)
+        return problem
+    return None
+
+
+def _say_what_can_be_put_right(findings, settings, accounts, fixing=False):
+    """Print which findings ``doctor --fix`` would put right, and which not.
+
+    :param fixing: ``--fix`` was given, so it is not to be suggested
+    :return: the findings it would put right
+    """
+    repairable = [f for f in findings if f.fix and f.status != doctor.OK]
+    ready = []
+    waiting = {}
+    for finding in repairable:
+        reason = held_back(finding, settings, accounts)
+        if reason:
+            waiting.setdefault(reason, []).append(finding.name)
+        else:
+            ready.append(finding)
+    if ready and not fixing:
+        print('\n{0} of these can be put right: run "doctor --fix"'.format(
+            len(ready)))
+    for reason, names in waiting.items():
+        print('\n{0}: "doctor --fix" cannot put {1} right here yet -- '
+              '{2}'.format(', '.join(names),
+                           'this' if len(names) == 1 else 'these', reason))
+    stuck = [f for f in findings if f.status == doctor.FAIL and not f.fix]
+    if stuck:
+        print('\n{0}: "doctor --fix" has no repair for {1}; it is put right '
+              'on the instance itself, as the detail above says'.format(
+                  ', '.join(f.name for f in stuck),
+                  'this' if len(stuck) == 1 else 'these'))
+    return ready
+
+
 def command_doctor(args, settings, ledger):
     """Say whether this instance can be tested, and put right what can be.
 
@@ -975,22 +1032,19 @@ def command_doctor(args, settings, ledger):
     if args.sql:
         return write_repair_sql(findings, settings, survey)
 
-    repairable = [f for f in findings if f.fix and f.status != doctor.OK]
+    ready = _say_what_can_be_put_right(findings, settings, args.fix_accounts,
+                                       fixing=args.fix)
     if not args.fix:
-        if repairable:
-            print('\n{0} of these can be put right: run "doctor --fix"'.format(
-                len(repairable)))
         return 1 if doctor.worst(findings) == doctor.FAIL else 0
 
-    if repairable:
+    if ready:
         print('\nrepairing:')
-        put_right(findings, settings, survey, args.fix_accounts)
-    if repairable:
+        put_right(ready, settings, survey, args.fix_accounts)
         print('\nlooking again:')
         return command_doctor(
             argparse.Namespace(**dict(vars(args), fix=False)), settings,
             ledger)
-    print('\nnothing to repair')
+    print('\nnothing that --fix can repair here')
     return 1 if doctor.worst(findings) == doctor.FAIL else 0
 
 
@@ -1067,14 +1121,10 @@ def write_repair_sql(findings, settings, survey, out=print):
 
 def _repair(finding, settings, survey, accounts=False, out=print):
     """Apply one repair, and say what happened."""
-    fixer, needs_accounts = FIXES[finding.fix]
-    if needs_accounts and not accounts:
-        out('  skipped {0}: it would add or change an account; pass '
-            '--fix-accounts to allow that'.format(finding.name))
-        return
-    if not settings.can_exec:
-        out('  cannot repair {0}: nothing can be run in the containers. '
-            '{1}'.format(finding.name, NEEDS))
+    fixer, _needs_accounts = FIXES[finding.fix]
+    reason = held_back(finding, settings, accounts)
+    if reason:
+        out('  skipped {0}: {1}'.format(finding.name, reason))
         return
     out('  {0}...'.format(finding.name))
     for line in fixer(settings, survey) or []:

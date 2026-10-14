@@ -107,7 +107,7 @@ def pytest_sessionstart(session):
         return
     _RUN['doctor'] = True
 
-    from weko_e2e.cli import look_over, put_right
+    from weko_e2e.cli import held_back, look_over, put_right
 
     settings = settings_for()
     book = Ledger(settings.state_path)
@@ -143,11 +143,26 @@ def pytest_sessionstart(session):
             'not about the tests. [`doctor.md`](doctor.md) is what it '
             'found.'.format('; '.join(
                 '`{0}`'.format(f.name) for f in failed))))
+        # Only point at "doctor --fix" for what it can actually repair:
+        # a failure in the instance's own configuration has no repair,
+        # and sending somebody to run one that does nothing is worse than
+        # saying so.
+        fixable = [f for f in failed if f.fix and not held_back(
+            f, settings, config.getoption('--doctor-fix-accounts'))]
+        if fixable and len(fixable) == len(failed):
+            how = 'Put it right with "./e2ectl doctor --fix"'
+        elif fixable:
+            how = ('"./e2ectl doctor --fix" can put right {0}; the rest is '
+                   'put right on the instance itself, as the detail above '
+                   'says'.format('; '.join(f.name for f in fixable)))
+        else:
+            how = ('"./e2ectl doctor --fix" has no repair for this; it is '
+                   'put right on the instance itself, as the detail above '
+                   'says')
         pytest.exit(
-            'this instance is not in a state to be tested: {0}. Put it '
-            'right with "./e2ectl doctor --fix", or run with --no-doctor '
-            'to go ahead anyway.'.format(
-                '; '.join(f.name for f in failed)),
+            'this instance is not in a state to be tested: {0}. {1}, or '
+            'run with --no-doctor to go ahead anyway.'.format(
+                '; '.join(f.name for f in failed), how),
             returncode=pytest.ExitCode.USAGE_ERROR)
 
 
