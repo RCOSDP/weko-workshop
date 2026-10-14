@@ -707,9 +707,21 @@ def _closing(troubled):
         return ('Nothing the run itself depends on was missing, so it went '
                 'ahead; the warnings are what the other suites want, or '
                 'what an earlier run left behind.')
-    return ('The run stopped here: {0}. `./e2ectl doctor --fix` is what '
-            'puts right the ones that can be.'.format(
-                '; '.join(finding.name for finding in failed)))
+    # "doctor --fix" is named only for what has a repair: a failure in
+    # the instance's own configuration has none, and sending somebody to
+    # run it there changes nothing.
+    stopped = 'The run stopped here: {0}.'.format(
+        '; '.join(finding.name for finding in failed))
+    fixable = [finding.name for finding in failed if finding.fix]
+    if len(fixable) == len(failed):
+        return stopped + (' `./e2ectl doctor --fix` is what puts right the '
+                          'ones that can be.')
+    if fixable:
+        return stopped + (' `./e2ectl doctor --fix` can put right {0}; the '
+                          'rest is put right on the instance itself, as the '
+                          'table says.'.format('; '.join(fixable)))
+    return stopped + (' `./e2ectl doctor --fix` has no repair for this; it is '
+                      'put right on the instance itself, as the table says.')
 
 
 def worst(findings):
