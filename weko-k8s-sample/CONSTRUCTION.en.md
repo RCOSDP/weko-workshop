@@ -395,7 +395,7 @@ For the real commands see [`README.en.md`](./README.en.md) (the multi-tenant con
 - Connection info in each tenant Secret's `S3_*` (`http://minio:9000`, key=`wekominio`).
 - **WEKO uploads go to the S3 (MinIO) Location** (`set-s3-location.sh`): UPDATE each tenant DB's `files_location` to `type='s3'` / `uri='s3://weko-<tenant>'` plus `access_key`/`secret_key`/`s3_endpoint_url`/`s3_send_file_directly=true`/`s3_default_block_size=5242880`/`s3_signature_version='s3v4'`. weko writes objects into the MinIO bucket with `invenio-s3`'s s3fs.
   - **The main pitfall**: `invenio-s3`'s `storage.py _get_fs` connects s3fs with the location's S3 info only when `location.type=='s3'`. If `type` stays `None`, it falls back to PyFilesystem2 and fails with `AWS_ACCESS_KEY_ID not set`. → Always set `type='s3'`. path-style and `signature_version=s3v4` are handled by invenio-s3.
-  - `gen-tenant.sh` sets `instance.cfg`'s `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL` (for both web and worker) to read from environment variables.
+  - `gen-tenant.sh` sets `instance.cfg`'s `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL` (for both web and worker) to read from environment variables, with the same keys in `S3_READONLY_ACCESS_KEY_ID`/`S3_READONLY_SECRET_ACCESS_KEY` for reading.
   - Tested (on the real arm64 machine): real objects at `s3://weko-tenant1/...` for tenant1 and `s3://weko-tenant2/...` for tenant2. The NFS share (RWX) holds only theme conf/data (not the uploaded files).
 - Tested: `pg_dumpall` → backup into `weko-backup/postgres/` (a two-stage Job: an initContainer dumps, then mc uploads).
 

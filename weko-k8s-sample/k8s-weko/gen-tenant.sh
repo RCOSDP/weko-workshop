@@ -470,8 +470,11 @@ spec:
           export PATH=/home/invenio/.virtualenvs/invenio/bin:\$PATH
           # Switch to redissentinel mode (the bundled instance.cfg hardcodes 'redis')
           sed -i "s#CACHE_TYPE = OAUTH2_CACHE_TYPE =  'redis'#CACHE_TYPE = OAUTH2_CACHE_TYPE = 'redissentinel'#" /code/scripts/instance.cfg
-          # Use S3 (MinIO) as the file Location: read the S3 credentials from the Secret (env vars)
-          sed -i -e "s/^S3_ACCCESS_KEY_ID = None/S3_ACCCESS_KEY_ID = os.environ.get('S3_ACCCESS_KEY_ID')/" -e "s/^S3_SECRET_ACCESS_KEY = None/S3_SECRET_ACCESS_KEY = os.environ.get('S3_SECRECT_ACCESS_KEY')/" -e "s#^S3_ENDPOINT_URL = None#S3_ENDPOINT_URL = os.environ.get('S3_ENDPOINT_URL')#" /code/scripts/instance.cfg
+          # Use S3 (MinIO) as the file Location: read the S3 credentials from the Secret (env vars).
+          # invenio-s3 writes with S3_ACCESS_KEY_ID and reads with S3_READONLY_ACCESS_KEY_ID, so the
+          # readonly pair needs the same keys too: left at None, uploads work and registering the
+          # item then fails with NoCredentialsError ("Server Error. Please reload this page.").
+          sed -i -e "s/^S3_ACCCESS_KEY_ID = None/S3_ACCCESS_KEY_ID = os.environ.get('S3_ACCCESS_KEY_ID')/" -e "s/^S3_SECRET_ACCESS_KEY = None/S3_SECRET_ACCESS_KEY = os.environ.get('S3_SECRECT_ACCESS_KEY')/" -e "s/^S3_READONLY_ACCESS_KEY_ID = None/S3_READONLY_ACCESS_KEY_ID = os.environ.get('S3_ACCCESS_KEY_ID')/" -e "s/^S3_READONLY_SECRET_ACCESS_KEY = None/S3_READONLY_SECRET_ACCESS_KEY = os.environ.get('S3_SECRECT_ACCESS_KEY')/" -e "s#^S3_ENDPOINT_URL = None#S3_ENDPOINT_URL = os.environ.get('S3_ENDPOINT_URL')#" /code/scripts/instance.cfg
           # the shared conf FS starts empty, so place uwsgi.ini
           cp -f /code/scripts/uwsgi.ini /conf/uwsgi.ini
           sed -i -e "s/^py-autoreload.*/py-autoreload = 0/" -e "s/^processes = .*/processes = 1/" -e "s/^threads = .*/threads = 1/" /conf/uwsgi.ini
