@@ -621,7 +621,7 @@ initContainer `init`（jinja2 で `invenio.cfg` 生成）＋ `seed-data`／`seed
 - **data**: 空 NFS だとイメージ内の `_variables.scss` が隠れ、CSS(sass) の `@import "../../../data/_variables"` が失敗して**トップが500**になる。→ **initContainer**（`weko3-web:arm64`）で NFS data を `/seed` にマウントし `cp -an .../data/. /seed/` でテーマファイルをシード。
 - **アップロード先＝S3(MinIO) Location**（NFS共有ではない）: 初期化後に `set-s3-location.sh` で DB `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` ＋ S3接続情報（access_key/secret_key/s3_endpoint_url）に設定。weko は `invenio-s3` の s3fs 経由で MinIO バケットへ保存。
   - 注意: `location.type` が `None` のままだと invenio-s3 が PyFilesystem2 にフォールバックして `AWS_ACCESS_KEY_ID not set` で失敗する。必ず `type='s3'` にする。
-  - `gen-tenant.sh` が `instance.cfg` の `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL` を環境変数から読む配線を実施済み。path-style・`signature_version=s3v4` は invenio-s3 が処理。
+  - `gen-tenant.sh` が `instance.cfg` の `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL` を環境変数から読む配線を実施済み。読み出し用の `S3_READONLY_ACCESS_KEY_ID`/`S3_READONLY_SECRET_ACCESS_KEY` にも同じキーを入れる（invenio-s3 は読み出しにこちらを使い、未設定だとアイテム登録時に NoCredentialsError になる）。path-style・`signature_version=s3v4` は invenio-s3 が処理。
 
 ### 検証（実測 2026-07-23・arm64実機で一気通貫デプロイ）
 ```

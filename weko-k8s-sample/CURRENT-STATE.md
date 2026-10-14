@@ -97,7 +97,7 @@ NFS 共有FS（本番の config-pvc/data-pvc 相当）:
 - `<tenant>-nginx-pvc` → nginx コンテナの `/etc/nginx`（NFS 上の `/fs-nginx/<tenant>`。`provision-nfs.sh` が nginx_template を投入）
 - **アップロード先＝S3(MinIO) Location**: DB `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` に設定（`set-s3-location.sh`）。weko は `invenio-s3` の s3fs 経由で MinIO バケットへ保存。
   - 仕組み: `invenio-s3` の `_get_fs` は `location.type=='s3'` の時だけ location の S3情報(access_key/secret_key/s3_endpoint_url)で s3fs 接続。None のままだと PyFilesystem2 にフォールバックして `AWS_ACCESS_KEY_ID not set` で失敗する。
-  - path-style / `signature_version=s3v4` は invenio-s3 が処理。`instance.cfg` の `S3_ACCCESS_KEY_ID` 等を環境変数から読む配線を `gen-tenant.sh` が実施。
+  - path-style / `signature_version=s3v4` は invenio-s3 が処理。`instance.cfg` の `S3_ACCCESS_KEY_ID` 等（読み出し用の `S3_READONLY_*` を含む）を環境変数から読む配線を `gen-tenant.sh` が実施。
   - 検証済: tenant1→`s3://weko-tenant1/...`, tenant2→`s3://weko-tenant2/...` に実オブジェクト確認。
 
 ---

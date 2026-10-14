@@ -97,7 +97,7 @@ NFS shared FS (same as production's config-pvc/data-pvc):
 - `<tenant>-nginx-pvc` → `/etc/nginx` in the nginx container (`/fs-nginx/<tenant>` on NFS; seeded from nginx_template by `provision-nfs.sh`)
 - **Uploads go to the S3 (MinIO) Location**: the DB `files_location` is set to `type='s3'` / `uri='s3://weko-<tenant>'` (`set-s3-location.sh`). weko writes objects into the MinIO bucket with `invenio-s3`'s s3fs.
   - How it works: `invenio-s3`'s `_get_fs` connects s3fs with the location's S3 info (access_key/secret_key/s3_endpoint_url) **only when** `location.type=='s3'`. If it stays None, it falls back to PyFilesystem2 and fails with `AWS_ACCESS_KEY_ID not set`.
-  - path-style and `signature_version=s3v4` are handled by invenio-s3. `gen-tenant.sh` sets `instance.cfg`'s `S3_ACCCESS_KEY_ID` etc. to read from environment variables.
+  - path-style and `signature_version=s3v4` are handled by invenio-s3. `gen-tenant.sh` sets `instance.cfg`'s `S3_ACCCESS_KEY_ID` etc. (including the `S3_READONLY_*` pair used for reading) to read from environment variables.
   - Tested: real objects at `s3://weko-tenant1/...` for tenant1 and `s3://weko-tenant2/...` for tenant2.
 
 ---

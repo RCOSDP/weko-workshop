@@ -392,7 +392,7 @@ kubectl exec -i -n weko3 $POD -c web -- bash -s < scratchpad/weko-init.sh
 - テナント Secret の `S3_*` に接続情報（`http://minio:9000`, key=`wekominio`）。
 - **WEKO のアップロード先＝S3(MinIO) Location**（`set-s3-location.sh`）: 各テナントDBの `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` ＋ `access_key`/`secret_key`/`s3_endpoint_url`/`s3_send_file_directly=true`/`s3_default_block_size=5242880`/`s3_signature_version='s3v4'` に UPDATE。weko は `invenio-s3` の s3fs 経由で MinIO バケットへ保存。
   - **核心の落とし穴**: `invenio-s3` `storage.py _get_fs` は `location.type=='s3'` の時だけ location の S3情報で s3fs 接続する。`type` が `None` のままだと PyFilesystem2 にフォールバックし `AWS_ACCESS_KEY_ID not set` で失敗。→ 必ず `type='s3'` に設定。path-style・`signature_version=s3v4` は invenio-s3 が処理。
-  - `gen-tenant.sh` が `instance.cfg` の `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL`（web/worker 両方）を環境変数から読む配線を実施。
+  - `gen-tenant.sh` が `instance.cfg` の `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL`（web/worker 両方）を環境変数から読む配線を実施。読み出し用の `S3_READONLY_ACCESS_KEY_ID`/`S3_READONLY_SECRET_ACCESS_KEY` にも同じキーを入れる。
   - 検証済（arm64実機）: tenant1→`s3://weko-tenant1/...`, tenant2→`s3://weko-tenant2/...` に実オブジェクト確認。NFS共有(RWX)はテーマ由来 conf/data のみ（アップロード実体は含まない）。
 - 検証: `pg_dumpall` → `weko-backup/postgres/` へバックアップ（initContainer で dump→mc upload の2段 Job）。
 

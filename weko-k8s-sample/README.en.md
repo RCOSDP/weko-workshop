@@ -623,7 +623,7 @@ Notes (done for you in `gen-tenant.sh`):
 - **data**: an empty NFS mount hides the image's `_variables.scss`, so the CSS (sass) `@import "../../../data/_variables"` fails and **the top page returns 500**. → An **initContainer** (`weko3-web:arm64`) mounts the NFS data at `/seed` and copies the theme files with `cp -an .../data/. /seed/`.
 - **Uploads go to the S3 (MinIO) Location** (not the NFS share): after setup, `set-s3-location.sh` sets the DB `files_location` to `type='s3'` / `uri='s3://weko-<tenant>'` plus the S3 connection info (access_key/secret_key/s3_endpoint_url). weko writes into the MinIO bucket with `invenio-s3`'s s3fs.
   - Careful: if `location.type` stays `None`, invenio-s3 falls back to PyFilesystem2 and fails with `AWS_ACCESS_KEY_ID not set`. Always set `type='s3'`.
-  - `gen-tenant.sh` already sets `instance.cfg`'s `S3_ACCCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_ENDPOINT_URL` to read from environment variables. path-style and `signature_version=s3v4` are handled by invenio-s3.
+  - `gen-tenant.sh` already sets `instance.cfg`'s `S3_ACCCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_ENDPOINT_URL` to read from environment variables, and puts the same keys in `S3_READONLY_ACCESS_KEY_ID` / `S3_READONLY_SECRET_ACCESS_KEY` (invenio-s3 reads with those; left unset, item registration fails with NoCredentialsError). path-style and `signature_version=s3v4` are handled by invenio-s3.
 
 ### Verification (measured 2026-07-23, full end-to-end deploy on the real arm64 machine)
 ```
