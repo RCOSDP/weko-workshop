@@ -1,8 +1,8 @@
 # k8s-weko (amd64) — WEKO3 on kind（amd64 ネイティブ）
 
 amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構築された**JAIRO Cloud**環境を **kind**
-（Kubernetes-in-Docker）で構築するマニフェスト＋スクリプト一式。すべて **amd64 ネイティブ**で、外部レジストリは不要
-（weko/nginx/ES はソースからローカルビルドして kind ノードへ直接ロードする。pgpool のみ公式イメージを pull）。
+（Kubernetes-in-Docker）で構築するマニフェスト＋スクリプト一式。すべて **amd64 ネイティブ**で、自前のレジストリは不要
+（weko/nginx/ES はソースからローカルビルドし、pgpool などの配布元のイメージはホストで pull して、どちらも kind ノードへ直接ロードする）。
 
 対象ホスト: **amd64 (x86_64) Linux ／ RAM 64GB 以上 ／ 十分な空きディスク**（検証機は 20コア / 121GB RAM）。
 
