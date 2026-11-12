@@ -14,7 +14,7 @@ ProLiant Gen9 uses an Intel Xeon = **x86_64/amd64**. This is different from the 
 | weko application | **amd64 build from the newest source (RCOSDP/weko)** → `weko3-web:amd64` (set `WEKO_IMAGE` only to use a prebuilt image) |
 | Elasticsearch | weko ES on the official `docker.elastic.co/.../6.8.23` base (`/home/mhaya/weko/elasticsearch/Dockerfile`) |
 | PostgreSQL | Zalando `spilo-13` (production PG13, amd64) or spilo-17. The operator is amd64. |
-| RabbitMQ / Redis / MinIO / nginx / NFS | All official amd64 |
+| RabbitMQ / Redis / SeaweedFS / nginx / NFS | All official amd64 |
 
 ## 1. Choosing the platform
 
@@ -42,7 +42,7 @@ Keep **about 14GB** for the OS, k8s, and page cache. This leaves about 50GB for 
 | ″ | **PostgreSQL, 2 nodes** (Patroni primary + standby) | 3GB × 2 = **6GB** | shared_buffers about 1GB |
 | ″ | **RabbitMQ, 3 nodes** (quorum queue) | 1.2GB × 3 = **3.6GB** | 1.5GB if you use one node |
 | ″ | Redis Sentinel (master + 2 replicas + 3 sentinels) | **about 1.5GB** total | |
-| ″ | MinIO (S3) | **1GB** | |
+| ″ | SeaweedFS (S3) | **1GB** | |
 | App | **weko web × T tenants** (nginx+web+worker) | **about 3.5GB/tenant** | processes=2 / threads=2 (native) |
 | Reserve | Page cache / buffers / avoid OOM | **about 10GB or more** | Important for ES/PG speed |
 
@@ -58,11 +58,11 @@ With fewer tenants, you can make the ES heap bigger and hold more items per tena
 | PostgreSQL data | about 50GB | Metadata (tens of GB even at 1M records) |
 | Elasticsearch data | about 100GB | Indices (depends on item count) |
 | Redis/RabbitMQ | about 20GB | |
-| **Content files (S3 = MinIO Location)** | **about 700GB** | Most of the data. This is the main use of the 1TB. MinIO PVC |
+| **Content files (S3 = SeaweedFS Location)** | **about 700GB** | Most of the data. This is the main use of the 1TB. S3 PVC (`s3-data`) |
 | NFS export (theme conf/data only) | about tens of GB | Small: `_variables.scss` / indextree, and so on |
 
 > PVC requests on local-path are not hard limits. Still, we suggest you **set clear sizes and watch them** in operation.
-> The files are all kept in the **S3 (MinIO) Location** (`files_location.type='s3'`, `uri=s3://weko-<tenant>`) → give 700GB to MinIO.
+> The files are all kept in the **S3 (SeaweedFS) Location** (`files_location.type='s3'`, `uri=s3://weko-<tenant>`) → give 700GB to the S3 (SeaweedFS) PVC.
 > NFS holds only the small theme data. If disk gets tight, point the endpoint in `set-s3-location.sh` to an outside S3.
 
 ## 4. Capacity (rough numbers for this design)
@@ -82,23 +82,24 @@ The limits are the **ES heap (12GB)** and the **file disk (about 700GB)**.
 ## 5. How to deploy (main points)
 
 1. **Follow Appendix C (amd64)**: no binfmt, no arm64 builds. Build WEKO3 for amd64 from the newest source, then load it. Build ES from the official base too.
+   Before the deploy, pull the third-party images on the host with `cd k8s-weko-amd64 && bash pull-images-amd64.sh` (re-run until everything is OK; this avoids Docker Hub's anonymous pull limit. `deploy-amd64.sh` also calls `pull-images-amd64.sh load` in step 1).
 2. **Set the resources to the values in this design** (what changes from the arm64 version):
    - `13-elasticsearch.yaml`: **2 nodes**, `ES_JAVA_OPTS=-Xms6g -Xmx6g`, limit 8Gi, keep replicas
    - `51-postgresql-ha.yaml`: `numberOfInstances: 2`, resources 3Gi
    - `50-rabbitmq-cluster.yaml`: `replicas: 3` (or 1), mem 1.2Gi
    - `gen-tenant.sh`: web with `processes=2/threads=2` (native, so no need to cut it), image=`weko3-web:amd64` (built from the newest source). You can remove the emulation workarounds (ulimit/cores/processes=1)
-   - `40-minio.yaml`: it holds the **file Location itself**, so make it big (600–700GB). The export in `60-nfs-server.yaml` can stay small because it is only for themes
-   - After the deploy, run `set-s3-location.sh` to set each tenant's `files_location` to the S3 (MinIO) type (`deploy-amd64.sh §8` does this for you)
+   - `40-s3.yaml` (SeaweedFS, PVC `s3-data`, 600Gi by default): it holds the **file Location itself**, so make it big (600–700GB). The export in `60-nfs-server.yaml` can stay small because it is only for themes
+   - After the deploy, run `set-s3-location.sh` to set each tenant's `files_location` to the S3 (SeaweedFS) type (`deploy-amd64.sh §8` does this for you)
 3. **Start with about 5 tenants** (`tenants.txt`). Watch the ES heap and disk, and stop growing when needed.
 
 ## 6. HA on one server (an honest note)
 
 - With one machine, **if the server dies, everything stops**. Even a 3-node cluster only protects against **process/Pod failures**.
 - If you really need high availability, use **more than one server** and spread the backends over the hosts (= the production OKE shape).
-- One 64GB server is good for **staging that looks like production, or small-to-medium production**. Handle disaster recovery with backups (pg_dump / ES snapshot to MinIO).
+- One 64GB server is good for **staging that looks like production, or small-to-medium production**. Handle disaster recovery with backups (pg_dump / ES snapshot to S3 (SeaweedFS)).
 
 ## 7. Quick sizing guide (when you want to change something)
 
 - **More items per tenant** → use fewer tenants and make the ES heap bigger (e.g. 2 tenants, ES heap 20GB → over 100k items each).
 - **More tenants** → make the web pod lighter (processes=1); Redis/PG have room. The ES heap depends on total item count, so keep counts low.
-- **Many files** → the files are already in the S3 (MinIO) Location. Grow the disk behind MinIO, or point the endpoint in `set-s3-location.sh` to an outside S3.
+- **Many files** → the files are already in the S3 (SeaweedFS) Location. Grow the disk behind the S3 (SeaweedFS) PVC, or point the endpoint in `set-s3-location.sh` to an outside S3.

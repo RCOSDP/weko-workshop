@@ -65,6 +65,7 @@
 |---|---|---|---|
 | イメージの入手 | ローカルで `docker build`（WEKO / ES / nginx の3種、`deploy-amd64.sh:126-163`） | CI でビルド → **OCIR** に push | 🟡 |
 | ノードへの配布 | **`kind load docker-image`**（4回、`deploy-amd64.sh:131,149,163,168`） | kubelet が registry から pull | 🟡 |
+| 配布元イメージ（ingress-nginx / cert-manager / redis / SeaweedFS 等） | ホストで pull → `kind load`（`pull-images-amd64.sh load`。Docker Hub の匿名 pull 制限を避けるため） | kubelet が pull | 🟡 |
 | `imagePullPolicy` | **`Never`**（9箇所: `13-elasticsearch.yaml:53`, `62-pgpool.yaml:80`, `gen-tenant.sh`×7） | `Always`（`deploy-web.yaml:44,74,90`） | 🟡 |
 | `imagePullSecrets` | なし | `ocir-secret`（全 Pod、`deploy-web.yaml:113-114`） | 🟡 |
 | イメージ名の管理 | シェル変数に直書き（`WEKO_IMAGE` 等） | kustomize `images:` で overlay ごとに置換（`postgresql/overlay/oci-pr/kustomization.yaml:19-30`） | 🔵 |
@@ -90,7 +91,7 @@
 | 共有 FS の可用性 | `replicas: 1` + `Recreate` = **SPOF** | マネージド NFS（冗長） | 🟡 |
 | NFS Pod の特権 | `capabilities: [DAC_READ_SEARCH, SYS_ADMIN]`（`60-nfs-server.yaml:117-119`） | 不要 | 🟡 |
 | ディレクトリ作成方法 | busybox seed Pod 経由（`provision-nfs.sh:38-60`） | ホストから直接 `mkdir`（`scripts/make_volumes.sh`） | 🔵 |
-| オブジェクトストレージ | **MinIO**（`40-minio.yaml`、`replicas: 1`、600Gi RWO） | **OCI Object Storage**（S3互換、クラスタ外） | 🟡 |
+| オブジェクトストレージ | **SeaweedFS**（`40-s3.yaml`、`replicas: 1`、600Gi RWO） | **OCI Object Storage**（S3互換、クラスタ外） | 🟡 |
 
 > **🟡 の核心**: 共有 FS が最大の差異である。`60-nfs-server.yaml` は
 > 「本番の OKE File Storage をクラスタ内で模擬するための代替物」であり、
@@ -146,7 +147,7 @@
 | RabbitMQ operator | cluster-operator **latest**（`deploy-amd64.sh:173`） | cluster-operator（バージョン固定） | 🔵 バージョン固定していない点が差 |
 | Redis | `redis:6.2`（公式イメージ） | `weko_redis:v1.0` / `weko_sentinel:v1.0`（独自イメージ） | 🔵 |
 | cert-manager | v1.16.2（`deploy-amd64.sh:171`） | **使用していない** | 🟡 |
-| MinIO | `minio/minio:RELEASE.2025-04-08...` | **使用していない**（OCI Object Storage） | 🟡 |
+| SeaweedFS(S3) | `chrislusf/seaweedfs:4.53` | **使用していない**（OCI Object Storage） | 🟡 |
 
 > **⚠️ 要注意**: `51-postgresql-ha.yaml:5` のコメントは「本番の **PG13** に合わせるなら spilo-13 を指定」と
 > 書いているが、現行の本番 IaC は CR で `version: "12"` を指定している
@@ -162,7 +163,7 @@
 | Elasticsearch | 2 | 1 | **13** | 🔵 |
 | RabbitMQ | 3 | 1 / 2Gi | **3 / 50Gi**<br>req 6cpu-24Gi, lim 7cpu-30Gi | 🔵 |
 | Redis | 3 + Sentinel 3 | Sentinel 構成 | **2 + Sentinel 3** | 🔵 |
-| MinIO | 1 / 600Gi（SPOF） | — | — | 🟡 |
+| SeaweedFS(S3) | 1 / 600Gi（SPOF） | — | — | 🟡 |
 | WEKO web | テナント毎 **1** | 1 | 1（メモリは `repositories_file` で個別指定） | ✅ |
 | Ingress Controller | 1 | — | 2 | 🔵 |
 
@@ -385,7 +386,7 @@ SimpleAggregation で `isMemberOf` を取りに行く。詳細は
 | 項目 | kind 検証環境 | 本番環境 | 判定 |
 |---|---|---|---|
 | 管理方式 | manifest / スクリプトに直書き | `deploy/secret.properties` に集約 → kustomize `secretFromProperties` generator | 🟡 |
-| MinIO / S3 キー | **平文**（`40-minio.yaml:10-11`, `deploy-amd64.sh:138-141,228`） | `weko3pg.postgres-pod-secrets.AWS_*` 等 | 🟡 |
+| S3 キー | **平文**（`40-s3.yaml:21`, `deploy-amd64.sh:203-204`, `gen-tenant.sh:17`, `s3-create-buckets.sh`） | `weko3pg.postgres-pod-secrets.AWS_*` 等 | 🟡 |
 | PG パスワード | `weko` に**強制上書き**（`deploy-amd64.sh:231-236`） | `weko3pg.postgresql-infrastructure-roles.invenio` | 🟡 |
 | 管理者パスワード | `tenants.txt` に平文（Git 管理下） | `repositories_file`（平文だが Git 管理外） | 🟡 |
 | レジストリ資格情報 | 不要 | `ocir-secret`（namespace 毎） | 🔴 |
@@ -401,7 +402,7 @@ SimpleAggregation で `isMemberOf` を取りに行く。詳細は
 | **監視** | **なし** | kube-prometheus-stack + ServiceMonitor（pg / pgpool / redis / rabbitmq / es / ingress）+ Grafana ダッシュボード + アラートルール（`deploy/monitoring/`） | 🔴 |
 | **ログ集約** | **なし** | fluentd → Elasticsearch → Kibana、kubernetes-event-exporter、Slack 通知（`deploy/logging/`） | 🔴 |
 | **DB バックアップ** | **なし** | operator の WAL / logical backup（`components/backup_s3`）+ pgdump の rclone → Object Storage（`components/pgdump_s3`） | 🔴 |
-| **ES バックアップ** | MinIO への snapshot 設定のみ（実行 Job なし） | `essnapshot-job`（`elasticsearch/components/backup_s3/`） | 🔴 |
+| **ES バックアップ** | SeaweedFS への snapshot 設定のみ（実行 Job なし） | `essnapshot-job`（`elasticsearch/components/backup_s3/`） | 🔴 |
 | **コンテンツバックアップ** | **なし** | rclone CronJob（`deploy/contents-backup/`） | 🔴 |
 | **リストア手順** | **なし** | `scripts/restore_db*.sh` / `restore_es*.sh` / `overlay/*/restore-pv*.yaml` | 🔴 |
 | **メンテナンス画面** | **なし** | `deploy/maintenance/` | 🔴 |
@@ -423,7 +424,7 @@ SimpleAggregation で `isMemberOf` を取りに行く。詳細は
 |---|---|
 | ✅ **一致**（変更不要） | Deployment 構造・マウント構成・`fsGroup`・ローリング更新方式／共有 FS のディレクトリ構成／pgpool 4.2.2 と**そのチューニング値ほぼ全て**／ES 6.8.23／RabbitMQ 4.0.9／PG 同期レプリケーション／`md5` 制約／テナント生成の思想（sed 置換）／`weko3`・`weko3re` namespace／PDB・NetworkPolicy 不在（本番も同じ）／metrics-server／Shibboleth SP 設定の配布方式／`isMemberOf` の値の形 |
 | 🔵 **簡略化**（本番仕様に戻す） | ノード種別ラベル 2種→8種／namespace 分割／サイジング全般／台数（PG 2→3、ES 2→13、pgpool 1→3 等）／PG の並列度・WAL 関連の各値／ES のヒープと `minimum_master_nodes`／Redis の `maxclients`／Sentinel の `down-after-milliseconds`（5000→3000）／テナント定義の列数 9→20／Redis 独自イメージ／`static` の emptyDir 化／kustomize 化／学認連携の既定 OFF |
-| 🟡 **代替物**（**必ず置換**） | kind クラスタ／`kind load` + `imagePullPolicy: Never`／`standard` SC／**クラスタ内 NFS と固定 ClusterIP**／MinIO／ingress-nginx OSS + `extraPortMappings`／cert-manager 自己署名 CA／`*.localhost`／秘密情報の平文／`FORCE_INIT=yes`／`teardown-*.sh`／PG メジャーバージョン／**PG のレプリケーション系タイムアウト無効化の未適用**／**RabbitMQ `consumer_timeout`（3時間）の未設定**／**ES の `-Dlog4j2.formatMsgNoLookups=true` 欠落**／**Redis の永続化方式（AOF vs RDB）・`databases 512`・`maxmemory` 未指定**／自前 IdP と AA（学認 / mAP の代替） |
+| 🟡 **代替物**（**必ず置換**） | kind クラスタ／`kind load` + `imagePullPolicy: Never`／`standard` SC／**クラスタ内 NFS と固定 ClusterIP**／SeaweedFS／ingress-nginx OSS + `extraPortMappings`／cert-manager 自己署名 CA／`*.localhost`／秘密情報の平文／`FORCE_INIT=yes`／`teardown-*.sh`／PG メジャーバージョン／**PG のレプリケーション系タイムアウト無効化の未適用**／**RabbitMQ `consumer_timeout`（3時間）の未設定**／**ES の `-Dlog4j2.formatMsgNoLookups=true` 欠落**／**Redis の永続化方式（AOF vs RDB）・`databases 512`・`maxmemory` 未指定**／自前 IdP と AA（学認 / mAP の代替） |
 | 🔴 **未実装**（新規構築） | 監視／ログ集約／バックアップ全般／リストア手順／WAF／TLS ホップ2／メンテナンス画面・保守 Pod／ノード保守手順／内部向け Ingress／レジストリ資格情報／Sentinel の `notification-script` |
 
 ### 一言でまとめると

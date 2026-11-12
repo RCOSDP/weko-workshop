@@ -7,18 +7,18 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 対象ホスト: **amd64 (x86_64) Linux ／ RAM 64GB 以上 ／ 十分な空きディスク**（検証機は 20コア / 121GB RAM）。
 
 > `deploy-amd64.sh` 一発で現フル構成を構築: **HAクラスタ（PG Patroni×2 / RabbitMQ×3 / ES×3）＋pgpool
-> ＋Redis Sentinel＋永続化（PVC）＋NFS（RWX）＋S3（MinIO）Location＋マルチテナント**。
+> ＋Redis Sentinel＋永続化（PVC）＋NFS（RWX）＋S3（SeaweedFS）Location＋マルチテナント**。
 > （`k8s-weko/` の arm64 版に対する amd64 版。主な違いは PG が2ノード構成であることと、公式 amd64 pgpool
 > イメージが使えるため pgpool をビルドせず pull する点。）
 
 ## 目次
 **最短手順**: [事前準備](#前提事前準備ツール導入) → [tenants.txt を編集](#デプロイ前に-tenantstxt-を編集) →
-[デプロイ](#デプロイ) → ブラウザで `https://tenant1.localhost/`
+[イメージを pull](#デプロイ前にイメージを-pull-する) → [デプロイ](#デプロイ) → ブラウザで `https://tenant1.localhost/`
 
 | 節 | 内容 |
 |---|---|
 | [本構成のポイント](#本構成のポイント) / [この一式の中身](#この一式の中身readme-と一緒に配布するファイル) | 何が build/deploy されるか、同梱ファイル |
-| [前提・事前準備](#前提事前準備ツール導入) | ツール判定と導入。**まず `check-prereq-amd64.sh`** |
+| [前提・事前準備](#前提事前準備ツール導入) | ツール判定と導入。**まず `check-prereq-amd64.sh`**。デプロイ前の [イメージの pull](#デプロイ前にイメージを-pull-する)（`pull-images-amd64.sh`） |
 | [デプロイ](#デプロイ) | `bash deploy-amd64.sh`。手順0〜9の内訳、[任意機能を全部入れる例](#任意機能をすべて有効にする場合)、[作成されるユーザ](#作成されるユーザ重要) |
 | [イメージの差し替え](#weko--pgpool-イメージの差し替え) | 既成イメージを使う場合。環境変数一覧もここ |
 | [HTTPS 証明書の指定](#https-証明書の指定) | 既定は自動発行。持ち込み証明書／Let's Encrypt |
@@ -39,9 +39,13 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 | pgpool | 公式 `pgpool/pgpool:4.2.2`（pull）を PostgreSQL の前段に（コネクションプール＋参照負荷分散） |
 | RabbitMQ | 3ノードクラスタ（RabbitMQ Cluster Operator, rabbitmq:4.0.9） |
 | Redis | Sentinel（master + replica×2 + sentinel×3） |
-| ファイル保存先 | **MinIO** 上の S3 Location（アップロードは s3fs 経由でテナント別バケットへ） |
+| ファイル保存先 | **SeaweedFS**（`chrislusf/seaweedfs:4.53`）上の S3 Location（アップロードは s3fs 経由でテナント別バケットへ）。エンドポイント `http://s3:9000` |
 | 共有FS | NFS（RWX）＝テーマ conf/data と Shibboleth SP 設定のみ |
 | emulation(binfmt) | 不要（amd64 ネイティブ） |
+
+> S3 に MinIO ではなく SeaweedFS を使うのは、MinIO の公式イメージ（`minio/minio` / `minio/mc`）が配布されなくなったため。
+> キー（`wekominio` / `wekominio-secret-key`）は従来どおり。Web コンソール（9001）は無いので、バケットの中身は
+> aws-cli で見る（[ACCESS-kubectl.md](./ACCESS-kubectl.md#s3-seaweedfs)）。
 
 ## この一式の中身（README と一緒に配布するファイル）
 デプロイは以下を読む。`deploy-amd64.sh` と kind config はこのディレクトリにある。
@@ -50,16 +54,17 @@ amd64 Linux 単一ホスト上に、本番相当の **WEKO3**をベースに構�
 |---|---|
 | 入口 | `deploy-amd64.sh`（0〜9 を一括実行） |
 | 事前チェック | `check-prereq-amd64.sh`（ツール/環境/sysctl の導入判断。root 不要・変更なし） |
+| イメージ取得 | `pull-images-amd64.sh`（配布元イメージをホストで pull。`load` で kind へ読み込み。手順1からも呼ばれる） |
 | 削除 | `teardown-amd64.sh`（Pod の終了を待ってから安全にクラスタ削除。直接 `kind delete` しない） |
 | 復旧 | `unwedge-amd64.sh`（NFS ハングで消せなくなったノードの復旧。要 root）<br>`UNDEPLOY-amd64.md`（手順別アンデプロイと削除失敗時の復旧） |
 | ホスト準備 | `prereq-amd64.sh`（Docker / kubectl / kind / sysctl / weko ソース。要 root） |
 | クラスタ | `kind-weko-cluster.yaml`（このディレクトリ。3ノード: control-plane + WEKO + DATA） |
-| バックエンド(YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-minio.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
+| バックエンド(YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-s3.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
 | HTTPS(任意) | `61-tls-ca.yaml`（cert-manager のルートCA。既定 `WEKO_TLS_ISSUER=weko-ca-issuer` で展開）<br>`HTTPS-letsencrypt.md`（公開ドメインで Let's Encrypt に切り替える手順） |
 | Shibboleth(任意) | `70-shibboleth-idp.yaml` `71-shibboleth-map.yaml`（クラスタ内テスト IdP と学認mAP 相当の属性認証局）<br>`shib-idp-build/`（IdP イメージ。公式 tarball + Tomcat 10.1）<br>`shib-sp-template/` `provision-shib.sh` `check-shib-login.py` `list-shib-users.py`<br>`SHIBBOLETH-IDP.md`（`WEKO_SHIB=yes` で有効化する手順） |
 | COAR Notify(任意) | `72-coar-notify-inbox.yaml`（LDN の inbox）<br>`coar-notify-inbox/inbox.py`（inbox 本体。Python 標準ライブラリのみ）<br>`COAR-NOTIFY.md`（`WEKO_COAR_NOTIFY=yes` で有効化する手順） |
-| アクセス方法 | `ACCESS-kubectl.md`（kubectl で PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / IdP に入るコマンド集） |
-| テナント関連 | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
+| アクセス方法 | `ACCESS-kubectl.md`（kubectl で PostgreSQL / ES / Redis / RabbitMQ / S3 / WEKO / IdP に入るコマンド集） |
+| テナント関連 | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` `s3-create-buckets.sh`（S3 にバケットを作る。手順4と `set-s3-location.sh` が使う） |
 | 設定 | `tenants.txt`（テナント定義。管理者メール/パスワードはここで編集） |
 
 > `10-postgresql.yaml` / `11-redis.yaml` / `12-rabbitmq.yaml` / `20-weko-config.yaml` / `30-weko-web.yaml` /
@@ -210,6 +215,31 @@ tenant1   tenant1   tenant1.localhost   admin@example.jp        <自分で決め
 > `ADMIN_PASS` は管理者だけでなく、初期化時に作られる**テストユーザ4件にも同じ値が設定される**。
 > 詳細は[作成されるユーザ](#作成されるユーザ重要)を参照。
 
+### デプロイ前にイメージを pull する
+自前でビルドしない配布元のイメージ（ingress-nginx / cert-manager / metrics-server / RabbitMQ・Postgres の operator /
+spilo / RabbitMQ / Redis / SeaweedFS / aws-cli / busybox / nfs-provisioner と `kindest/node`）を、デプロイの前にホストで pull しておく。
+クラスタは要らない。
+
+```bash
+bash pull-images-amd64.sh          # 全部 OK（present / pulled）になるまで再実行してよい
+bash pull-images-amd64.sh list     # 対象イメージの一覧を表示するだけ
+```
+
+- **なぜ先に pull するか**: 何もしないと kind のノードがこれらを**匿名で**取りに行く。Docker Hub は匿名 pull を
+  IP ごとに制限する（6時間で100回）ため、ワークショップ会場のように同じグローバル IP から何人も pull すると
+  S3 などが `ErrImagePull` のまま止まり、デプロイが途中で timeout する。ホストで先に済ませれば、制限に
+  当たってもデプロイ前に分かる。
+- 手元にあるイメージは pull しないので、**再実行しても Docker Hub の枠を使わない**。失敗したものは3回まで
+  再試行する（`PULL_RETRIES`）。
+- 制限に当たると `Hit the Docker Hub pull rate limit` と表示して終わる。`docker login` してから再実行するか、
+  時間をおいて再実行する。
+- 省略しても、`deploy-amd64.sh` の手順1がクラスタ作成直後に `bash pull-images-amd64.sh load`（足りない分を pull して
+  kind へ読み込む）を実行し、**失敗したらそこで止まる**。先に実行しておけば、その時点では読み込むだけで済む。
+- 対象外: ソースからビルドするもの（weko3-web / ES / nginx / Shibboleth IdP）と pgpool。これらは手順2が従来どおり
+  ビルド（pgpool は pull）して読み込む。ビルドのベースイメージは `docker build` が取りに行く。
+- ingress-nginx のマニフェストは `@sha256:` の digest を落としてから apply する（kind へ読み込んだイメージは
+  digest では見つからないため）。タグ（v1.12.1）で固定されたまま。
+
 ## デプロイ
 実行する前に **`tenants.txt` を編集する**。管理者メールとパスワードが既定値のままデプロイされ、
 初期化後に変えるには DB を触ることになるため、先に直しておく（→[デプロイ前に `tenants.txt` を編集](#デプロイ前に-tenantstxt-を編集)）。
@@ -217,6 +247,7 @@ tenant1   tenant1   tenant1.localhost   admin@example.jp        <自分で決め
 ```bash
 cd k8s-weko-amd64                    # このディレクトリ
 $EDITOR tenants.txt                  # 管理者メール/パスワードを変更。テナントを増やすならここで行を追加
+bash pull-images-amd64.sh            # 配布元イメージをホストで pull（全部 OK になるまで再実行）
 bash deploy-amd64.sh
 # 1)クラスタ→9)疎通 まで一括。weko/ES/nginx/pgpool の amd64 ビルドを含む。
 # 各テナント初期化は並列で数十分。weko ソースは既定 $HOME/weko に自動取得される。
@@ -270,10 +301,11 @@ bash deploy-amd64.sh
 
 `deploy-amd64.sh` の流れ:
 0. **weko ソースの取得/更新**（`git clone` / `git pull`。`WEKO_REPO`/`WEKO_BRANCH`/`WEKO_SRC_UPDATE` で制御）
-1. kind クラスタ + ingress-nginx（**binfmt無し**）
+1. kind クラスタ → `pull-images-amd64.sh load`（配布元イメージを全ノードへ読み込む。**失敗したら停止**）→ ingress-nginx（**binfmt無し**）
 2. イメージをソースからビルド → `kind load`: `weko3-web:amd64` / `weko3-nginx:amd64` / `weko-elasticsearch:6.8.23` / `pgpool/pgpool:4.2.2`（公式イメージを pull）
 3. operator: cert-manager / rabbitmq / postgres-operator（`ghcr.io/zalando` amd64・spilo-17 にピン留め）。あわせて metrics-server（`kubectl top` 用）も導入する
-4. 共有基盤: **ES×3 / PG(Patroni)×2 / RabbitMQ×3 / Redis Sentinel / MinIO / NFS**（全PVC）＋ MinIO 共通バケット
+4. 共有基盤: **ES×3 / PG(Patroni)×2 / RabbitMQ×3 / Redis Sentinel / S3(SeaweedFS) / NFS**（全PVC）＋ 共通バケット
+   `weko-backup` `weko-content` `weko-esbackup`（`s3-create-buckets.sh`。**作れなければ停止**）
 5. PG `weko` PW を `weko` に固定（operator のリセット対策）
 5.5. **pgpool** を展開（weko と PostgreSQL の間：コネクションプール＋参照負荷分散→Patroni primary/replica）
 6. `gen-tenant.sh`→`provision-nfs.sh`（/fs-* にテナント別ディレクトリ作成＋nginx/Shibboleth設定投入）→`kubectl apply`→`provision-tenants.sh`
@@ -281,7 +313,7 @@ bash deploy-amd64.sh
    （DB/ES 初期化・言語10種・ロール・権限・widget/facet/authors 等の初期データ）
 7.5. `seed-demo.sh` — weko ソースの `scripts/demo/*.sql` を投入（**アイテムタイプ・インデックスツリー・
    ワークフロー・DOI・メールテンプレート**）。weko ソースの `install.sh` 後半に相当
-8. `admin_settings` シード + `set-s3-location.sh`（バケット作成＋`files_location` を S3(MinIO)タイプに）+ web再起動
+8. `admin_settings` シード + `set-s3-location.sh`（テナント別バケット作成＋`files_location` を S3 タイプに。**失敗したら停止**）+ web再起動
 9. 疎通（`https://tenantN.localhost/`）
 
 完了後、ホスト上のブラウザで `https://tenant1.localhost/` を開く（管理者ログインは `tenants.txt` で設定した値）。
@@ -319,7 +351,7 @@ bash deploy-amd64.sh
 > 完了後の期待: 手順9が `http:308 https:200`（HTTPS が既定で有効なため http はリダイレクト。
 > `WEKO_TLS_ISSUER=` で無効化した場合は `http:200`）。HTTPS 側で `/` 200・`/login/` 200・
 > `/admin/` 302・`/api/records/` 200、
-> PG master+replica×1 / RabbitMQ 3/3 / ES green・3ノード / Redis Sentinel 6/6 / MinIO 稼働、
+> PG master+replica×1 / RabbitMQ 3/3 / ES green・3ノード / Redis Sentinel 6/6 / S3(SeaweedFS) 稼働、
 > `files_location.type=s3`（`uri=s3://weko-<tenant>`）。ホストメモリ ~18GiB。
 
 ## 特定バージョン（タグ）をビルドする
@@ -407,10 +439,10 @@ KIND_CONFIG=kind-weko-cluster.yaml \
 
 > **4種すべてを既成イメージにすると、weko ソースは一切ビルドに使われない**（手順0の clone/pull は走る）。
 >
-> `WEKO_ES_IMAGE` を差し替える場合の注意: 既定のビルドは repository-s3（ES スナップショットの MinIO 連携）の
+> `WEKO_ES_IMAGE` を差し替える場合の注意: 既定のビルドは repository-s3（ES スナップショットの S3 連携）の
 > 認証情報を `--build-arg` で**イメージに焼き込んでいる**。既成イメージを使うなら、同等の設定
-> （`ELASTICSEARCH_S3_ACCESS_KEY` / `SECRET_KEY` / `ENDPOINT=http://minio:9000` / `BUCKET=weko-esbackup`）が
-> 焼き込まれている必要がある。無いと ES は動くが、スナップショットで MinIO を使えない。
+> （`ELASTICSEARCH_S3_ACCESS_KEY` / `SECRET_KEY` / `ENDPOINT=http://s3:9000` / `BUCKET=weko-esbackup`）が
+> 焼き込まれている必要がある。無いと ES は動くが、スナップショットで S3 を使えない。
 
 ## HTTPS 証明書の指定
 TLS は **ingress-nginx で終端**する（ingress → Pod の nginx は HTTP:80）。したがって証明書は
@@ -611,14 +643,15 @@ bash teardown-amd64.sh
 
   | PVC | StorageClass | 実体 |
   |---|---|---|
-  | PostgreSQL / Elasticsearch / RabbitMQ / Redis / MinIO / `nfs-export` | `standard`（local-path） | ノードコンテナ内の `/var/local-path-provisioner` |
+  | PostgreSQL / Elasticsearch / RabbitMQ / Redis / S3（`s3-data`） / `nfs-export` | `standard`（local-path） | ノードコンテナ内の `/var/local-path-provisioner` |
   | テナントの `<t>-conf` `-data` `-shib` `-nginx-pvc` | `nfs-static` | NFS サーバ経由。ただしその裏は上の `nfs-export`（＝結局 local-path） |
 
   > テナント用の PV（`<t>-config-pv` 等）は `persistentVolumeReclaimPolicy: Retain` だが、**クラスタごと消す場合は
   > 関係ない**（PV 定義も etcd ごと消え、データもノードコンテナと一緒に消える）。`Retain` が効くのは
   > クラスタを残したまま一部だけ巻き戻す[手順別アンデプロイ](./UNDEPLOY-amd64.md)のときだけ。
 - **残るもの**: ホスト上のビルド済みイメージ（`weko3-web:amd64` / `weko3-nginx:amd64` /
-  `weko-elasticsearch:6.8.23` / `pgpool/pgpool:4.2.2`）と `generated/` `tenants.txt` `.secret-seed`。
+  `weko-elasticsearch:6.8.23` / `pgpool/pgpool:4.2.2`）、`pull-images-amd64.sh` で pull した配布元イメージ、
+  `generated/` `tenants.txt` `.secret-seed`。
   次回のデプロイはビルドキャッシュが効いて速い。
 - 削除後は `~/.kube/config` が空のスタブに戻る。`kubectl` が `localhost:8080 connection refused` を返すのは
   この状態では正常（クラスタが無いだけ）。
@@ -677,7 +710,7 @@ kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリ
 ## 調整ポイント
 - **1テナントの件数を増やす**: ES heap を上げ（`13-elasticsearch.yaml` の `ES_JAVA_OPTS`）、テナント数を減らす。
 - **テナント数を増やす**: `tenants.txt` に追記（Redis DB は 3,4 を避けて割当）。`gen-tenant.sh`→`kubectl apply -f generated/`→`provision-tenants.sh`→`weko-init.sh`。
-- **ファイル大**: MinIO PVC 拡大／ディスク増設。限界なら `set-s3-location.sh` の `S3_ENDPOINT` を外部S3に向ける。
+- **ファイル大**: S3 の PVC（`s3-data`、600Gi）拡大／ディスク増設。限界なら `set-s3-location.sh` の `S3_ENDPOINT` を外部S3に向ける。
 
 ## トラブルシュート
 - **【最重要】原因不明の不調が同時多発する（`kind create` が間欠失敗 / cert-manager が
@@ -734,17 +767,24 @@ kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリ
   `kubectl rollout status` は Pod が Ready になった時点で返るが、web コンテナの uwsgi はまだ応答
   できず、前段の nginx が 502 を返す。`deploy-amd64.sh` は 5xx の間リトライするよう修正済み。
   それでも 502 が続く場合は `kubectl logs -n weko3 -l app=<tenant>-web -c web` を確認する。
-- **手順4で `mc: <ERROR> \`sh\` is not a recognized command.（Did you mean ... \`share\`）`** →
-  `minio/mc` イメージは `Entrypoint=["mc"]` なので、`kubectl run ... -- sh -c '...'` と書くと args 扱いになり
-  `mc sh -c ...` が実行されてしまう。**`--command` を付けて entrypoint を上書きする**のが正しい:
-  ```bash
-  kubectl run mc-init -n weko3 --rm -i --restart=Never --image=minio/mc:RELEASE.2025-04-08T15-39-49Z \
-    --command -- /bin/sh -c 'mc alias set l http://minio:9000 wekominio wekominio-secret-key && \
-                             mc mb -p l/weko-backup l/weko-content l/weko-esbackup'
-  ```
-  これに失敗すると共通バケット `weko-backup` / `weko-content` / **`weko-esbackup`** が作られない。
-  `weko-esbackup` は Elasticsearch の `repository-s3`（スナップショット先）が参照するため、影響が出る。
-  デプロイ中に見かけた場合は上のコマンドを単体で実行すれば復旧する。作成済みでも `mc mb -p` は冪等。
+- **Pod が `ErrImagePull` / `ImagePullBackOff`、`pull-images-amd64.sh` が `toomanyrequests` / `Hit the Docker Hub pull rate limit`**
+  → Docker Hub の匿名 pull 制限（IP ごとに6時間で100回）。会場のように同じ IP を何人も使うと当たりやすい。
+  `docker login` するか時間をおいて `bash pull-images-amd64.sh` を全部 OK になるまで再実行し、それから
+  `deploy-amd64.sh` を再実行する（pull 済みのものは飛ばすので枠を使わない）。クラスタができた後なら
+  `bash pull-images-amd64.sh load` で読み込める。どのイメージか分からない場合は
+  `kubectl get pods -A | grep -i image` と `kubectl describe pod -n <ns> <pod>` の Events を見る。
+- **手順4で `ERROR: failed to create the shared buckets on S3` / `ERROR: S3 (deploy/s3) is not ready`** →
+  S3（SeaweedFS）が起動していない。`kubectl get pod -n weko3 -l app=s3` と `kubectl logs -n weko3 deploy/s3` を確認する
+  （`ErrImagePull` なら前項）。Job `s3-create-buckets` は調査用に残るので `kubectl logs -n weko3 job/s3-create-buckets` で
+  原因が見られる。直したら `bash s3-create-buckets.sh weko-backup weko-content weko-esbackup` を単体で実行するか、
+  `deploy-amd64.sh` を再実行する（既存のバケットはそのまま残るので何度実行してもよい）。
+  共通バケットのうち **`weko-esbackup`** は Elasticsearch の `repository-s3`（スナップショット先）が参照する。
+- **手順8で `ERROR: files_location was left unchanged`** → テナント別バケットが作れなかったので、`files_location` は
+  切り替えずに止まった（バケットが無いまま S3 Location にするとアップロードが壊れるため）。S3 を直してから
+  `bash set-s3-location.sh` を再実行する。
+- **MinIO で作った既存クラスタに `deploy-amd64.sh` を再実行した** → 手順4が `deploy/minio` `svc/minio`
+  `secret/minio-secret` を削除して SeaweedFS（`deploy/s3`）に置き換える。PVC `minio-data` は中身を取り出したい人のために
+  残すので、要らなければ `kubectl -n weko3 delete pvc minio-data` で消す。
 - **ES pod が `CrashLoopBackOff` /「max virtual memory areas」** → `vm.max_map_count` 未適用。[事前準備](#前提事前準備ツール導入)の (c) を再実行。
 - **`docker: permission denied`** → docker グループがシェルに未反映。再ログインか `newgrp docker`。
 - **`deploy-amd64.sh` が別パスをビルド対象にする** → 既定は `$HOME/weko`。別の場所のソースを使うなら

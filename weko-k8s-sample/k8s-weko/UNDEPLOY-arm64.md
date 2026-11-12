@@ -66,14 +66,14 @@ IPv4専用で再作成、までを順に行う。**この順序が重要**で、
 ---
 
 ## 8) admin_settings シード + S3ファイルLocation
-テナント別 MinIO バケットを削除する。
+テナント別 S3 (SeaweedFS) バケットを中身ごと削除する。
 
 ```bash
-kubectl run mc-rm -n weko3 --rm -i --restart=Never --image=minio/mc:RELEASE.2025-04-08T15-39-49Z \
-  --command -- /bin/sh -c 'mc alias set l http://minio:9000 wekominio wekominio-secret-key && mc rb --force l/weko-tenant1'
+kubectl run s3-rm -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+  --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+  --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 rb s3://weko-tenant1 --force
 ```
-> `minio/mc` は `Entrypoint=["mc"]` なので **`--command` が必須**。付けないと `mc sh -c ...` が実行され
-> `sh is not a recognized command` で失敗する。
+> aws-cli イメージの entrypoint は `aws` なので、`--` の後ろは `aws` への引数をそのまま書く（`--command` は付けない）。
 
 ## 7) テナント初期化（＋7.5 の初期データ）
 テナントDBを落とす。7.5 で投入したアイテムタイプ・インデックスツリー・ワークフロー・
@@ -137,7 +137,7 @@ kubectl delete -f 61-tls-ca.yaml --ignore-not-found   # ClusterIssuer×2 と CA 
 
 ```bash
 kubectl delete -f 50-rabbitmq-cluster.yaml -f 13-elasticsearch.yaml -f 51-postgresql-ha.yaml \
-               -f 60-nfs-server.yaml -f 41-redis-sentinel.yaml -f 40-minio.yaml \
+               -f 60-nfs-server.yaml -f 41-redis-sentinel.yaml -f 40-s3.yaml \
                -f 21-nginx-config.yaml -f 52-postgres-pod-config.yaml --ignore-not-found
 kubectl delete ns weko3 weko3re nfs-system --ignore-not-found
 kubectl delete storageclass nfs nfs-static --ignore-not-found   # cluster-scoped なので個別に
@@ -163,6 +163,12 @@ kubectl delete -f https://github.com/kubernetes-sigs/metrics-server/releases/dow
 ```bash
 docker image rm weko3-web:arm64 weko3-nginx:arm64 weko-elasticsearch:6.8.23-arm64 weko-pgpool:4.2.2-arm64
 ```
+`pull-images-arm64.sh` がホストに pull した配布元イメージも消す場合（再デプロイ時はまた Docker Hub から pull し直すことになる）:
+
+```bash
+docker image rm $(bash pull-images-arm64.sh list)
+```
+> 一覧の先頭の `kindest/node` はクラスタのノードが使っているので、手順1でクラスタを消した後でないと消えない。
 
 ## 1) kind クラスタ + ingress
 ingress だけ消す場合と、クラスタごと消す場合。

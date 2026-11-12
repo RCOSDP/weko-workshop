@@ -1,6 +1,6 @@
 # kubectl で各コンポーネントに入る
 
-デプロイ後に PostgreSQL / Elasticsearch / Redis / RabbitMQ / MinIO / WEKO 本体 / Shibboleth IdP へ
+デプロイ後に PostgreSQL / Elasticsearch / Redis / RabbitMQ / S3 (SeaweedFS) / WEKO 本体 / Shibboleth IdP へ
 アクセスするためのコマンド集。**本ファイルのコマンドはすべて実機で実行して確認済み**。
 
 ## どこに何がいるか
@@ -13,7 +13,7 @@ namespace が 3 つに分かれているので `-n` の指定を間違えない�
 | pgpool | `weko3` | Deployment | `deploy/weko-pgpool` | `pgpool` |
 | Elasticsearch ×3 | `weko3` | StatefulSet | `elasticsearch-0` 〜 `-2` | `elasticsearch` |
 | RabbitMQ ×3 | `weko3` | StatefulSet | `weko-rabbitmq-server-0` 〜 `-2` | `rabbitmq` |
-| MinIO (S3) | `weko3` | Deployment | `deploy/minio` | `minio` |
+| S3 (SeaweedFS) | `weko3` | Deployment | `deploy/s3` | `seaweedfs` |
 | WEKO 本体 | `weko3` | Deployment | `deploy/tenant1-web` | **`nginx` / `web` / `worker`** |
 | Shibboleth IdP | `weko3` | Deployment | `deploy/weko-shib-idp` | `idp` |
 | 属性認証局 (mAP 相当) | `weko3` | Deployment | `deploy/weko-shib-map` | `idp` |
@@ -99,26 +99,33 @@ kubectl exec -n weko3 weko-rabbitmq-server-0 -- rabbitmqctl list_queues -p tenan
 kubectl exec -n weko3 weko-rabbitmq-server-0 -- rabbitmqctl cluster_status
 ```
 
-### MinIO (S3)
+### S3 (SeaweedFS)
 
-`mc` は同梱されているが alias の設定が要る。認証情報は環境変数から取れる:
+S3 は `http://s3:9000`。SeaweedFS のイメージには aws-cli も `mc` も無いので、aws-cli のイメージを一時 Pod として
+走らせる（イメージの entrypoint が `aws` なので `--command` は付けない）:
 
 ```bash
-kubectl exec -n weko3 deploy/minio -- sh -c \
-  'mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls l'
+kubectl run s3cli -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+  --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+  --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 ls
 ```
-```
-[2026-07-29 07:35:02 UTC]     0B weko-backup/
-[2026-07-29 07:35:02 UTC]     0B weko-content/
-[2026-07-29 07:35:02 UTC]     0B weko-esbackup/
-[2026-07-29 07:52:39 UTC]     0B weko-tenant1/
+`weko-backup` / `weko-content` / `weko-esbackup` / `weko-<tenant>` が並ぶ。
+
+テナントのバケットの中身を見る（最後の `s3 ls` を差し替える）:
+```bash
+kubectl run s3cli -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+  --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+  --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 ls --recursive s3://weko-tenant1/
 ```
 
-テナントのバケットの中身を見る:
+手元に aws-cli があれば port-forward でもよい（方法 2 の表も参照）:
 ```bash
-kubectl exec -n weko3 deploy/minio -- sh -c \
-  'mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls --recursive l/weko-tenant1'
+kubectl -n weko3 port-forward svc/s3 9000:9000 &
+AWS_ACCESS_KEY_ID=wekominio AWS_SECRET_ACCESS_KEY=wekominio-secret-key AWS_DEFAULT_REGION=us-east-1 \
+  aws --endpoint-url http://localhost:9000 s3 ls s3://weko-tenant1/
 ```
+
+バケットを作るときは `bash s3-create-buckets.sh <bucket>...`（既にあるものはそのまま）。
 
 ### WEKO 本体（**3 コンテナあるので `-c` が必須**）
 
@@ -213,7 +220,7 @@ psql -h 127.0.0.1 -p 15432 -U weko -d wekodb        # パスワードは weko
 | pgpool | `kubectl -n weko3 port-forward svc/pgpool 15432:5432` | `psql -h 127.0.0.1 -p 15432 -U weko -d wekodb` |
 | PostgreSQL 直（master） | `kubectl -n weko3 port-forward weko-postgresql-0 15433:5432` | `psql -h 127.0.0.1 -p 15433 -U weko -d wekodb` |
 | Elasticsearch | `kubectl -n weko3 port-forward svc/elasticsearch 9200:9200` | `curl localhost:9200/_cat/indices?v` |
-| MinIO コンソール | `kubectl -n weko3 port-forward svc/minio 9001:9001` | ブラウザ `http://localhost:9001` |
+| S3 (SeaweedFS) | `kubectl -n weko3 port-forward svc/s3 9000:9000` | `aws --endpoint-url http://localhost:9000 s3 ls`（Web コンソールは無い） |
 | RabbitMQ 管理画面 | `kubectl -n weko3 port-forward svc/weko-rabbitmq 15672:15672` | ブラウザ `http://localhost:15672` |
 | Redis | `kubectl -n weko3re port-forward svc/redis 16379:6379` | `redis-cli -p 16379` |
 | Shibboleth IdP | `kubectl -n weko3 port-forward svc/weko-shib-idp 8080:8080` | `curl localhost:8080/idp/status` |
@@ -252,7 +259,7 @@ docker exec -it weko3-worker2 bash         # nodeType=DATA   (PG/ES/Redis/Rabbit
 | PostgreSQL (superuser) | `postgres` | 不要（Pod 内は trust） | spilo イメージ既定 |
 | PostgreSQL / pgpool（アプリ用） | `weko` | `weko` | `gen-tenant.sh` → Secret `tenant1-secret` |
 | RabbitMQ | `weko` | `weko` | 同上 |
-| MinIO | `wekominio` | `wekominio-secret-key` | `40-minio.yaml` |
+| S3 (SeaweedFS) | `wekominio` | `wekominio-secret-key` | `40-s3.yaml`（Secret `s3-config` の `s3.json`） |
 | WEKO 管理者 | `admin@example.org` | `adminpass123` | `tenants.txt` |
 | Shibboleth IdP デモユーザ | `admin` / `libadmin` / `teacher` | `admin123` / `libadmin123` / `teacher123` | `shib-idp-build/idp-conf/credentials/demo.htpasswd` |
 

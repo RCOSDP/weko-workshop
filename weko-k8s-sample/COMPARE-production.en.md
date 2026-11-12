@@ -68,6 +68,7 @@ Every entry is classified into one of four kinds. **This classification is the p
 |---|---|---|---|
 | Where images come from | local `docker build` (WEKO / ES / nginx, `deploy-amd64.sh:126-163`) | built in CI, pushed to **OCIR** |🟡 |
 | How they reach the nodes | **`kind load docker-image`** (4 calls, `deploy-amd64.sh:131,149,163,168`) | kubelet pulls from the registry | 🟡 |
+| Third-party images (ingress-nginx / cert-manager / redis / SeaweedFS, ...) | pulled on the host → `kind load` (`pull-images-amd64.sh load`, to stay clear of Docker Hub's anonymous pull limit) | kubelet pulls them | 🟡 |
 | `imagePullPolicy` | **`Never`** (9 places: `13-elasticsearch.yaml:53`, `62-pgpool.yaml:80`, `gen-tenant.sh` ×7) | `Always` (`deploy-web.yaml:44,74,90`) | 🟡 |
 | `imagePullSecrets` | none | `ocir-secret` on every Pod (`deploy-web.yaml:113-114`) | 🟡 |
 | How image names are managed | inline shell variables (`WEKO_IMAGE` etc.) | kustomize `images:` per overlay (`postgresql/overlay/oci-pr/kustomization.yaml:19-30`) | 🔵 |
@@ -94,7 +95,7 @@ Every entry is classified into one of four kinds. **This classification is the p
 | Shared FS availability | `replicas: 1` + `Recreate` = **SPOF** | managed, redundant NFS | 🟡 |
 | NFS Pod privileges | `capabilities: [DAC_READ_SEARCH, SYS_ADMIN]` (`60-nfs-server.yaml:117-119`) | not needed | 🟡 |
 | How directories are created | via a busybox seed Pod (`provision-nfs.sh:38-60`) | `mkdir` straight from the host (`scripts/make_volumes.sh`) | 🔵 |
-| Object storage | **MinIO** (`40-minio.yaml`, `replicas: 1`, 600Gi RWO) | **OCI Object Storage** (S3-compatible, outside the cluster) | 🟡 |
+| Object storage | **SeaweedFS** (`40-s3.yaml`, `replicas: 1`, 600Gi RWO) | **OCI Object Storage** (S3-compatible, outside the cluster) | 🟡 |
 
 > **Why 🟡 matters here**: the shared filesystem is the single largest difference.
 > `60-nfs-server.yaml` exists to emulate the production OKE File Storage inside the cluster, and on
@@ -151,7 +152,7 @@ of hop 2 at all is 🔴 (absent from the sample).
 | RabbitMQ operator | cluster-operator **latest** (`deploy-amd64.sh:173`) | cluster-operator (pinned) | 🔵 not pinning is the difference |
 | Redis | `redis:6.2` (upstream image) | `weko_redis:v1.0` / `weko_sentinel:v1.0` (custom images) | 🔵 |
 | cert-manager | v1.16.2 (`deploy-amd64.sh:171`) | **not used** | 🟡 |
-| MinIO | `minio/minio:RELEASE.2025-04-08…` | **not used** (OCI Object Storage) | 🟡 |
+| SeaweedFS (S3) | `chrislusf/seaweedfs:4.53` | **not used** (OCI Object Storage) | 🟡 |
 
 > **⚠️ Note the discrepancy**: the comment at `51-postgresql-ha.yaml:5` says production is **PG13**
 > and to pin `spilo-13` to match, but the current production IaC declares `version: "12"` in the CR
@@ -168,7 +169,7 @@ of hop 2 at all is 🔴 (absent from the sample).
 | Elasticsearch | 2 | 1 | **13** | 🔵 |
 | RabbitMQ | 3 | 1 / 2Gi | **3 / 50Gi**, req 6cpu-24Gi, lim 7cpu-30Gi | 🔵 |
 | Redis | 3 + 3 Sentinel | Sentinel setup | **2 + 3 Sentinel** | 🔵 |
-| MinIO | 1 / 600Gi (SPOF) | — | — | 🟡 |
+| SeaweedFS (S3) | 1 / 600Gi (SPOF) | — | — | 🟡 |
 | WEKO web | **1** per tenant | 1 | 1 (memory set per tenant in `repositories_file`) | ✅ |
 | Ingress controller | 1 | — | 2 | 🔵 |
 
@@ -396,7 +397,7 @@ the stand-in for GakuNin mAP, and fetches `isMemberOf` from it via SimpleAggrega
 | Item | kind verification environment | Production | Class |
 |---|---|---|---|
 | Approach | inlined in manifests and scripts | consolidated in `deploy/secret.properties`, turned into Secrets by the kustomize `secretFromProperties` generator | 🟡 |
-| MinIO / S3 keys | **plaintext** (`40-minio.yaml:10-11`, `deploy-amd64.sh:138-141,228`) | `weko3pg.postgres-pod-secrets.AWS_*` etc. | 🟡 |
+| S3 keys | **plaintext** (`40-s3.yaml:21`, `deploy-amd64.sh:203-204`, `gen-tenant.sh:17`, `s3-create-buckets.sh`) | `weko3pg.postgres-pod-secrets.AWS_*` etc. | 🟡 |
 | PostgreSQL password | **force-overwritten** to `weko` (`deploy-amd64.sh:231-236`) | `weko3pg.postgresql-infrastructure-roles.invenio` | 🟡 |
 | Admin passwords | plaintext in `tenants.txt` (tracked in Git) | `repositories_file` (plaintext, but untracked) | 🟡 |
 | Registry credentials | not needed | `ocir-secret` per namespace | 🔴 |
@@ -412,7 +413,7 @@ the stand-in for GakuNin mAP, and fetches `isMemberOf` from it via SimpleAggrega
 | **Monitoring** | **none** | kube-prometheus-stack + ServiceMonitors (pg / pgpool / redis / rabbitmq / es / ingress) + Grafana dashboards + alert rules (`deploy/monitoring/`) | 🔴 |
 | **Log aggregation** | **none** | fluentd → Elasticsearch → Kibana, kubernetes-event-exporter, Slack notifications (`deploy/logging/`) | 🔴 |
 | **DB backup** | **none** | operator WAL / logical backup (`components/backup_s3`) plus pgdump via rclone to Object Storage (`components/pgdump_s3`) | 🔴 |
-| **ES backup** | snapshot config pointing at MinIO only (no job) | `essnapshot-job` (`elasticsearch/components/backup_s3/`) | 🔴 |
+| **ES backup** | snapshot config pointing at SeaweedFS only (no job) | `essnapshot-job` (`elasticsearch/components/backup_s3/`) | 🔴 |
 | **Content backup** | **none** | rclone CronJob (`deploy/contents-backup/`) | 🔴 |
 | **Restore procedures** | **none** | `scripts/restore_db*.sh` / `restore_es*.sh`, `overlay/*/restore-pv*.yaml` | 🔴 |
 | **Maintenance page** | **none** | `deploy/maintenance/` | 🔴 |
@@ -435,7 +436,7 @@ the stand-in for GakuNin mAP, and fetches `isMemberOf` from it via SimpleAggrega
 |---|---|
 | ✅ **Match** (no change needed) | Deployment structure, mount layout, `fsGroup`, rolling-update strategy / shared-FS directory layout / pgpool 4.2.2 and **almost all of its tuning values** / ES 6.8.23 / RabbitMQ 4.0.9 / PostgreSQL synchronous replication / the `md5` constraint / the sed-substitution approach to tenant generation / the `weko3` and `weko3re` namespaces / the absence of PDBs and NetworkPolicies (production is the same) / metrics-server / how the Shibboleth SP config is distributed / the shape of the `isMemberOf` values |
 | 🔵 **Simplified** (restore production form) | 2 node-type labels → 8 / namespace split / sizing throughout / replica counts (PG 2→3, ES 2→13, pgpool 1→3, …) / PostgreSQL parallelism and WAL values / the ES heap and `minimum_master_nodes` / Redis `maxclients` / Sentinel `down-after-milliseconds` (5000→3000) / tenant definition 9 → 20 columns / custom Redis images / `static` as emptyDir / adopting kustomize / GakuNin integration being off by default |
-| 🟡 **Stand-in** (**must be replaced**) | the kind cluster / `kind load` + `imagePullPolicy: Never` / the `standard` StorageClass / **the in-cluster NFS and its hardcoded ClusterIP** / MinIO / ingress-nginx OSS + `extraPortMappings` / the cert-manager self-signed CA / `*.localhost` / plaintext secrets / `FORCE_INIT=yes` / `teardown-*.sh` / the PostgreSQL major version / **the replication timeouts production disables but the sample does not** / **the missing RabbitMQ `consumer_timeout` (3 hours)** / **the missing ES `-Dlog4j2.formatMsgNoLookups=true`** / **Redis persistence (AOF vs RDB), `databases 512`, and the unset `maxmemory`** / the in-house IdP and AA standing in for GakuNin and mAP |
+| 🟡 **Stand-in** (**must be replaced**) | the kind cluster / `kind load` + `imagePullPolicy: Never` / the `standard` StorageClass / **the in-cluster NFS and its hardcoded ClusterIP** / SeaweedFS / ingress-nginx OSS + `extraPortMappings` / the cert-manager self-signed CA / `*.localhost` / plaintext secrets / `FORCE_INIT=yes` / `teardown-*.sh` / the PostgreSQL major version / **the replication timeouts production disables but the sample does not** / **the missing RabbitMQ `consumer_timeout` (3 hours)** / **the missing ES `-Dlog4j2.formatMsgNoLookups=true`** / **Redis persistence (AOF vs RDB), `databases 512`, and the unset `maxmemory`** / the in-house IdP and AA standing in for GakuNin and mAP |
 | 🔴 **Absent** (build new) | monitoring / log aggregation / all backups / restore procedures / WAF / TLS hop 2 / maintenance page and maintenance pod / node maintenance procedures / internal ingress / registry credentials / the Sentinel `notification-script` |
 
 ### In one paragraph

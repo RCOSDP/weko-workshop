@@ -1,37 +1,21 @@
 #!/bin/bash
-# Set each tenant's files_location to the S3 (MinIO) type and create the per-tenant bucket.
+# Set each tenant's files_location to the S3 (SeaweedFS) type and create the per-tenant bucket.
 # Run it after weko-init.sh (weko only connects s3fs with the location's S3 info when type='s3').
-# The S3 credentials match the tenant secret (MinIO by default).
+# The S3 credentials match the tenant secret (the bundled SeaweedFS by default).
 set -uo pipefail
 cd "$(dirname "$0")"
 TFILE="${1:-tenants.txt}"
-S3_KEY="${S3_KEY:-wekominio}"; S3_SECRET="${S3_SECRET:-wekominio-secret-key}"; S3_ENDPOINT="${S3_ENDPOINT:-http://minio:9000}"
+S3_KEY="${S3_KEY:-wekominio}"; S3_SECRET="${S3_SECRET:-wekominio-secret-key}"; S3_ENDPOINT="${S3_ENDPOINT:-http://s3:9000}"
 # PG master pod (HA operator or standalone)
 PG=$(kubectl get pod -n weko3 -l cluster-name=weko-postgresql,spilo-role=master -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 [ -z "$PG" ] && PG=$(kubectl get pod -n weko3 -l app=postgresql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 echo "postgres master pod = $PG"
 
-# 1) create all per-tenant buckets at once
-BUCKETS=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$TFILE" | awk '{print "l/weko-"$1}' | tr '\n' ' ')
-echo "create buckets: $BUCKETS"
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
-apiVersion: batch/v1
-kind: Job
-metadata: { name: mc-s3loc, namespace: weko3 }
-spec:
-  backoffLimit: 2
-  template:
-    spec:
-      restartPolicy: Never
-      nodeSelector: { nodeType: DATA }
-      containers:
-      - name: mc
-        image: minio/mc:RELEASE.2025-04-08T15-39-49Z
-        command: ["/bin/sh","-c"]
-        args: ["mc alias set l ${S3_ENDPOINT} ${S3_KEY} ${S3_SECRET} && mc mb -p ${BUCKETS} && mc ls l"]
-EOF
-kubectl wait -n weko3 --for=condition=complete job/mc-s3loc --timeout=120s 2>&1 | tail -1
-kubectl delete job -n weko3 mc-s3loc --ignore-not-found >/dev/null 2>&1
+# 1) create all per-tenant buckets at once. Without a bucket the S3 Location only breaks uploads,
+#    so do not switch files_location when this fails.
+BUCKETS=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$TFILE" | awk '{print "weko-"$1}' | tr '\n' ' ')
+S3_KEY="$S3_KEY" S3_SECRET="$S3_SECRET" S3_ENDPOINT="$S3_ENDPOINT" bash s3-create-buckets.sh $BUCKETS || {
+  echo "ERROR: files_location was left unchanged (fix S3, then re-run: bash set-s3-location.sh)"; exit 1; }
 
 # 2) switch files_location to the S3 type in each tenant DB
 # s3_maximum_number_of_parts は NULL のままにしてはいけない。type='s3' の Location では
@@ -45,11 +29,11 @@ kubectl delete job -n weko3 mc-s3loc --ignore-not-found >/dev/null 2>&1
 #
 # readonly_access_key / readonly_secret_key も必須。invenio-s3 の init_s3fs_info は書き込み (mode='wb')
 # のときだけ access_key / secret_key を使い、読み出しでは readonly_* 系を見る。どちらも未設定だと
-# 空文字が渡り、ダウンロードが botocore の NoCredentialsError で 500 になる。デモの MinIO は
+# 空文字が渡り、ダウンロードが botocore の NoCredentialsError で 500 になる。デモの S3 (SeaweedFS) は
 # 資格情報が 1 組だけなので同じ値を入れる (本番なら読み取り専用ユーザーを別途作る)。
 # readonly_access_key / readonly_secret_key are required as well. invenio-s3's init_s3fs_info only uses
 # access_key / secret_key when writing (mode='wb'); reads look at the readonly_* pair. With neither set
-# it passes empty strings and downloads fail with botocore's NoCredentialsError as a 500. The demo MinIO
+# it passes empty strings and downloads fail with botocore's NoCredentialsError as a 500. The demo S3 (SeaweedFS)
 # has a single credential pair, so reuse it here (in production, create a separate read-only user).
 grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$TFILE" | while read -r NAME DBNAME HOST _; do
   BUCKET="weko-${NAME}"

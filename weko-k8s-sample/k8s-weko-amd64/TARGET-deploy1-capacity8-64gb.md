@@ -13,7 +13,7 @@
 | **PostgreSQL**(Patroni) | 2ノード | 1Gi → **2560Mi** | 8DB・メタ数GB。primary+standby |
 | **RabbitMQ**(cluster) | 3ノード | → **1Gi** | 8テナント分の vhost/quorum |
 | **Redis**(Sentinel) | redis3+sentinel3 | ~1.6Gi | databases=512（170テナント可） |
-| **MinIO**(S3) / **NFS** | 各1 | 1Gi / 0.5Gi | **コンテンツファイル格納(S3 Location)**／テーマconf/data共有FS(RWX) |
+| **SeaweedFS**(S3) / **NFS** | 各1 | 1Gi / 0.5Gi | **コンテンツファイル格納(S3 Location)**／テーマconf/data共有FS(RWX) |
 | **weko web**（テナント毎） | 初期1（最大8） | web 0.7→**1.5Gi**(processes=1)＋worker→**1Gi**＋nginx→0.25Gi | テナント追加で線形に増える部分 |
 
 > バックエンドは**テナント数に依らずほぼ一定**（ES/PG/MQ/Redis は共有）。増えるのは **web pod（テナント毎 ~2.75Gi）** のみ。
@@ -34,11 +34,11 @@
 | OS + イメージ + k8s | ~80GB | — |
 | PostgreSQL（メタ, 総8万件） | ~20GB | 50Gi |
 | Elasticsearch（索引, 2ノード） | ~40GB | 60Gi×2 |
-| **コンテンツファイル**（S3 `weko-<tenant>` on MinIO＋バックアップ） | **~600GB** | MinIO 600Gi |
+| **コンテンツファイル**（S3 `weko-<tenant>` on SeaweedFS＋バックアップ） | **~600GB** | `s3-data` 600Gi |
 | NFS export（テーマ conf/data のみ, 小） | ~数GB | 30Gi |
 
-> **ファイル保存先は S3(MinIO) Location**（`files_location.type='s3'`, `uri=s3://weko-<tenant>`）。NFS共有はテーマ由来の `conf/`(instance.cfg等) と `data/`(`_variables.scss`/indextree 等) のみで小容量。
-> ファイル容量の目安（総8万件）: 平均1MB→80GB / 5MB→400GB(◎) / 10MB→800GB(要MinIO拡大 or 増設)。MinIO PVC(600Gi)超なら外部S3へ切替 or ディスク増設。
+> **ファイル保存先は S3(SeaweedFS) Location**（`files_location.type='s3'`, `uri=s3://weko-<tenant>`）。NFS共有はテーマ由来の `conf/`(instance.cfg等) と `data/`(`_variables.scss`/indextree 等) のみで小容量。
+> ファイル容量の目安（総8万件）: 平均1MB→80GB / 5MB→400GB(◎) / 10MB→800GB(要S3 PVC拡大 or 増設)。S3 PVC `s3-data`(600Gi)超なら外部S3へ切替 or ディスク増設。
 
 ## 4. デプロイ（初期＝1テナント）
 ```bash
@@ -64,7 +64,7 @@ for t in tenant2 tenant3 ... ; do
 done
 bash set-s3-location.sh    # 追加テナントのバケット作成 + files_location を S3タイプに設定
 ```
-- バックエンド(ES/PG/MQ/Redis/MinIO/NFS)は**再設計・再デプロイ不要**（8テナント分のキャパで稼働中）。
+- バックエンド(ES/PG/MQ/Redis/S3/NFS)は**再設計・再デプロイ不要**（8テナント分のキャパで稼働中）。
 - 増える負荷は web pod のみ（8で +~19GiB, 収支は §2 の通り 64GB 内）。
 
 ## 6. チューニングレバー
@@ -73,8 +73,8 @@ bash set-s3-location.sh    # 追加テナントのバケット作成 + files_loc
 | 各テナントの同時アクセスが多い | web を `processes=2`・limit 2Gi に → 収容は 6〜7テナントに |
 | 1テナント10万件級 | `13-elasticsearch.yaml` の heap を 4〜6g、PVC拡大 |
 | 8を超えて増やす | web軽量化＋RabbitMQ/PG/ESを各1ノードに縮小（HAは低下） |
-| ファイル大/多 | MinIO PVC(600Gi)拡大＋ディスク増設。限界なら外部S3(AWS/MinIO別ホスト)へ `set-s3-location.sh` の endpoint を向ける |
+| ファイル大/多 | S3 PVC `s3-data`(600Gi)拡大＋ディスク増設。限界なら外部S3(AWS 等)へ `set-s3-location.sh` の endpoint を向ける |
 
 ## 7. 前提の注意
 - 単一サーバ → **サーバ故障＝全停止**（3ノードクラスタでもプロセス障害までしか守れない）。
-- バックアップは **PGダンプ＋コンテンツ(MinIOバケット `weko-<tenant>`)** を外部へ複製（`../CURRENT-STATE.md` §11）。ファイルは既にS3(MinIO)上なので `mc mirror` で外部S3へ退避可能。
+- バックアップは **PGダンプ＋コンテンツ(S3バケット `weko-<tenant>`)** を外部へ複製（`../CURRENT-STATE.md` §11）。ファイルは既にS3(SeaweedFS)上なので `aws s3 sync` で外部S3へ退避可能。

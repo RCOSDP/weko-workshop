@@ -1,7 +1,7 @@
 # Elasticsearch 6.8.23 — 3-node cluster (arm64-native weko image, no emulation)
 # Image: built from $WEKO_SRC/elasticsearch/Dockerfile.arm64 (default $WEKO_SRC=$HOME/weko)
 #   - real kui.txt (character normalization dictionary) / analysis-kuromoji / ingest-attachment /
-#     repository-s3 (MinIO credentials in the keystore)
+#     repository-s3 (S3 credentials in the keystore)
 # The cluster forms via ES6 zen discovery, minimum_master_nodes=2, each node persisted on a PVC.
 apiVersion: v1
 kind: Service

@@ -21,7 +21,7 @@
 [ホスト:arm64] kind クラスタ "weko3"
   control-plane … APIサーバ等 + ingress-nginx(host 80/443)
   worker (nodeType=WEKO) … tenant1-web / tenant2-web (各 nginx+web+worker)
-  worker2(nodeType=DATA) … 共有: PostgreSQL / Elasticsearch / RabbitMQ / MinIO(S3)  ※全PVC永続化
+  worker2(nodeType=DATA) … 共有: PostgreSQL / Elasticsearch / RabbitMQ / SeaweedFS(S3)  ※全PVC永続化
                             namespace weko3re … Redis master+replica×2 + sentinel×3 ※全PVC
 ```
 
@@ -32,7 +32,7 @@
 | 検索 | 共有 Elasticsearch 6.8.23（PVC） | インデックス接頭辞 |
 | MQ | 共有 RabbitMQ（PVC） | vhost `<name>/` |
 | キャッシュ | 共有 Redis **Sentinel HA**（PVC） | Redis DB 番号 |
-| オブジェクトストレージ | 共有 MinIO(S3)（PVC） | バケット/プレフィックス |
+| オブジェクトストレージ | 共有 SeaweedFS(S3)（PVC） | バケット/プレフィックス |
 
 **マニフェスト対応表:**
 
@@ -42,7 +42,7 @@
 | `10-postgresql.yaml` | PostgreSQL（PVC版） | StatefulSet |
 | `12-rabbitmq.yaml` | RabbitMQ（PVC版） | StatefulSet |
 | `13-elasticsearch.yaml` | Elasticsearch 6.8.23＋kui.txt（PVC版） | StatefulSet |
-| `40-minio.yaml` | MinIO（S3, PVC） | バケット3種＋テナント別 `weko-<tenant>` |
+| `40-s3.yaml` | SeaweedFS（S3, PVC `s3-data`, `http://s3:9000`） | バケット3種＋テナント別 `weko-<tenant>` |
 | `41-redis-sentinel.yaml` | Redis Sentinel HA（weko3re, PVC） | master+replica2+sentinel3 |
 | `21-nginx-config.yaml` | 前段 nginx 設定（全テナント共有） | uwsgi_pass |
 | `tenants.txt` + `gen-tenant.sh` | テナント定義→マニフェスト生成 | redissentinel対応。秘密鍵(`SECRET_KEY`等)は `.secret-seed` からテナント毎に導出 |
@@ -157,7 +157,14 @@ nodes:
 ```bash
 cd /home/mhaya/weko-k8s-sample
 kind create cluster --config kind-weko-cluster.yaml --wait 120s
+# 配布元イメージ（ingress-nginx / cert-manager / redis / S3 など）をホストで pull して全ノードへ読み込む
+bash k8s-weko/pull-images-arm64.sh load
 ```
+
+> kind のノードに任せると Docker Hub から**匿名で** pull し、IP ごとの制限（6時間で100回）に当たると
+> `ErrImagePull`（`toomanyrequests`）で止まる。`pull-images-arm64.sh` はホストで pull（手元にあるものは飛ばす）してから
+> `kind load` する。制限に当たったら `docker login` するか時間をおいて再実行。クラスタ作成前に引数なしで実行して
+> pull だけ済ませておくこともできる（`list` で対象一覧）。
 
 ### 検証
 
@@ -183,7 +190,9 @@ control-plane 上で `kube-apiserver / etcd / kube-scheduler / kube-controller-m
 ## 6. Ingress コントローラ導入
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
+# digest（@sha256:...）を落として apply する。kind へ読み込んだイメージは digest では見つからず、ノードが取りに行ってしまう（タグで固定のまま）
+curl -fsSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml \
+  | sed -E 's/(image: [^@[:space:]]+)@sha256:[0-9a-f]+/\1/' | kubectl apply -f -
 
 # Ready 待ち
 kubectl wait --namespace ingress-nginx \
@@ -383,18 +392,19 @@ kubectl exec -i -n weko3 $POD -c web -- bash -s < scratchpad/weko-init.sh
 - 検証: worker が sentinel 経由で `ready`、master→replica 複製、`sentinel master mymaster` quorum=2。
 
 ### 10.3 データ永続化（PVC / kind `standard` StorageClass）
-- PostgreSQL / Elasticsearch / RabbitMQ / Redis×3 / MinIO をすべて PVC 化（emptyDir 廃止）。
+- PostgreSQL / Elasticsearch / RabbitMQ / Redis×3 / SeaweedFS をすべて PVC 化（emptyDir 廃止）。
 - **PG はデータ保持**: `pg_dumpall` → PVC 版へ再デプロイ → restore（再初期化を回避）。ES は再デプロイ後に index 再作成。
 - 検証: `postgresql-0` Pod 削除→再作成後も 188 テーブル・管理者ユーザ保持。
 
-### 10.4 S3 オブジェクトストレージ（`40-minio.yaml`）＋ ファイルLocation化
-- **MinIO**（S3互換, PVC）＋バケット `weko-backup`/`weko-content`/`weko-esbackup` ＋ **テナント別 `weko-<tenant>`**。
-- テナント Secret の `S3_*` に接続情報（`http://minio:9000`, key=`wekominio`）。
-- **WEKO のアップロード先＝S3(MinIO) Location**（`set-s3-location.sh`）: 各テナントDBの `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` ＋ `access_key`/`secret_key`/`s3_endpoint_url`/`s3_send_file_directly=true`/`s3_default_block_size=5242880`/`s3_signature_version='s3v4'` に UPDATE。weko は `invenio-s3` の s3fs 経由で MinIO バケットへ保存。
+### 10.4 S3 オブジェクトストレージ（`40-s3.yaml`）＋ ファイルLocation化
+- **SeaweedFS**（`chrislusf/seaweedfs:4.53`, S3互換, PVC `s3-data`。`weed server` 1プロセスで master+volume+filer+S3、ポート 9000 のみ・Web コンソール無し）＋バケット `weko-backup`/`weko-content`/`weko-esbackup` ＋ **テナント別 `weko-<tenant>`**。
+- バケットは `s3-create-buckets.sh <bucket>...` が作る（クラスタ内の aws-cli Job `public.ecr.aws/aws-cli/aws-cli:2.40.1`。`deploy/s3` の Ready を待ち、既存バケットはそのまま、失敗時は 0 以外で終わる）。
+- テナント Secret の `S3_*` に接続情報（`http://s3:9000`, key=`wekominio`）。
+- **WEKO のアップロード先＝S3(SeaweedFS) Location**（`set-s3-location.sh`）: 各テナントDBの `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` ＋ `access_key`/`secret_key`/`readonly_access_key`/`readonly_secret_key`/`s3_endpoint_url`/`s3_send_file_directly=true`/`s3_default_block_size=5242880`/`s3_maximum_number_of_parts=10000`/`s3_signature_version='s3v4'` に UPDATE（`readonly_*` が無いとダウンロードが 500、`s3_maximum_number_of_parts` が NULL だとアップロードが 0 バイトで保存される）。バケットが作れなかったときは `files_location` を変えずに 0 以外で終わる。weko は `invenio-s3` の s3fs 経由で SeaweedFS バケットへ保存。
   - **核心の落とし穴**: `invenio-s3` `storage.py _get_fs` は `location.type=='s3'` の時だけ location の S3情報で s3fs 接続する。`type` が `None` のままだと PyFilesystem2 にフォールバックし `AWS_ACCESS_KEY_ID not set` で失敗。→ 必ず `type='s3'` に設定。path-style・`signature_version=s3v4` は invenio-s3 が処理。
   - `gen-tenant.sh` が `instance.cfg` の `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL`（web/worker 両方）を環境変数から読む配線を実施。読み出し用の `S3_READONLY_ACCESS_KEY_ID`/`S3_READONLY_SECRET_ACCESS_KEY` にも同じキーを入れる。
   - 検証済（arm64実機）: tenant1→`s3://weko-tenant1/...`, tenant2→`s3://weko-tenant2/...` に実オブジェクト確認。NFS共有(RWX)はテーマ由来 conf/data のみ（アップロード実体は含まない）。
-- 検証: `pg_dumpall` → `weko-backup/postgres/` へバックアップ（initContainer で dump→mc upload の2段 Job）。
+- 検証: `pg_dumpall` → `weko-backup/postgres/` へバックアップ（initContainer で dump→S3 へアップロードの2段 Job）。
 
 ### 10.5 実装上の落とし穴（実際に踏んだもの）
 | 症状 | 原因 | 対処 |
@@ -404,7 +414,8 @@ kubectl exec -i -n weko3 $POD -c web -- bash -s < scratchpad/weko-init.sh
 | `bash -s < file` / パイプが空実行 | `nohup` の stdin が /dev/null | スクリプトを `base64` 化し pod 内で `base64 -d \| bash` |
 | `pkill -f port-forward` が exit 144 | 自コマンド行に自己マッチし自己 kill | その文字列を含む pkill を避ける |
 | S3アップロード `AWS_ACCESS_KEY_ID not set` | `files_location.type` が `None` で invenio-s3 が PyFilesystem2 にフォールバック | `set-s3-location.sh` で `type='s3'`＋S3情報を UPDATE |
-| mc の Job が起動しない | mc イメージの entrypoint | Job で `command:["/bin/sh","-c"]` に上書き（`kubectl run -- sh -c` は不可） |
+| aws-cli を `kubectl run` で動かすと `sh` が引数扱いになる | aws-cli イメージの entrypoint は `aws` | `kubectl run ... -- --endpoint-url http://s3:9000 s3 ls` のように aws の引数だけ渡す。シェルが要る Job は `command:["/bin/sh","-c"]` に上書き（`s3-create-buckets.sh`） |
+| Pod が `ErrImagePull`（`toomanyrequests`） | kind ノードの Docker Hub 匿名 pull 制限（IP ごと6時間で100回） | `pull-images-<arch>.sh` でホストに pull（`docker login` 済みなら認証枠）→ `load` で読み込む |
 | 初回リクエストが遅い/タイムアウト | emulation ＋ JIT | 初回は `--max-time 240`。2回目以降は数秒 |
 
 ### 10.6 実機検証(2026-07-23)で判明した落とし穴と修正
@@ -456,8 +467,8 @@ docker exec -it weko3-control-plane bash
 | RabbitMQ | ✅ **3ノードクラスタ**（Cluster Operator, rabbitmq:4.0.9） |
 | Elasticsearch | ✅ **3ノードクラスタ**（**arm64ネイティブ**, 本物kui.txt/kuromoji/repository-s3, green・シャード分散） |
 | Redis | ✅ Sentinel HA（`weko3re`: master+replica×2+sentinel×3） |
-| MinIO(S3) | ✅ 稼働（バケット3種＋テナント別 `weko-<tenant>`, pg_dumpall バックアップ実演済み） |
-| ファイルLocation | ✅ **S3(MinIO)**（`files_location.type='s3'`, `uri=s3://weko-<tenant>`）。両テナント アップロード→MinIO 確認済み |
+| SeaweedFS(S3) | ✅ 稼働（バケット3種＋テナント別 `weko-<tenant>`, pg_dumpall バックアップ実演済み） |
+| ファイルLocation | ✅ **S3(SeaweedFS)**（`files_location.type='s3'`, `uri=s3://weko-<tenant>`）。両テナント アップロード→SeaweedFS 確認済み |
 | weko 本体 | ✅ **arm64ネイティブ**（`weko3-web:arm64`）。起動5秒・qemu不安定性ゼロ・両テナント 3/3 |
 | マルチテナント | ✅ tenant1 / tenant2 独立稼働 |
 | サイト疎通 | ✅ 両テナントとも `/`200・`/login/`200・`/admin/`302・`/api/records/`200（**200×15/15安定**） |

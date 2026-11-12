@@ -13,7 +13,7 @@
 | **PostgreSQL** (Patroni) | 2 nodes | 1Gi → **2560Mi** | 8 DBs, a few GB of metadata. primary + standby |
 | **RabbitMQ** (cluster) | 3 nodes | → **1Gi** | vhosts/quorum for 8 tenants |
 | **Redis** (Sentinel) | redis ×3 + sentinel ×3 | about 1.6Gi | databases=512 (up to 170 tenants) |
-| **MinIO** (S3) / **NFS** | 1 each | 1Gi / 0.5Gi | **Keeps the content files (S3 Location)** / shared FS (RWX) for theme conf/data |
+| **SeaweedFS** (S3) / **NFS** | 1 each | 1Gi / 0.5Gi | **Keeps the content files (S3 Location)** / shared FS (RWX) for theme conf/data |
 | **weko web** (per tenant) | 1 at first (up to 8) | web 0.7 → **1.5Gi** (processes=1) + worker → **1Gi** + nginx → 0.25Gi | This is the part that grows with each tenant |
 
 > The backends stay **almost the same no matter how many tenants** you have (ES/PG/MQ/Redis are shared). Only the **web pod (about 2.75Gi per tenant)** grows.
@@ -34,11 +34,11 @@
 | OS + images + k8s | about 80GB | — |
 | PostgreSQL (metadata, 80k total) | about 20GB | 50Gi |
 | Elasticsearch (indices, 2 nodes) | about 40GB | 60Gi × 2 |
-| **Content files** (S3 `weko-<tenant>` on MinIO + backups) | **about 600GB** | MinIO 600Gi |
+| **Content files** (S3 `weko-<tenant>` on SeaweedFS + backups) | **about 600GB** | `s3-data` 600Gi |
 | NFS export (theme conf/data only, small) | about a few GB | 30Gi |
 
-> **The files are kept on the S3 (MinIO) Location** (`files_location.type='s3'`, `uri=s3://weko-<tenant>`). The NFS share keeps only the theme `conf/` (instance.cfg and so on) and `data/` (`_variables.scss`, indextree, and so on). These are small.
-> File size guide (80k items in total): average 1MB → 80GB / 5MB → 400GB (good) / 10MB → 800GB (you need a bigger MinIO PVC or more disk). If you go over the MinIO PVC (600Gi), use an outside S3 or add disk.
+> **The files are kept on the S3 (SeaweedFS) Location** (`files_location.type='s3'`, `uri=s3://weko-<tenant>`). The NFS share keeps only the theme `conf/` (instance.cfg and so on) and `data/` (`_variables.scss`, indextree, and so on). These are small.
+> File size guide (80k items in total): average 1MB → 80GB / 5MB → 400GB (good) / 10MB → 800GB (you need a bigger S3 PVC or more disk). If you go over the S3 PVC `s3-data` (600Gi), use an outside S3 or add disk.
 
 ## 4. Deploy (1 tenant at first)
 ```bash
@@ -64,7 +64,7 @@ for t in tenant2 tenant3 ... ; do
 done
 bash set-s3-location.sh    # make buckets for the new tenants + set files_location to the S3 type
 ```
-- The backends (ES/PG/MQ/Redis/MinIO/NFS) need **no redesign and no redeploy** (they already run with 8-tenant size).
+- The backends (ES/PG/MQ/Redis/S3/NFS) need **no redesign and no redeploy** (they already run with 8-tenant size).
 - Only the web pods add load (+about 19GiB at 8; the plan still fits in 64GB, see §2).
 
 ## 6. How to tune
@@ -73,8 +73,8 @@ bash set-s3-location.sh    # make buckets for the new tenants + set files_locati
 | Heavy access on one tenant | Set web to `processes=2` and limit 2Gi → now it fits 6–7 tenants |
 | 100k records for one tenant | Make the heap in `13-elasticsearch.yaml` 4–6g and grow the PVC |
 | More than 8 tenants | Make web smaller + drop RabbitMQ/PG/ES to one node each (this gives up HA) |
-| Big or many files | Grow the MinIO PVC (600Gi) + add disk. If that is not enough, point the endpoint in `set-s3-location.sh` to an outside S3 (AWS / MinIO on another host) |
+| Big or many files | Grow the S3 PVC `s3-data` (600Gi) + add disk. If that is not enough, point the endpoint in `set-s3-location.sh` to an outside S3 (AWS or similar) |
 
 ## 7. Things to keep in mind
 - One server → **if the server dies, everything stops** (a 3-node cluster only protects against process failures).
-- For backups, copy **the PG dump + the content (MinIO bucket `weko-<tenant>`)** to another place (`../CURRENT-STATE.en.md` §11). The files are already on S3 (MinIO), so `mc mirror` can copy them to an outside S3.
+- For backups, copy **the PG dump + the content (S3 bucket `weko-<tenant>`)** to another place (`../CURRENT-STATE.en.md` §11). The files are already on S3 (SeaweedFS), so `aws s3 sync` can copy them to an outside S3.

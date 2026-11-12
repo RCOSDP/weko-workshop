@@ -1,7 +1,7 @@
 #!/bin/bash
 # End-to-end deployment script for the "current full configuration" of weko3 on a single arm64 host
 #   Result = HA clusters (PG Patroni ×3 / RabbitMQ ×3 / ES ×3) + Redis Sentinel + persistence (PVC)
-#            + NFS (RWX) + S3 (MinIO) file Location + multi-tenancy (the production-fidelity final form)
+#            + NFS (RWX) + S3 (SeaweedFS) file Location + multi-tenancy (the production-fidelity final form)
 # Design/background: the "HA clustering" section of ../README.md / ../CONSTRUCTION.md.
 #                    The amd64 version is ../k8s-weko-amd64/deploy-amd64.sh.
 # Prerequisites: arm64 Linux / docker (usable without sudo) / kubectl / kind / the weko source (=$HOME/weko).
@@ -168,7 +168,21 @@ else
 fi
 kubectl cluster-info >/dev/null 2>&1 || {
   echo "ERROR: cannot reach the cluster"; exit 1; }
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
+# 配布元のイメージはノードに取りに行かせず、ホストで pull して読み込む。ノードの匿名 pull は Docker Hub の
+# 制限に当たりやすく、当たると S3 などが ErrImagePull のまま後の手順が timeout する。
+# 先に pull だけ済ませたいときは、デプロイ前に bash pull-images-arm64.sh を（全部 OK になるまで）実行しておく。
+# Do not let the nodes fetch the third-party images: pull them on the host and load them. Anonymous pulls
+# from the nodes easily hit the Docker Hub rate limit, after which S3 and others sit in ErrImagePull and
+# later steps time out. To get the pulls done beforehand, run bash pull-images-arm64.sh (until all OK).
+CLUSTER_NAME="$CLUSTER_NAME" bash pull-images-arm64.sh load || {
+  echo "ERROR: could not get the images into the cluster; fix the above and re-run (pulled images are kept)"
+  exit 1; }
+# digest（@sha256:...）を落としてから apply する: kind へ読み込んだイメージは digest では見つからず、
+# ノードが取りに行ってしまう。タグ（v1.12.1）で固定されたまま。
+# Drop the digest (@sha256:...) before applying: an image loaded into kind is not found by digest, so the
+# node would fetch it after all. The tag (v1.12.1) still pins it.
+curl -fsSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml \
+  | sed -E 's/(image: [^@[:space:]]+)@sha256:[0-9a-f]+/\1/' | kubectl apply -f -
 kubectl wait -n ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
 
 echo "########## 2) build arm64-native images from the source ##########"
@@ -180,18 +194,18 @@ else
   docker pull "$WEKO_IMAGE"
 fi
 kind load docker-image "$WEKO_IMAGE" --name "$CLUSTER_NAME"
-# Elasticsearch: arm64 native (real kui.txt / kuromoji / repository-s3 pointing at MinIO)
+# Elasticsearch: arm64 native (real kui.txt / kuromoji / repository-s3 pointing at the S3 service)
 export WEKO_ES_IMAGE="${WEKO_ES_IMAGE:-weko-elasticsearch:6.8.23-$IMG_TAG}"
 if [ "$WEKO_ES_IMAGE" = "weko-elasticsearch:6.8.23-$IMG_TAG" ]; then
   docker build -f "$ES_DOCKERFILE" \
     --build-arg ELASTICSEARCH_S3_ACCESS_KEY=wekominio \
     --build-arg ELASTICSEARCH_S3_SECRET_KEY=wekominio-secret-key \
-    --build-arg ELASTICSEARCH_S3_ENDPOINT=http://minio:9000 \
+    --build-arg ELASTICSEARCH_S3_ENDPOINT=http://s3:9000 \
     --build-arg ELASTICSEARCH_S3_BUCKET=weko-esbackup \
     -t "$WEKO_ES_IMAGE" "$WEKO_SRC"
 else
   # A prebuilt image must already have the repository-s3 keystore baked in (the --build-arg values
-  # above); otherwise ES snapshots cannot use MinIO.
+  # above); otherwise ES snapshots cannot use S3.
   echo "-- pulling WEKO_ES_IMAGE=$WEKO_ES_IMAGE (skipping the source build) --"
   docker pull "$WEKO_ES_IMAGE"
 fi
@@ -321,8 +335,16 @@ kubectl wait -n default --for=condition=ready pod -l name=postgres-operator --ti
 
 echo "########## 4) deploy the shared platform (HA/persistence/NFS/S3) ##########"
 # Apply 52 (ALLOW_NOSSL configmap) BEFORE 51 (the postgresql CR) so the operator injects the env at PG pod creation.
+# MinIO で作った既存クラスタへの再実行: MinIO はイメージが消えて二度と起動しないので片付ける。
+# PVC (minio-data) は中身を取り出したい人のために残す。要らなければ kubectl -n weko3 delete pvc minio-data。
+# Re-running on a cluster built with MinIO: its image is gone and it will never start again, so remove it.
+# The PVC (minio-data) is kept for anyone who wants its contents; kubectl -n weko3 delete pvc minio-data otherwise.
+if kubectl -n weko3 get deploy minio >/dev/null 2>&1; then
+  echo "-- removing the old MinIO (replaced by SeaweedFS in 40-s3.yaml); PVC minio-data is kept --"
+  kubectl -n weko3 delete deploy/minio svc/minio secret/minio-secret --ignore-not-found
+fi
 kubectl apply -f 00-namespace.yaml -f 52-postgres-pod-config.yaml -f 21-nginx-config.yaml \
-              -f 40-minio.yaml -f 41-redis-sentinel.yaml -f 60-nfs-server.yaml \
+              -f 40-s3.yaml -f 41-redis-sentinel.yaml -f 60-nfs-server.yaml \
               -f 51-postgresql-ha.yaml
 # Deploy the bundled root CA (61-tls-ca.yaml) when automatic issuance uses it. If WEKO_TLS_ISSUER
 # names a different ClusterIssuer, skip it - that issuer is expected to exist already.
@@ -352,11 +374,10 @@ if [ "$(pg_ready)" -lt 3 ]; then
   kubectl get pods -n weko3 -l cluster-name=weko-postgresql,application=spilo
   exit 1
 fi
-# minio/mc has Entrypoint=["mc"], so `-- sh -c ...` without --command is passed as args and runs
-# `mc sh -c ...`, failing with "sh is not a recognized command". Use --command to override the entrypoint.
-kubectl run mc-init -n weko3 --rm -i --restart=Never --image=minio/mc:RELEASE.2025-04-08T15-39-49Z \
-  --command -- /bin/sh -c 'mc alias set l http://minio:9000 wekominio wekominio-secret-key && mc mb -p l/weko-backup l/weko-content l/weko-esbackup' \
-  || echo "WARNING: failed to create the shared buckets"
+# 共有バケット。作れないまま進むとバックアップ先がなく、後の手順で分かりにくく失敗するのでここで止める。
+# The shared buckets. Going on without them leaves backups nowhere to go and fails confusingly later, so stop here.
+bash s3-create-buckets.sh weko-backup weko-content weko-esbackup || {
+  echo "ERROR: failed to create the shared buckets on S3"; exit 1; }
 
 echo "########## 5) pin the PostgreSQL weko password ##########"
 # The operator resets the weko password to a generated value, so pin it back to 'weko'
@@ -528,8 +549,8 @@ grep -vE '^\s*#|^\s*$' tenants.txt | while read -r NAME DB HOST EMAIL PASS INIT 
   kubectl exec -n weko3 $PGM -- psql -U postgres -d $DB \
     -c "INSERT INTO admin_settings (id,name,settings) VALUES (0,'__seed__','{}'::jsonb) ON CONFLICT DO NOTHING;"
 done
-# Point file storage at S3 (MinIO): create the per-tenant bucket + set files_location to the S3 type
-bash set-s3-location.sh
+# Point file storage at S3 (SeaweedFS): create the per-tenant bucket + set files_location to the S3 type
+bash set-s3-location.sh || { echo "ERROR: could not point the file storage at S3"; exit 1; }
 kubectl rollout restart -n weko3 $(grep -vE '^\s*#|^\s*$' tenants.txt | awk '{print "deploy/"$1"-web"}' | tr '\n' ' ')
 for t in $(grep -vE '^\s*#|^\s*$' tenants.txt | awk '{print $1}'); do
   kubectl rollout status deploy/${t}-web -n weko3 --timeout=600s

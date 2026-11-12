@@ -1,6 +1,6 @@
 # Reaching each component with kubectl
 
-Commands for getting into PostgreSQL / Elasticsearch / Redis / RabbitMQ / MinIO / WEKO itself /
+Commands for getting into PostgreSQL / Elasticsearch / Redis / RabbitMQ / S3 (SeaweedFS) / WEKO itself /
 the Shibboleth IdP after a deployment. **Every command here was run against a live cluster.**
 
 ## Where everything lives
@@ -13,7 +13,7 @@ Three namespaces are in play, so getting `-n` right matters.
 | pgpool | `weko3` | Deployment | `deploy/weko-pgpool` | `pgpool` |
 | Elasticsearch ×3 | `weko3` | StatefulSet | `elasticsearch-0` … `-2` | `elasticsearch` |
 | RabbitMQ ×3 | `weko3` | StatefulSet | `weko-rabbitmq-server-0` … `-2` | `rabbitmq` |
-| MinIO (S3) | `weko3` | Deployment | `deploy/minio` | `minio` |
+| S3 (SeaweedFS) | `weko3` | Deployment | `deploy/s3` | `seaweedfs` |
 | WEKO itself | `weko3` | Deployment | `deploy/tenant1-web` | **`nginx` / `web` / `worker`** |
 | Shibboleth IdP | `weko3` | Deployment | `deploy/weko-shib-idp` | `idp` |
 | attribute authority (mAP equivalent) | `weko3` | Deployment | `deploy/weko-shib-map` | `idp` |
@@ -99,26 +99,25 @@ kubectl exec -n weko3 weko-rabbitmq-server-0 -- rabbitmqctl list_queues -p tenan
 kubectl exec -n weko3 weko-rabbitmq-server-0 -- rabbitmqctl cluster_status
 ```
 
-### MinIO (S3)
+### S3 (SeaweedFS)
 
-`mc` ships in the image but needs an alias. The credentials are in the environment:
+The SeaweedFS image has no S3 client, so start a throwaway aws-cli Pod (the image's entrypoint is
+`aws`, so no `--command`). Listing the buckets:
 
 ```bash
-kubectl exec -n weko3 deploy/minio -- sh -c \
-  'mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls l'
-```
-```
-[2026-07-29 07:35:02 UTC]     0B weko-backup/
-[2026-07-29 07:35:02 UTC]     0B weko-content/
-[2026-07-29 07:35:02 UTC]     0B weko-esbackup/
-[2026-07-29 07:52:39 UTC]     0B weko-tenant1/
+kubectl run s3cli -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+  --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+  --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 ls
 ```
 
 Listing a tenant bucket:
 ```bash
-kubectl exec -n weko3 deploy/minio -- sh -c \
-  'mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls --recursive l/weko-tenant1'
+kubectl run s3cli -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+  --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+  --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 ls --recursive s3://weko-tenant1/
 ```
+
+To delete a bucket together with its contents, use `s3 rb s3://<bucket> --force`. To just create buckets, `bash s3-create-buckets.sh <bucket>...`.
 
 ### WEKO itself (**three containers, so `-c` is mandatory**)
 
@@ -213,7 +212,7 @@ psql -h 127.0.0.1 -p 15432 -U weko -d wekodb        # password: weko
 | pgpool | `kubectl -n weko3 port-forward svc/pgpool 15432:5432` | `psql -h 127.0.0.1 -p 15432 -U weko -d wekodb` |
 | PostgreSQL directly (master) | `kubectl -n weko3 port-forward weko-postgresql-0 15433:5432` | `psql -h 127.0.0.1 -p 15433 -U weko -d wekodb` |
 | Elasticsearch | `kubectl -n weko3 port-forward svc/elasticsearch 9200:9200` | `curl localhost:9200/_cat/indices?v` |
-| MinIO console | `kubectl -n weko3 port-forward svc/minio 9001:9001` | browser at `http://localhost:9001` |
+| S3 (SeaweedFS), no web console | `kubectl -n weko3 port-forward svc/s3 9000:9000` | `aws --endpoint-url http://localhost:9000 s3 ls` (below) |
 | RabbitMQ management | `kubectl -n weko3 port-forward svc/weko-rabbitmq 15672:15672` | browser at `http://localhost:15672` |
 | Redis | `kubectl -n weko3re port-forward svc/redis 16379:6379` | `redis-cli -p 16379` |
 | Shibboleth IdP | `kubectl -n weko3 port-forward svc/weko-shib-idp 8080:8080` | `curl localhost:8080/idp/status` |
@@ -229,6 +228,13 @@ psql -h 127.0.0.1 -p 15432 -U weko -d wekodb        # password: weko
 > docker run --rm --network host -e PGPASSWORD=weko postgres:12 \
 >   psql -h 127.0.0.1 -p 15432 -U weko -d wekodb
 > docker run --rm --network host redis:7.4.1 redis-cli -h 127.0.0.1 -p 16379 ping
+> ```
+>
+> S3 from a local aws-cli (keys as in Credentials below; any region works, but one must be set):
+> ```bash
+> kubectl -n weko3 port-forward svc/s3 9000:9000 &
+> AWS_ACCESS_KEY_ID=wekominio AWS_SECRET_ACCESS_KEY=wekominio-secret-key AWS_DEFAULT_REGION=us-east-1 \
+>   aws --endpoint-url http://localhost:9000 s3 ls s3://weko-tenant1/
 > ```
 
 ---
@@ -252,7 +258,7 @@ docker exec -it weko3-worker2 bash         # nodeType=DATA   (PG/ES/Redis/Rabbit
 | PostgreSQL (superuser) | `postgres` | none (trusted inside the Pod) | spilo image default |
 | PostgreSQL / pgpool (application) | `weko` | `weko` | `gen-tenant.sh` → Secret `tenant1-secret` |
 | RabbitMQ | `weko` | `weko` | same |
-| MinIO | `wekominio` | `wekominio-secret-key` | `40-minio.yaml` |
+| S3 (SeaweedFS) | `wekominio` | `wekominio-secret-key` | `40-s3.yaml` (`s3.json` in Secret `s3-config`) |
 | WEKO administrator | `admin@example.org` | `adminpass123` | `tenants.txt` |
 | Shibboleth IdP demo users (institutional) | `admin` / `libadmin` / `teacher` / `commadmin` | `<login id>123` | `shib-idp-build/idp-conf/credentials/demo.htpasswd` |
 
