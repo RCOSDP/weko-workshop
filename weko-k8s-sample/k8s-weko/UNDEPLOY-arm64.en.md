@@ -69,14 +69,14 @@ The examples target tenant `tenant1` (database `wekodb`). The database name is c
 ---
 
 ## 8) admin_settings seed + the S3 file Location
-Remove the per-tenant MinIO bucket.
+Remove the per-tenant S3 (SeaweedFS) bucket together with its contents.
 
 ```bash
-kubectl run mc-rm -n weko3 --rm -i --restart=Never --image=minio/mc:RELEASE.2025-04-08T15-39-49Z \
-  --command -- /bin/sh -c 'mc alias set l http://minio:9000 wekominio wekominio-secret-key && mc rb --force l/weko-tenant1'
+kubectl run s3-rm -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+  --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+  --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 rb s3://weko-tenant1 --force
 ```
-> `minio/mc` has `Entrypoint=["mc"]`, so **`--command` is mandatory**. Without it the container runs
-> `mc sh -c ...` and fails with `sh is not a recognized command`.
+> The aws-cli image's entrypoint is `aws`, so everything after `--` is passed to `aws` as is (no `--command`).
 
 ## 7) Tenant initialization (and the 7.5 seed data)
 Drop the tenant database. The item types, index tree, workflows and mail templates loaded by 7.5 go
@@ -140,7 +140,7 @@ Reverse of the apply order. The PVCs go with the namespaces.
 
 ```bash
 kubectl delete -f 50-rabbitmq-cluster.yaml -f 13-elasticsearch.yaml -f 51-postgresql-ha.yaml \
-               -f 60-nfs-server.yaml -f 41-redis-sentinel.yaml -f 40-minio.yaml \
+               -f 60-nfs-server.yaml -f 41-redis-sentinel.yaml -f 40-s3.yaml \
                -f 21-nginx-config.yaml -f 52-postgres-pod-config.yaml --ignore-not-found
 kubectl delete ns weko3 weko3re nfs-system --ignore-not-found
 kubectl delete storageclass nfs nfs-static --ignore-not-found   # cluster-scoped, so delete separately
@@ -166,6 +166,13 @@ The copies loaded into the nodes go with the cluster. To remove them from the ho
 ```bash
 docker image rm weko3-web:arm64 weko3-nginx:arm64 weko-elasticsearch:6.8.23-arm64 weko-pgpool:4.2.2-arm64
 ```
+To also remove the third-party images `pull-images-arm64.sh` pulled onto the host (a later deploy then pulls
+them from Docker Hub again):
+
+```bash
+docker image rm $(bash pull-images-arm64.sh list)
+```
+> `kindest/node`, first in the list, is in use by the cluster's nodes and only goes once step 1 has removed the cluster.
 
 ## 1) kind cluster + ingress
 The ingress alone, or the whole cluster.

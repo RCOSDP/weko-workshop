@@ -14,7 +14,7 @@ ProLiant Gen9 は Intel Xeon = **x86_64/amd64**。現行の開発環境（arm64�
 | weko 本体 | **最新ソース(RCOSDP/weko)から amd64 native ビルド** → `weko3-web:amd64`（既成イメージを使う場合のみ `WEKO_IMAGE` 指定） |
 | Elasticsearch | 公式 `docker.elastic.co/.../6.8.23` ベースの weko ES（`/home/mhaya/weko/elasticsearch/Dockerfile`） |
 | PostgreSQL | Zalando `spilo-13`(本番PG13, amd64) or spilo-17。operator は amd64 |
-| RabbitMQ / Redis / MinIO / nginx / NFS | いずれも公式 amd64 |
+| RabbitMQ / Redis / SeaweedFS / nginx / NFS | いずれも公式 amd64 |
 
 ## 1. 基盤の選択
 
@@ -39,7 +39,7 @@ OS・k8s・page cache 用に **~14GB を確保**し、残り ~50GB をワーク�
 | 〃 | **PostgreSQL 2ノード**（Patroni primary+standby） | 3GB×2 = **6GB** | shared_buffers ~1GB |
 | 〃 | **RabbitMQ 3ノード**（quorum queue） | 1.2GB×3 = **3.6GB** | 1ノードに減らせば1.5GB |
 | 〃 | Redis Sentinel(master+replica×2+sentinel×3) | 合計 **~1.5GB** | |
-| 〃 | MinIO(S3) | **1GB** | |
+| 〃 | SeaweedFS(S3) | **1GB** | |
 | アプリ | **weko web × T テナント**(nginx+web+worker) | **~3.5GB/テナント** | processes=2/threads=2(ネイティブ) |
 | 予備 | ページキャッシュ/バッファ/OOM回避 | **~10GB以上** | ES/PG性能に重要 |
 
@@ -55,11 +55,11 @@ OS・k8s・page cache 用に **~14GB を確保**し、残り ~50GB をワーク�
 | PostgreSQL データ | ~50GB | メタデータ（100万件でも数十GB） |
 | Elasticsearch データ | ~100GB | 索引（件数依存） |
 | Redis/RabbitMQ | ~20GB | |
-| **コンテンツファイル（S3=MinIO Location）** | **~700GB** | 実体の大半。1TBの主用途。MinIO PVC |
+| **コンテンツファイル（S3=SeaweedFS Location）** | **~700GB** | 実体の大半。1TBの主用途。S3 の PVC（`s3-data`） |
 | NFS export（テーマ conf/data のみ） | ~数十GB | `_variables.scss`/indextree 等の小容量 |
 
 > local-path の PVC request は上限強制されないが、**運用では明示サイズ＋監視**推奨。
-> ファイルは **S3(MinIO) Location**（`files_location.type='s3'`, `uri=s3://weko-<tenant>`）に集約 → 700GB を MinIO に確保。NFS はテーマ由来の小容量のみ。ディスク逼迫時は `set-s3-location.sh` の endpoint を外部S3へ。
+> ファイルは **S3(SeaweedFS) Location**（`files_location.type='s3'`, `uri=s3://weko-<tenant>`）に集約 → 700GB を S3（SeaweedFS）の PVC に確保。NFS はテーマ由来の小容量のみ。ディスク逼迫時は `set-s3-location.sh` の endpoint を外部S3へ。
 
 ## 4. キャパシティ（この設計での目安）
 
@@ -78,23 +78,24 @@ OS・k8s・page cache 用に **~14GB を確保**し、残り ~50GB をワーク�
 ## 5. 推奨デプロイ手順（要点）
 
 1. **付録C（amd64）** に沿う: binfmt/arm64ビルド無し。WEKO3 は最新ソースから amd64 native ビルド→load。ES も公式ベースを amd64 native ビルド。
+   デプロイ前に `cd k8s-weko-amd64 && bash pull-images-amd64.sh` で配布元イメージをホストへ pull しておく（全部 OK になるまで再実行。Docker Hub の匿名 pull 制限対策。`deploy-amd64.sh` も手順1で `pull-images-amd64.sh load` を呼ぶ）。
 2. **リソースを本設計値に調整**（arm64版からの差分）:
    - `13-elasticsearch.yaml`: **2ノード**、`ES_JAVA_OPTS=-Xms6g -Xmx6g`、limit 8Gi、replica維持
    - `51-postgresql-ha.yaml`: `numberOfInstances: 2`、resources 3Gi
    - `50-rabbitmq-cluster.yaml`: `replicas: 3`(または1)、mem 1.2Gi
    - `gen-tenant.sh`: web の `processes=2/threads=2`(ネイティブなので削減不要)、image=`weko3-web:amd64`(最新ソースからビルド)。emulation回避策(ulimit/cores/processes=1)は撤去可
-   - `40-minio.yaml`: **ファイルLocation実体**なので容量大きめ（600〜700GB）。`60-nfs-server.yaml` の export はテーマ用に小容量でよい
-   - デプロイ後 `set-s3-location.sh` で各テナントの `files_location` を S3(MinIO)タイプに設定（`deploy-amd64.sh §8` が自動実行）
+   - `40-s3.yaml`（SeaweedFS, PVC `s3-data` 既定 600Gi）: **ファイルLocation実体**なので容量大きめ（600〜700GB）。`60-nfs-server.yaml` の export はテーマ用に小容量でよい
+   - デプロイ後 `set-s3-location.sh` で各テナントの `files_location` を S3(SeaweedFS)タイプに設定（`deploy-amd64.sh §8` が自動実行）
 3. **テナントは 5 程度から**開始（`tenants.txt`）。監視しつつ ES heap/ディスクで上限管理。
 
 ## 6. 単一サーバHAの注意（正直な前提）
 
 - 1台構成では **サーバ故障＝全停止**。3ノードクラスタでも守れるのは「プロセス/Pod障害」まで。
 - 本当の可用性が必要なら **サーバを複数台**にして、各バックエンドを別ホストへ分散（＝本番OKEの姿）。
-- 単一64GBサーバは「**本番同等トポロジの staging／中小規模の本番**」に適する。バックアップ（MinIOへ pg_dump / ES snapshot）で災害復旧を担保。
+- 単一64GBサーバは「**本番同等トポロジの staging／中小規模の本番**」に適する。バックアップ（S3(SeaweedFS) へ pg_dump / ES snapshot）で災害復旧を担保。
 
 ## 7. サイジング早見（変えたい時）
 
 - **1テナントの件数を増やしたい** → テナント数を減らし ES heap を増やす（例: 2テナント・ES heap 20GB → 各10万件超）。
 - **テナント数を増やしたい** → web pod を軽く（processes=1）＋ Redis/PG は余裕。ES heap は総件数で決まるので件数を抑える。
-- **ファイルが多い** → ファイルは既に S3(MinIO) Location。MinIO の裏ディスクを増設、または `set-s3-location.sh` の endpoint を外部S3へ向けて外部化。
+- **ファイルが多い** → ファイルは既に S3(SeaweedFS) Location。S3(SeaweedFS) の PVC の裏ディスクを増設、または `set-s3-location.sh` の endpoint を外部S3へ向けて外部化。

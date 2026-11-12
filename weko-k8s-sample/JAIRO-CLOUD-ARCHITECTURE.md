@@ -119,11 +119,11 @@ deploy_weko.sh           … kubectl apply + tls secret(<domain>-cert) 作成、
 | Ingress/WAF | **F5 NGINX Plus + App Protect**（外部/内部） | `ingress-nginx`（OSS。WAFは未） |
 | 前段 nginx | Shibboleth SP + SSL + WAF | 標準 nginx + `uwsgi_pass` のみ |
 | 共有 FS | OKE File Storage（NFS） | テナント別 conf/data に NFS(RWX)、バックエンドは PVC（kind local-path） |
-| バックアップ | Object Storage（pgdump/snapshot/rclone） | **MinIO(S3)** + pg_dumpall バックアップ実演 |
+| バックアップ | Object Storage（pgdump/snapshot/rclone） | **SeaweedFS(S3)** + pg_dumpall バックアップ実演 |
 | ログ | fluentd → ES/Kibana 7.16 | `kubectl logs` |
 | 監視 | kube-prometheus-stack + Grafana + 各 exporter | なし（metrics-server 任意） |
 | 認証 | Shibboleth / 学認（GakuNin）SAML | ローカルアカウント |
-| イメージ取得 | OCIR（`ocir-secret`） | Docker Hub + 自前arm64ビルド + `kind load` |
+| イメージ取得 | OCIR（`ocir-secret`） | Docker Hub（ホストで pull → `kind load`、`pull-images-*.sh`）+ 自前arm64ビルド + `kind load` |
 
 > **要点**: アプリ層・**HAクラスタ化(operator方式)・Sentinel・pgpool・S3・永続化**まで本番と同じ構造を再現。
 > 残る主な差分は **pgbouncer・WAF・監視/ログ・認証(学認)** といった運用周辺と、

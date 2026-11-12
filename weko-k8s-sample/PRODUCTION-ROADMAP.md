@@ -149,7 +149,7 @@ Phase 2 で差し替えることが確定している**次の4点だけ**でよ�
 
 **2-1. イメージ供給（これが通らないと何も起動しない）**
 1. レジストリを用意し、WEKO / ES / nginx の3イメージを push
-2. `kind load docker-image` を全削除（4箇所）
+2. `kind load docker-image` を全削除（4箇所）。配布元イメージをホストで pull して読み込む `pull-images-amd64.sh load` の呼び出しも外す
 3. `imagePullPolicy: Never` を9箇所すべて修正
 4. `imagePullSecrets` を全 Pod spec に追加
 
@@ -157,7 +157,7 @@ Phase 2 で差し替えることが確定している**次の4点だけ**でよ�
 1. `storageClassName: standard` を6箇所、実 SC 名に置換
 2. **`60-nfs-server.yaml` を丸ごと削除**し、外部 NFS を用意
 3. `NFS_SERVER` を実 NFS のアドレスへ。`clusterIP: 10.96.0.99` への依存を除去
-4. MinIO を削除し、S3 エンドポイントを実オブジェクトストレージへ（`set-s3-location.sh` の書き換え）
+4. SeaweedFS（`40-s3.yaml`）を削除し、S3 エンドポイントを実オブジェクトストレージへ（`set-s3-location.sh` の書き換え）
 
 **2-3. 配置**
 1. ノードに `nodeType` ラベルを付与（この時点では `WEKO`/`DATA` の2種のままでよい）
@@ -337,7 +337,7 @@ PDB / NetworkPolicy / topologySpreadConstraints は**本番 IaC にも無い**�
 - [ ] `imagePullPolicy: Never` 9箇所修正、`imagePullSecrets` 追加
 - [ ] `storageClassName: standard` 6箇所置換
 - [ ] `60-nfs-server.yaml` 削除、外部 NFS へ、固定 ClusterIP 依存を除去
-- [ ] MinIO 削除、実オブジェクトストレージへ
+- [ ] SeaweedFS 削除、実オブジェクトストレージへ
 - [ ] `nodeType` ラベル付与
 - [ ] privileged initContainer 削除、ノードで sysctl 設定
 - [ ] Ingress Controller と外部公開経路を構成

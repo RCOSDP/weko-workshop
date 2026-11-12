@@ -119,11 +119,11 @@ deploy_weko.sh           … kubectl apply + makes the tls secret (<domain>-cert
 | Ingress/WAF | **F5 NGINX Plus + App Protect** (external/internal) | `ingress-nginx` (OSS; no WAF) |
 | Front nginx | Shibboleth SP + SSL + WAF | Stock nginx with `uwsgi_pass` only |
 | Shared FS | OKE File Storage (NFS) | NFS (RWX) for per-tenant conf/data + PVC (kind local-path) for the backends |
-| Backup | Object Storage (pgdump/snapshot/rclone) | **MinIO (S3)** + a working pg_dumpall backup |
+| Backup | Object Storage (pgdump/snapshot/rclone) | **SeaweedFS (S3)** + a working pg_dumpall backup |
 | Logging | fluentd → ES/Kibana 7.16 | `kubectl logs` |
 | Monitoring | kube-prometheus-stack + Grafana + exporters | None (metrics-server optional) |
 | Authentication | Shibboleth / GakuNin SAML | Local accounts |
-| Image pull | OCIR (`ocir-secret`) | Docker Hub + self-built arm64 images + `kind load` |
+| Image pull | OCIR (`ocir-secret`) | Docker Hub (pulled on the host → `kind load`, `pull-images-*.sh`) + self-built arm64 images + `kind load` |
 
 > **Key point**: the application layer, plus **HA clustering (operator-based), Sentinel, pgpool, S3, and persistence**, copy the
 > same structure as production. The main things still missing are operational extras — **pgbouncer, WAF,

@@ -1,0 +1,92 @@
+# S3 互換オブジェクトストレージ (SeaweedFS)。JAIRO Cloud の OCI Object Storage に相当する。
+#   バックアップ (pg_dump / ES スナップショット / コンテンツ) と weko のファイル置き場 (S3 Location) に使う。
+#   以前は MinIO だったが、公式イメージ (minio/minio, minio/mc) が Docker Hub から消え、配布も止まったので
+#   SeaweedFS に替えた。キー (wekominio) は MinIO 時代のまま。エンドポイントは http://s3:9000。
+# S3-compatible object storage (SeaweedFS), the equivalent of JAIRO Cloud's OCI Object Storage.
+#   Used for backups (pg_dump / ES snapshots / content) and as weko's file store (the S3 Location).
+#   This used to be MinIO, but its official images (minio/minio, minio/mc) are gone from Docker Hub and it
+#   is no longer distributed, so it is SeaweedFS now. The keys (wekominio) are kept from the MinIO days.
+#   The endpoint is http://s3:9000.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-config
+  namespace: weko3
+type: Opaque
+stringData:
+  # S3 の利用者とキー。SeaweedFS はこのファイルでキーを受け取る (環境変数ではない)。
+  # The S3 identity and its keys. SeaweedFS takes the keys from this file (not from env vars).
+  s3.json: |
+    {"identities": [{"name": "weko",
+      "credentials": [{"accessKey": "wekominio", "secretKey": "wekominio-secret-key"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]}]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: s3-data
+  namespace: weko3
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3
+  namespace: weko3
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: s3 }
+  template:
+    metadata:
+      labels: { app: s3 }
+    spec:
+      nodeSelector: { nodeType: DATA }
+      containers:
+      - name: seaweedfs
+        image: chrislusf/seaweedfs:4.53
+        # master + volume + filer + S3 を1プロセスで動かす。状態 (メタデータ・データ) はすべて /data に置く。
+        #   SeaweedFS はバケットごとに別の「ボリューム」(既定の上限 30GB のファイル) を作り、既定では
+        #   一度に 7 個ずつ増やす。そのままだとテナント数ぶんのバケットで空き枠を使い切るので、
+        #   volume.max=0 (枠数をディスクの空きから決める) / 1 ボリューム 1GB / 1 個ずつ増やす、にする。
+        # Run master + volume + filer + S3 in one process. All state (metadata and data) lives under /data.
+        #   SeaweedFS gives every bucket its own "volumes" (files capped at 30GB by default) and grows them
+        #   7 at a time. Left as is, a bucket per tenant uses up the free slots, so: volume.max=0 (the slot
+        #   count follows the free disk), 1GB per volume, and grow one at a time.
+        args: ["server", "-dir=/data", "-volume.max=0", "-master.volumeSizeLimitMB=1024",
+               "-s3", "-s3.port=9000", "-s3.config=/etc/seaweedfs/s3.json"]
+        env:
+        - { name: WEED_MASTER_VOLUME_GROWTH_COPY_1, value: "1" }
+        ports:
+        - { containerPort: 9000, name: s3 }
+        resources:
+          requests: { memory: "256Mi", cpu: "100m" }
+          limits:   { memory: "1Gi",   cpu: "2" }
+        readinessProbe:
+          httpGet: { path: /healthz, port: 9000 }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - { name: data, mountPath: /data }
+        - { name: config, mountPath: /etc/seaweedfs, readOnly: true }
+      volumes:
+      - name: data
+        persistentVolumeClaim: { claimName: s3-data }
+      - name: config
+        secret: { secretName: s3-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+  namespace: weko3
+spec:
+  selector: { app: s3 }
+  ports:
+  - { name: s3, port: 9000, targetPort: 9000 }

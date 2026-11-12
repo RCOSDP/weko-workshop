@@ -30,7 +30,7 @@ CORE=(
   00-namespace.yaml
   13-elasticsearch.yaml
   21-nginx-config.yaml
-  40-minio.yaml
+  40-s3.yaml
   41-redis-sentinel.yaml
   50-rabbitmq-cluster.yaml
   51-postgresql-ha.yaml
@@ -47,6 +47,8 @@ CORE=(
   check-prereq-amd64.sh
   teardown-amd64.sh
   unwedge-amd64.sh
+  pull-images-amd64.sh
+  s3-create-buckets.sh
   tenants.txt
 )
 # Shibboleth IdP 一式(任意機能: WEKO_SHIB=yes)。

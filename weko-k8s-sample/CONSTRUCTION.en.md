@@ -22,7 +22,7 @@ How to build a real Kubernetes cluster (nodes + full API server) on one host wit
 [Host: arm64] kind cluster "weko3"
   control-plane … API server etc. + ingress-nginx (host 80/443)
   worker (nodeType=WEKO) … tenant1-web / tenant2-web (each: nginx+web+worker)
-  worker2(nodeType=DATA) … shared: PostgreSQL / Elasticsearch / RabbitMQ / MinIO(S3)  * all on PVCs
+  worker2(nodeType=DATA) … shared: PostgreSQL / Elasticsearch / RabbitMQ / SeaweedFS(S3)  * all on PVCs
                             namespace weko3re … Redis master + 2 replicas + 3 sentinels * all on PVCs
 ```
 
@@ -33,7 +33,7 @@ How to build a real Kubernetes cluster (nodes + full API server) on one host wit
 | Search | Shared Elasticsearch 6.8.23 (PVC) | Index prefix |
 | MQ | Shared RabbitMQ (PVC) | vhost `<name>/` |
 | Cache | Shared Redis **Sentinel HA** (PVC) | Redis DB number |
-| Object storage | Shared MinIO (S3) (PVC) | Bucket/prefix |
+| Object storage | Shared SeaweedFS (S3) (PVC) | Bucket/prefix |
 
 **Manifest map:**
 
@@ -43,7 +43,7 @@ How to build a real Kubernetes cluster (nodes + full API server) on one host wit
 | `10-postgresql.yaml` | PostgreSQL (PVC version) | StatefulSet |
 | `12-rabbitmq.yaml` | RabbitMQ (PVC version) | StatefulSet |
 | `13-elasticsearch.yaml` | Elasticsearch 6.8.23 + kui.txt (PVC version) | StatefulSet |
-| `40-minio.yaml` | MinIO (S3, PVC) | 3 buckets + per-tenant `weko-<tenant>` |
+| `40-s3.yaml` | SeaweedFS (S3, PVC `s3-data`, `http://s3:9000`) | 3 buckets + per-tenant `weko-<tenant>` |
 | `41-redis-sentinel.yaml` | Redis Sentinel HA (weko3re, PVC) | master + 2 replicas + 3 sentinels |
 | `21-nginx-config.yaml` | Front nginx config (shared by all tenants) | uwsgi_pass |
 | `tenants.txt` + `gen-tenant.sh` | Tenant definitions → manifest generation | redissentinel-aware. Secret keys (`SECRET_KEY` etc.) come from `.secret-seed`, one set per tenant |
@@ -159,7 +159,14 @@ nodes:
 ```bash
 cd /home/mhaya/weko-k8s-sample
 kind create cluster --config kind-weko-cluster.yaml --wait 120s
+# pull the third-party images (ingress-nginx / cert-manager / redis / S3, ...) on the host and load them into every node
+bash k8s-weko/pull-images-arm64.sh load
 ```
+
+> Left to themselves, the kind nodes pull from Docker Hub **anonymously** and stop in `ErrImagePull` (`toomanyrequests`)
+> when they hit the per-IP limit (100 per 6 hours). `pull-images-arm64.sh` pulls on the host (skipping images already
+> present) and then runs `kind load`. If you hit the limit, run `docker login` or wait, then re-run. You can also run it
+> with no argument before creating the cluster to get the pulls done (`list` prints the image list).
 
 ### Check
 
@@ -186,7 +193,9 @@ Running on the control-plane.
 ## 6. Installing the Ingress controller
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
+# apply with the digests (@sha256:...) dropped: an image loaded into kind is not found by digest, so the node would fetch it anyway (the tag still pins it)
+curl -fsSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml \
+  | sed -E 's/(image: [^@[:space:]]+)@sha256:[0-9a-f]+/\1/' | kubectl apply -f -
 
 # wait for Ready
 kubectl wait --namespace ingress-nginx \
@@ -386,18 +395,19 @@ For the real commands see [`README.en.md`](./README.en.md) (the multi-tenant con
 - Tested: the worker reaches `ready` via sentinel, master→replica replication works, `sentinel master mymaster` shows quorum=2.
 
 ### 10.3 Data persistence (PVC / kind `standard` StorageClass)
-- PostgreSQL / Elasticsearch / RabbitMQ / Redis ×3 / MinIO all moved to PVCs (emptyDir removed).
+- PostgreSQL / Elasticsearch / RabbitMQ / Redis ×3 / SeaweedFS all moved to PVCs (emptyDir removed).
 - **PG data was kept**: `pg_dumpall` → redeploy the PVC version → restore (no re-setup). ES indices were remade after redeploy.
 - Tested: after deleting and remaking the `postgresql-0` Pod, 188 tables and the admin user were still there.
 
-### 10.4 S3 object storage (`40-minio.yaml`) + file Location
-- **MinIO** (S3-compatible, PVC) + buckets `weko-backup`/`weko-content`/`weko-esbackup` + **per-tenant `weko-<tenant>`**.
-- Connection info in each tenant Secret's `S3_*` (`http://minio:9000`, key=`wekominio`).
-- **WEKO uploads go to the S3 (MinIO) Location** (`set-s3-location.sh`): UPDATE each tenant DB's `files_location` to `type='s3'` / `uri='s3://weko-<tenant>'` plus `access_key`/`secret_key`/`s3_endpoint_url`/`s3_send_file_directly=true`/`s3_default_block_size=5242880`/`s3_signature_version='s3v4'`. weko writes objects into the MinIO bucket with `invenio-s3`'s s3fs.
+### 10.4 S3 object storage (`40-s3.yaml`) + file Location
+- **SeaweedFS** (`chrislusf/seaweedfs:4.53`, S3-compatible, PVC `s3-data`; one `weed server` process runs master + volume + filer + S3, port 9000 only, no web console) + buckets `weko-backup`/`weko-content`/`weko-esbackup` + **per-tenant `weko-<tenant>`**.
+- The buckets are made by `s3-create-buckets.sh <bucket>...` (an in-cluster aws-cli Job, `public.ecr.aws/aws-cli/aws-cli:2.40.1`; it waits for `deploy/s3` to be Ready, leaves existing buckets alone, and exits non-zero on failure).
+- Connection info in each tenant Secret's `S3_*` (`http://s3:9000`, key=`wekominio`).
+- **WEKO uploads go to the S3 (SeaweedFS) Location** (`set-s3-location.sh`): UPDATE each tenant DB's `files_location` to `type='s3'` / `uri='s3://weko-<tenant>'` plus `access_key`/`secret_key`/`readonly_access_key`/`readonly_secret_key`/`s3_endpoint_url`/`s3_send_file_directly=true`/`s3_default_block_size=5242880`/`s3_maximum_number_of_parts=10000`/`s3_signature_version='s3v4'` (without `readonly_*` downloads return 500; with `s3_maximum_number_of_parts` NULL uploads are stored as 0 bytes). If the bucket cannot be made, it leaves `files_location` unchanged and exits non-zero. weko writes objects into the SeaweedFS bucket with `invenio-s3`'s s3fs.
   - **The main pitfall**: `invenio-s3`'s `storage.py _get_fs` connects s3fs with the location's S3 info only when `location.type=='s3'`. If `type` stays `None`, it falls back to PyFilesystem2 and fails with `AWS_ACCESS_KEY_ID not set`. → Always set `type='s3'`. path-style and `signature_version=s3v4` are handled by invenio-s3.
   - `gen-tenant.sh` sets `instance.cfg`'s `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL` (for both web and worker) to read from environment variables, with the same keys in `S3_READONLY_ACCESS_KEY_ID`/`S3_READONLY_SECRET_ACCESS_KEY` for reading.
   - Tested (on the real arm64 machine): real objects at `s3://weko-tenant1/...` for tenant1 and `s3://weko-tenant2/...` for tenant2. The NFS share (RWX) holds only theme conf/data (not the uploaded files).
-- Tested: `pg_dumpall` → backup into `weko-backup/postgres/` (a two-stage Job: an initContainer dumps, then mc uploads).
+- Tested: `pg_dumpall` → backup into `weko-backup/postgres/` (a two-stage Job: an initContainer dumps, then uploads to S3).
 
 ### 10.5 Implementation pitfalls (really seen)
 | Symptom | Cause | Workaround |
@@ -407,7 +417,8 @@ For the real commands see [`README.en.md`](./README.en.md) (the multi-tenant con
 | `bash -s < file` / a pipe runs empty | `nohup`'s stdin is /dev/null | base64-encode the script and run `base64 -d \| bash` inside the pod |
 | `pkill -f port-forward` exits 144 | The command line matches itself and kills itself | Do not use pkill patterns that match their own command string |
 | S3 upload fails with `AWS_ACCESS_KEY_ID not set` | `files_location.type` is `None`, so invenio-s3 falls back to PyFilesystem2 | UPDATE `type='s3'` + the S3 info with `set-s3-location.sh` |
-| The mc Job does not start | The mc image's entrypoint | Override with `command:["/bin/sh","-c"]` in the Job (`kubectl run -- sh -c` does not work) |
+| Running aws-cli with `kubectl run` treats `sh` as an argument | The aws-cli image's entrypoint is `aws` | Pass only aws's arguments, e.g. `kubectl run ... -- --endpoint-url http://s3:9000 s3 ls`. A Job that needs a shell overrides it with `command:["/bin/sh","-c"]` (`s3-create-buckets.sh`) |
+| Pods stuck in `ErrImagePull` (`toomanyrequests`) | Docker Hub's anonymous pull limit for the kind nodes (100 per 6 hours per IP) | Pull on the host with `pull-images-<arch>.sh` (the authenticated allowance if you ran `docker login`) → load with `load` |
 | First request is slow / times out | Emulation + JIT | Use `--max-time 240` on the first request; later ones take seconds |
 
 ### 10.6 Pitfalls found in the real-machine test (2026-07-23), and their fixes
@@ -459,8 +470,8 @@ docker exec -it weko3-control-plane bash
 | RabbitMQ | ✅ **3-node cluster** (Cluster Operator, rabbitmq:4.0.9) |
 | Elasticsearch | ✅ **3-node cluster** (**arm64 native**, real kui.txt/kuromoji/repository-s3, green, shards spread out) |
 | Redis | ✅ Sentinel HA (`weko3re`: master + 2 replicas + 3 sentinels) |
-| MinIO (S3) | ✅ Running (3 buckets + per-tenant `weko-<tenant>`, pg_dumpall backup shown) |
-| File Location | ✅ **S3 (MinIO)** (`files_location.type='s3'`, `uri=s3://weko-<tenant>`). Uploads checked into MinIO for both tenants |
+| SeaweedFS (S3) | ✅ Running (3 buckets + per-tenant `weko-<tenant>`, pg_dumpall backup shown) |
+| File Location | ✅ **S3 (SeaweedFS)** (`files_location.type='s3'`, `uri=s3://weko-<tenant>`). Uploads checked into SeaweedFS for both tenants |
 | weko application | ✅ **arm64 native** (`weko3-web:arm64`). 5-second startup, no qemu trouble, 3/3 on both tenants |
 | Multi-tenancy | ✅ tenant1 / tenant2 run on their own |
 | Site connectivity | ✅ Both tenants: `/` 200, `/login/` 200, `/admin/` 302, `/api/records/` 200 (**stable at 200×15/15**) |

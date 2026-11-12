@@ -2,14 +2,14 @@
 
 Manifests and scripts that build a production-like **JAIRO Cloud** environment, based on **WEKO3**, on a
 single arm64 Linux host using **kind** (Kubernetes-in-Docker). Everything is **arm64 native** and no
-external registry is needed: every image, pgpool included, is built locally from source and loaded
-straight into the kind nodes.
+registry of your own is needed: the WEKO-side images, pgpool included, are built locally from source, the
+third-party images are pulled on the host, and both are loaded straight into the kind nodes.
 
 Target host: **arm64 (aarch64) Linux / 64 GB RAM or more / plenty of free disk** (the reference machine
 has 20 cores and 121 GB RAM).
 
 > One run of `deploy-arm64.sh` builds the full current configuration: **HA clusters (PG Patroni ×3 /
-> RabbitMQ ×3 / ES ×3) + pgpool + Redis Sentinel + persistence (PVC) + NFS (RWX) + an S3 (MinIO) file
+> RabbitMQ ×3 / ES ×3) + pgpool + Redis Sentinel + persistence (PVC) + NFS (RWX) + an S3 (SeaweedFS) file
 > Location + multi-tenancy**.
 > (This is the arm64 counterpart of `k8s-weko-amd64/`. The main differences are that everything is
 > arm64 native, the backends run three nodes each, and pgpool is built from source because there is no
@@ -17,13 +17,14 @@ has 20 cores and 121 GB RAM).
 
 ## Table of contents
 **Shortest path**: [Before you start](#before-you-start-installing-the-tools) →
-[edit tenants.txt](#edit-tenantstxt-before-deploying) → [Deploy](#deploy) →
+[edit tenants.txt](#edit-tenantstxt-before-deploying) →
+[pull the images](#pull-the-images-before-deploying) → [Deploy](#deploy) →
 open `https://tenant1.localhost/`
 
 | Section | Contents |
 |---|---|
 | [What this set uses](#what-this-set-uses) / [Files in this set](#files-in-this-set-ship-these-with-this-readme) | What gets built and deployed, and what ships here |
-| [Before you start](#before-you-start-installing-the-tools) | Tool check and installation. **Start with `check-prereq-arm64.sh`** |
+| [Before you start](#before-you-start-installing-the-tools) | Tool check and installation. **Start with `check-prereq-arm64.sh`**. Editing tenants.txt and [pulling the images](#pull-the-images-before-deploying) are here too |
 | [Deploy](#deploy) | `bash deploy-arm64.sh`, the breakdown of steps 0-9, [turning every optional feature on](#enabling-every-optional-feature), [users that get created](#users-that-get-created-important) |
 | [System architecture after deploy](#system-architecture-after-deploy) | Overall picture, optional features, request path, and where the data lives (mermaid) |
 | [Building a specific version](#building-a-specific-version-tag) | Pin a release with `WEKO_TAG` |
@@ -47,9 +48,14 @@ open `https://tenant1.localhost/`
 | pgpool | `weko-pgpool:4.2.2-arm64` (built from source) in front of PostgreSQL (pooling + read load-balancing) |
 | RabbitMQ | 3-node cluster (RabbitMQ Cluster Operator, rabbitmq:4.0.9) |
 | Redis | Sentinel (master + 2 replicas + 3 sentinels) |
-| File storage | An S3 Location on **MinIO** (uploads go to a per-tenant bucket through s3fs) |
+| File storage | An S3 Location on **SeaweedFS** (`chrislusf/seaweedfs:4.53`; uploads go to a per-tenant bucket through s3fs) |
 | Shared FS | NFS (RWX), used only for the theme conf/data and the Shibboleth SP configuration |
 | Emulation (binfmt) | Not needed (arm64 native) |
+
+> The S3 server is SeaweedFS (Apache-2.0). It used to be MinIO, but MinIO's official images (`minio/minio` /
+> `minio/mc`) are no longer distributed and cannot be pulled, so it was replaced. The endpoint is `http://s3:9000`;
+> the keys (`wekominio` / `wekominio-secret-key`) and bucket names are unchanged. There is no web console (use
+> aws-cli; see [ACCESS-kubectl.en.md](./ACCESS-kubectl.en.md)).
 
 ## Files in this set (ship these with this README)
 The deploy reads the files below. Run `deploy-arm64.sh` from this directory; the kind config lives one
@@ -58,17 +64,19 @@ level up.
 | Kind | Files |
 |---|---|
 | Entry point | `deploy-arm64.sh` (runs steps 0-9 in one go) |
+| Image pull | `pull-images-arm64.sh` (pulls the third-party images on the host ahead of time; `load` also loads them into kind; deploy step 1 calls it too) |
 | Pre-flight check | `check-prereq-arm64.sh` (decides what to install; no root, changes nothing) |
 | Deletion | `teardown-arm64.sh` (waits for the Pods, then deletes the cluster; never call `kind delete` directly) |
 | Recovery | `unwedge-arm64.sh` (recovers nodes that an NFS hang made undeletable; needs root)<br>`UNDEPLOY-arm64.en.md` (step-by-step undeploy and failed-deletion recovery) |
 | Host setup | `prereq-arm64.sh` (Docker / kubectl / kind / sysctl / weko source; needs root) |
 | Cluster | `../kind-weko-cluster.yaml` (repository root; 3 nodes: control-plane + WEKO + DATA; shared with amd64) |
-| Backends (YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-minio.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
+| Backends (YAML) | `00-namespace.yaml` `13-elasticsearch.yaml` `21-nginx-config.yaml` `40-s3.yaml` `41-redis-sentinel.yaml` `50-rabbitmq-cluster.yaml` `51-postgresql-ha.yaml` `52-postgres-pod-config.yaml` `60-nfs-server.yaml` `62-pgpool.yaml` |
 | HTTPS (optional) | `61-tls-ca.yaml` (the cert-manager root CA; deployed by the default `WEKO_TLS_ISSUER=weko-ca-issuer`)<br>`HTTPS-letsencrypt.en.md` (switching to Let's Encrypt on a public domain) |
 | Shibboleth (optional) | `70-shibboleth-idp.yaml` `71-shibboleth-map.yaml` (a test IdP and the mAP-equivalent attribute authority)<br>`shib-idp-build/` (the IdP image: official tarball + Tomcat 10.1)<br>`shib-sp-template/` `provision-shib.sh` `check-shib-login.py` `list-shib-users.py`<br>`SHIBBOLETH-IDP.en.md` (how to enable it with `WEKO_SHIB=yes`) |
 | COAR Notify (optional) | `72-coar-notify-inbox.yaml` (the LDN inbox)<br>`coar-notify-inbox/inbox.py` (the inbox itself; Python standard library only)<br>`COAR-NOTIFY.en.md` (how to enable it with `WEKO_COAR_NOTIFY=yes`) |
 | pgpool image build | `pgpool-build/` (`Dockerfile.arm64` + `entrypoint.sh` + `start.sh`; produces `weko-pgpool:4.2.2-arm64`) |
-| Getting in | `ACCESS-kubectl.en.md` (kubectl commands for PostgreSQL / ES / Redis / RabbitMQ / MinIO / WEKO / the IdP) |
+| S3 buckets | `s3-create-buckets.sh` (creates buckets on S3, leaving existing ones alone; called by step 4 and `set-s3-location.sh`) |
+| Getting in | `ACCESS-kubectl.en.md` (kubectl commands for PostgreSQL / ES / Redis / RabbitMQ / S3 / WEKO / the IdP) |
 | Tenant tooling | `gen-tenant.sh` `provision-nfs.sh` `provision-tenants.sh` `weko-init.sh` `seed-demo.sh` `set-s3-location.sh` |
 | Configuration | `tenants.txt` (tenant definitions; edit the administrator address and password here) |
 | Diagrams | `images/` (PNG versions of [the architecture diagrams](#system-architecture-after-deploy), for viewers that do not render mermaid)<br>`images/README.md` (how to regenerate them) |
@@ -225,6 +233,30 @@ tenant1  wekodb   tenant1.localhost  admin@example.jp   <a password of your own>
 > `ADMIN_PASS` is not only the administrator's password: **the four test users created during
 > initialization get the same value**. See [Users that get created](#users-that-get-created-important).
 
+### Pull the images before deploying
+Pull the third-party images that are not built here (ingress-nginx / cert-manager / metrics-server / the
+operators / spilo / RabbitMQ / Redis / SeaweedFS / aws-cli / busybox / nfs-provisioner, and the kind node image)
+**on the host first**. No cluster is needed.
+
+```bash
+bash pull-images-arm64.sh          # re-run until everything is OK (images already present are skipped)
+bash pull-images-arm64.sh list     # just print the image list
+```
+
+- **Why first**: kind's nodes pull from Docker Hub **anonymously**, and Docker Hub rate-limits anonymous pulls
+  per IP (100 per 6 hours). When many people share one public IP, as at a workshop, the limit is hit and Pods
+  sit in `ErrImagePull` halfway through the deploy. Pulling on the host first shows a limit before the deploy.
+- On the limit it ends with `Hit the Docker Hub pull rate limit`. **Run `docker login`** (pulls then use the
+  authenticated allowance) or wait, and re-run. Images already present are not pulled, so a re-run spends no
+  allowance on them.
+- `deploy-arm64.sh` also runs `bash pull-images-arm64.sh load` (pull what is missing and load it into every kind
+  node) right after creating the cluster in step 1, and stops if it fails. With the pulls done beforehand, that
+  step only loads.
+- Not covered: the images built from source (weko3-web / ES / nginx / pgpool / Shibboleth IdP) are built and
+  loaded in step 2. Their base images are pulled by `docker build`.
+- The ingress-nginx manifest is applied with its `@sha256:` digests stripped (an image loaded into kind cannot
+  be found by digest). The tag (`v1.12.1`) still pins the version.
+
 ## Deploy
 **Edit `tenants.txt` before running this.** Otherwise the environment is deployed with the default
 administrator address and password, and changing them afterwards means touching the database
@@ -233,6 +265,7 @@ administrator address and password, and changing them afterwards means touching 
 ```bash
 cd k8s-weko                          # this directory
 $EDITOR tenants.txt                  # change the administrator address/password; add a line per extra tenant
+bash pull-images-arm64.sh            # pull the third-party images on the host (re-run until all OK)
 bash deploy-arm64.sh
 # Runs step 1 (cluster) through step 9 (connectivity) in one go, including the arm64 builds of
 # weko / ES / nginx / pgpool. Tenant initialization runs in parallel and takes tens of minutes.
@@ -289,10 +322,10 @@ The endpoints this adds:
 
 What `deploy-arm64.sh` does:
 0. **Fetch/update the weko source** (`git clone` / `git pull`; controlled by `WEKO_REPO` / `WEKO_BRANCH` / `WEKO_TAG` / `WEKO_SRC_UPDATE`)
-1. kind cluster + ingress-nginx (**no binfmt**)
+1. kind cluster + load the third-party images (`pull-images-arm64.sh load`; stops here on failure) + ingress-nginx (**no binfmt**)
 2. Build the images from source → `kind load`: `weko3-web:arm64` / `weko3-nginx:arm64` / `weko-elasticsearch:6.8.23-arm64` / `weko-pgpool:4.2.2-arm64` (pgpool is built from `pgpool-build/` because there is no official arm64 image)
 3. Operators: cert-manager / rabbitmq / postgres-operator (pinned to the arm64 `ghcr.io/zalando` images and spilo-17)
-4. Shared platform: **ES ×3 / PG (Patroni) ×3 / RabbitMQ ×3 / Redis Sentinel / MinIO / NFS** (all on PVCs) plus the shared MinIO buckets
+4. Shared platform: **ES ×3 / PG (Patroni) ×3 / RabbitMQ ×3 / Redis Sentinel / S3 (SeaweedFS) / NFS** (all on PVCs) plus the shared S3 buckets (`s3-create-buckets.sh`; stops here if they cannot be created)
 5. Pin the PG `weko` password back to `weko` (the operator otherwise resets it)
 5.5. Deploy **pgpool** between weko and PostgreSQL (pooling + read load-balancing onto the Patroni primary/replica)
 6. `gen-tenant.sh` → `provision-nfs.sh` (create the per-tenant directories under /fs-* and seed the nginx / Shibboleth configuration) → `kubectl apply` → `provision-tenants.sh`
@@ -300,7 +333,7 @@ What `deploy-arm64.sh` does:
    (DB/ES initialization, the 10 languages, roles, permissions, widget/facet/authors seed data)
 7.5. `seed-demo.sh` — load `scripts/demo/*.sql` from the weko source (**item types, index tree,
    workflows, DOI settings, mail templates**); this is the second half of the weko source's `install.sh`
-8. Seed `admin_settings` + `set-s3-location.sh` (create the buckets and switch `files_location` to the S3/MinIO type) + restart web
+8. Seed `admin_settings` + `set-s3-location.sh` (create the buckets and switch `files_location` to the S3 (SeaweedFS) type; if the buckets cannot be created, `files_location` is left unchanged and the deploy stops) + restart web
 9. Connectivity check (`https://tenantN.localhost/`)
 
 When it finishes, open `https://tenant1.localhost/` in a browser on the host (log in with the
@@ -340,7 +373,7 @@ when building with `install.sh`.
 > Expected result: step 9 reports `http:308 https:200` (HTTPS is on by default, so http redirects;
 > with `WEKO_TLS_ISSUER=` it reports `http:200`). Over HTTPS, `/` 200, `/login/` 200, `/admin/` 302,
 > `/api/records/` 200. PG master + 2 replicas / RabbitMQ 3/3 / ES green with 3 nodes /
-> Redis Sentinel 6/6 / MinIO running, and `files_location.type=s3` (`uri=s3://weko-<tenant>`).
+> Redis Sentinel 6/6 / S3 (SeaweedFS) running, and `files_location.type=s3` (`uri=s3://weko-<tenant>`).
 > Host memory usage is around 18 GiB.
 
 ## System architecture after deploy
@@ -366,7 +399,7 @@ flowchart TB
     pg[("PostgreSQL Patroni ×3<br/>weko-postgresql / -repl")]
     es[("Elasticsearch ×3<br/>elasticsearch:9200 headless")]
     mq[("RabbitMQ ×3<br/>weko-rabbitmq:5672")]
-    minio[("MinIO<br/>minio:9000 / console :9001")]
+    s3[("S3 (SeaweedFS)<br/>s3:9000")]
   end
 
   subgraph weko3re["namespace: weko3re"]
@@ -388,7 +421,7 @@ flowchart TB
   worker --> mq
   web --> redis
   worker --> redis
-  web --> minio
+  web --> s3
   sent -.->|"monitoring and failover"| redis
   nfs -.->|"conf / data / shib / nginx config mounted RWX"| pod
 ```
@@ -410,7 +443,7 @@ Things to note:
   runs inside it too.
 - `elasticsearch` and `redis` in `weko3re` are headless Services (no ClusterIP): they resolve to the Pod
   DNS names.
-- The shared platform (PG / ES / RabbitMQ / Redis / MinIO / NFS) is shared by every tenant; tenants are kept
+- The shared platform (PG / ES / RabbitMQ / Redis / S3 / NFS) is shared by every tenant; tenants are kept
   apart by database name, index prefix, vhost, Redis DB number and bucket name.
 
 ### With the optional features enabled
@@ -426,7 +459,7 @@ flowchart TB
       nginx["nginx<br/>supervisord: shibd /<br/>shibauthorizer / shibresponder"]
       web["web / uwsgi :5000"]
     end
-    base[("PG / pgpool / ES / RabbitMQ<br/>Redis / MinIO / NFS<br/>(same as the base architecture)")]
+    base[("PG / pgpool / ES / RabbitMQ<br/>Redis / S3 / NFS<br/>(same as the base architecture)")]
     idp["weko-shib-idp:8080<br/>Ingress: idp.localhost<br/>WEKO_SHIB=yes"]
     shibmap["weko-shib-map 10.96.0.98<br/>:8080 http / :8443 SOAP<br/>WEKO_SHIB_MAP=aggregation"]
     inbox["inbox:8080<br/>COAR Notify inbox<br/>WEKO_COAR_NOTIFY=yes"]
@@ -471,7 +504,7 @@ flowchart LR
   es["elasticsearch:9200"]
   redis["redis:6379<br/>(weko3re)"]
   mq["weko-rabbitmq:5672"]
-  minio["minio:9000"]
+  s3["s3:9000"]
 
   b --> ing --> svc --> ng
   ng --> ping
@@ -482,7 +515,7 @@ flowchart LR
   uw --> es
   uw --> redis
   uw --> mq
-  uw --> minio
+  uw --> s3
 ```
 
 <details><summary>If mermaid is not rendered, see the PNG</summary>
@@ -511,14 +544,14 @@ flowchart LR
 
   pg[("PostgreSQL Patroni ×3 / 10Gi ×3<br/>split by database name")]
   es[("Elasticsearch ×3 / 10Gi ×3<br/>split by index prefix")]
-  minio[("MinIO / 10Gi<br/>split by bucket weko-tenant1")]
+  s3[("S3 (SeaweedFS) / 10Gi<br/>split by bucket weko-tenant1")]
   redis[("Redis Sentinel / 2Gi ×3<br/>split by DB number 0/1/2")]
   mq[("RabbitMQ ×3 / 5Gi ×3<br/>split by vhost tenant1")]
   nfs[("NFS RWX / 4 PVCs<br/>backed by nfs-export 30Gi")]
 
   meta --> pg
   idx --> es
-  file --> minio
+  file --> s3
   sess --> redis
   job --> mq
   conf --> nfs
@@ -530,7 +563,7 @@ flowchart LR
 
 </details>
 
-The item files themselves do not go to NFS but into a **per-tenant MinIO bucket** — step 8 runs
+The item files themselves do not go to NFS but into a **per-tenant S3 (SeaweedFS) bucket** — step 8 runs
 `set-s3-location.sh`, which switches `files_location` to `s3://weko-<tenant>`. Besides the per-tenant buckets
 there are the shared `weko-backup`, `weko-content` and `weko-esbackup` (for ES snapshots). NFS (RWX) only holds
 the four kinds of configuration and data above, and `static` is an emptyDir that is recreated from the image on
@@ -625,9 +658,9 @@ KIND_CONFIG=../kind-weko-cluster.yaml \
 > **With all four images prebuilt the weko source is never used for a build** (step 0 still clones/pulls).
 >
 > A note on `WEKO_ES_IMAGE`: the default build bakes the repository-s3 credentials (ES snapshots to
-> MinIO) into the image with `--build-arg`. A prebuilt image must already contain the equivalent
-> settings (`ELASTICSEARCH_S3_ACCESS_KEY` / `SECRET_KEY` / `ENDPOINT=http://minio:9000` /
-> `BUCKET=weko-esbackup`). Without them ES still runs, but snapshots cannot use MinIO.
+> S3) into the image with `--build-arg`. A prebuilt image must already contain the equivalent
+> settings (`ELASTICSEARCH_S3_ACCESS_KEY` / `SECRET_KEY` / `ENDPOINT=http://s3:9000` /
+> `BUCKET=weko-esbackup`). Without them ES still runs, but snapshots cannot use S3.
 
 ## HTTPS certificates
 TLS terminates at **ingress-nginx** (the hop from the ingress to the Pod's nginx is plain HTTP on port
@@ -830,7 +863,7 @@ bash teardown-arm64.sh
 
   | PVC | StorageClass | Where the data lives |
   |---|---|---|
-  | PostgreSQL / Elasticsearch / RabbitMQ / Redis / MinIO / `nfs-export` | `standard` (local-path) | `/var/local-path-provisioner` inside the node containers |
+  | PostgreSQL / Elasticsearch / RabbitMQ / Redis / S3 (`s3-data`) / `nfs-export` | `standard` (local-path) | `/var/local-path-provisioner` inside the node containers |
   | Tenant `<t>-conf` `-data` `-shib` `-nginx-pvc` | `nfs-static` | via the NFS server, which itself is backed by `nfs-export` above (so local-path again) |
 
   > The tenant PVs (`<t>-config-pv` and friends) use `persistentVolumeReclaimPolicy: Retain`, but that
@@ -900,7 +933,7 @@ To undo specific steps while keeping the cluster (rebuild one tenant, replace an
   reduce the number of tenants.
 - **More tenants**: add lines to `tenants.txt` (assign Redis DBs while avoiding 3 and 4), then
   `gen-tenant.sh` → `kubectl apply -f generated/` → `provision-tenants.sh` → `weko-init.sh`.
-- **Large files**: grow the MinIO PVC or add disk. If that is not enough, point `S3_ENDPOINT` in
+- **Large files**: grow the S3 PVC (`s3-data`) or add disk. If that is not enough, point `S3_ENDPOINT` in
   `set-s3-location.sh` at an external S3.
 
 ## If something goes wrong
@@ -960,17 +993,28 @@ To undo specific steps while keeping the cluster (rebuild one tenant, replace an
   `kubectl rollout status` returns as soon as the Pod is Ready, but uwsgi in the web container is not
   serving yet and the nginx in front answers 502. `deploy-arm64.sh` now retries while the code is 5xx.
   If 502 persists, look at `kubectl logs -n weko3 -l app=<tenant>-web -c web`.
-- **Step 4 prints ``mc: <ERROR> `sh` is not a recognized command.`` (Did you mean ... `share`)** →
-  the `minio/mc` image has `Entrypoint=["mc"]`, so `kubectl run ... -- sh -c '...'` is passed as args
-  and runs `mc sh -c ...`. The fix is **`--command`, which overrides the entrypoint**:
+- **Step 1 prints `ERROR: could not get the images into the cluster`, or Pods sit in `ErrImagePull` /
+  `ImagePullBackOff` (with `toomanyrequests` / `rate limit` in the events)** → the Docker Hub anonymous pull
+  limit was hit. Run `docker login` or wait, re-run `bash pull-images-arm64.sh` until everything is OK, then
+  re-run `bash deploy-arm64.sh` (the existing cluster is reused; images already pulled are skipped).
+  → [Pull the images before deploying](#pull-the-images-before-deploying)
+- **Step 4 prints `ERROR: failed to create the shared buckets on S3`** → S3 (SeaweedFS) is not running, or the
+  bucket-creation Job failed. The deploy stops here (without the shared buckets `weko-backup` / `weko-content` /
+  **`weko-esbackup`**, ES's `repository-s3` and others fail later in confusing ways). Check:
   ```bash
-  kubectl run mc-init -n weko3 --rm -i --restart=Never --image=minio/mc:RELEASE.2025-04-08T15-39-49Z \
-    --command -- /bin/sh -c 'mc alias set l http://minio:9000 wekominio wekominio-secret-key && \
-                             mc mb -p l/weko-backup l/weko-content l/weko-esbackup'
+  kubectl -n weko3 get pod -l app=s3
+  kubectl -n weko3 logs deploy/s3 --tail=50
+  kubectl -n weko3 logs job/s3-create-buckets      # a failed Job is kept for inspection
   ```
-  When this fails, the shared buckets `weko-backup` / `weko-content` / **`weko-esbackup`** are not
-  created. `weko-esbackup` is what Elasticsearch's `repository-s3` (snapshot target) uses, so it
-  matters. If you see it during a deploy, run the command above on its own; `mc mb -p` is idempotent.
+  Once fixed, run `bash s3-create-buckets.sh weko-backup weko-content weko-esbackup` on its own, or re-run
+  `bash deploy-arm64.sh`. Existing buckets are left alone (idempotent).
+- **Step 8 prints `ERROR: files_location was left unchanged`** → the per-tenant buckets could not be created, so
+  `files_location` was not switched to S3 (switching without a bucket breaks uploads). Check S3 as above,
+  re-run `bash set-s3-location.sh`, then `kubectl rollout restart -n weko3 deploy/<tenant>-web` (or re-run
+  `bash deploy-arm64.sh`).
+- **Re-deploying onto a cluster built with MinIO** → step 4 deletes the old MinIO (`deploy/minio` / `svc/minio` /
+  `secret/minio-secret`) and replaces it with SeaweedFS. The old data PVC `minio-data` is kept; delete it with
+  `kubectl -n weko3 delete pvc minio-data` if you do not need it. Files that were on the old MinIO are not migrated.
 - **ES pod says `CrashLoopBackOff` or `max virtual memory areas`** → `vm.max_map_count` is not set.
   Run (c) of [Before you start](#before-you-start-installing-the-tools) again.
 - **`docker: permission denied`** → the docker group is not active in your shell yet. Log in again or

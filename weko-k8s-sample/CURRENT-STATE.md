@@ -19,7 +19,7 @@ tenant2.localhost : / 200  /login 200  /admin 302  /api/records 200
 kind クラスタ "weko3"（1物理ホスト上の3コンテナ=ノード）
 ├ weko3-control-plane           : APIサーバ等 + ingress-nginx(host 80/443)
 ├ weko3-worker  (nodeType=WEKO) : tenant1-web / tenant2-web
-└ weko3-worker2 (nodeType=DATA) : ES / RabbitMQ / MinIO / PG一部 / NFS / Redis(weko3re)
+└ weko3-worker2 (nodeType=DATA) : ES / RabbitMQ / SeaweedFS / PG一部 / NFS / Redis(weko3re)
 
 アプリ: weko3-web:arm64（ネイティブ）= nginx + web(uwsgi) + worker(celery) を各テナントに
 共有バックエンド(HAクラスタ):
@@ -27,7 +27,7 @@ kind クラスタ "weko3"（1物理ホスト上の3コンテナ=ノード）
   RabbitMQ   : RabbitMQ Cluster Operator + 3ノード(rabbitmq:4.0.9)
   Elasticsearch : 3ノードクラスタ(arm64ネイティブ 6.8.23, kuromoji/kui.txt/repository-s3)
   Redis      : Sentinel HA(master+replica×2 + sentinel×3) @ namespace weko3re
-  MinIO(S3)  : weko-backup / weko-content / weko-esbackup ＋ テナント別 weko-<tenant>（ファイルLocation実体）
+  S3(SeaweedFS): weko-backup / weko-content / weko-esbackup ＋ テナント別 weko-<tenant>（ファイルLocation実体）
 共有FS(NFS/RWX): nfs-ganesha → テナント別 conf(/fs-config) / data(/fs-data)
 ```
 
@@ -45,7 +45,7 @@ kind クラスタ "weko3"（1物理ホスト上の3コンテナ=ノード）
 | RabbitMQ | `weko-rabbitmq-server-0/1/2` | **全て weko3-worker2** | 3/3 Running |
 | Elasticsearch | `elasticsearch-0/1/2` | **全て weko3-worker2** | 3/3 Running |
 | Redis(weko3re) | `redis-0/1/2` + `sentinel-*`×3 | — | 6/6 Running |
-| MinIO | `minio-*` | weko3-worker2 | Running |
+| S3(SeaweedFS) | `s3-*` | weko3-worker2 | Running |
 | operator類 | postgres-operator(default) / rabbitmq-cluster-operator / cert-manager×3 / nfs-provisioner | — | Running |
 
 > ⚠️ **ES と RabbitMQ は3ノードとも weko3-worker2 に集中**（`nodeSelector: nodeType: DATA` が該当1ノードのみ）。
@@ -63,7 +63,7 @@ kind クラスタ "weko3"（1物理ホスト上の3コンテナ=ノード）
 | PostgreSQL | `ghcr.io/zalando/spilo-17:4.0-p2` | arm64(operator既定) |
 | RabbitMQ | `rabbitmq:4.0.9-management` | multi-arch |
 | Redis/Sentinel | `redis:6.2` | multi-arch |
-| MinIO | `minio/minio:RELEASE.2025-04-08...` | multi-arch |
+| S3(SeaweedFS) | `chrislusf/seaweedfs:4.53` | multi-arch |
 | NFSサーバ | `registry.k8s.io/sig-storage/nfs-provisioner:v4.0.8` | arm64(ganesha) |
 
 > emulation は不使用（weko/ES を arm64 ネイティブ化して qemu を排除）。
@@ -74,7 +74,7 @@ kind クラスタ "weko3"（1物理ホスト上の3コンテナ=ノード）
 
 | StorageClass | Provisioner | アクセス | 用途 |
 |---|---|---|---|
-| `standard`（既定） | rancher.io/local-path | **RWO・ノードローカル** | PG/ES/RabbitMQ/Redis/MinIO/NFS export の裏 |
+| `standard`（既定） | rancher.io/local-path | **RWO・ノードローカル** | PG/ES/RabbitMQ/Redis/SeaweedFS/NFS export の裏 |
 | `nfs` | weko.example.com/nfs（ganesha） | **RWX・ネットワーク共有** | 動的プロビジョニング用（現構成のテナント別FSは `nfs-static` の静的PV） |
 | `nfs-static` | なし（静的PV） | **RWX・ネットワーク共有** | テナント別 `/fs-config` `/fs-data` `/fs-shibboleth` `/fs-nginx`（本番と同じレイアウト） |
 
@@ -82,7 +82,7 @@ PVC 一覧:
 ```
 [local-path / RWO]
  weko3: data-elasticsearch-0/1/2, pgdata-weko-postgresql-0/1/2,
-        persistence-weko-rabbitmq-server-0/1/2, minio-data
+        persistence-weko-rabbitmq-server-0/1/2, s3-data
  weko3re: data-redis-0/1/2
  nfs-system: nfs-export (NFSサーバの実体, 30Gi)
  ※ data-postgresql-0 は旧単体PG時代の残骸(未使用・削除可)
@@ -95,7 +95,7 @@ NFS 共有FS（本番の config-pvc/data-pvc 相当）:
 - `<tenant>-data` → `.../var/instance/data`（テーマ`_variables.scss` / indextree など）※アップロード実体は含まない
 - `<tenant>-shib` → nginx コンテナの `/etc/shibboleth`（NFS 上の `/fs-shibboleth/<tenant>` を静的PVで。`provision-nfs.sh` が shibboleth_template を投入）
 - `<tenant>-nginx-pvc` → nginx コンテナの `/etc/nginx`（NFS 上の `/fs-nginx/<tenant>`。`provision-nfs.sh` が nginx_template を投入）
-- **アップロード先＝S3(MinIO) Location**: DB `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` に設定（`set-s3-location.sh`）。weko は `invenio-s3` の s3fs 経由で MinIO バケットへ保存。
+- **アップロード先＝S3(SeaweedFS) Location**: DB `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` に設定（`set-s3-location.sh`）。weko は `invenio-s3` の s3fs 経由で SeaweedFS バケットへ保存。
   - 仕組み: `invenio-s3` の `_get_fs` は `location.type=='s3'` の時だけ location の S3情報(access_key/secret_key/s3_endpoint_url)で s3fs 接続。None のままだと PyFilesystem2 にフォールバックして `AWS_ACCESS_KEY_ID not set` で失敗する。
   - path-style / `signature_version=s3v4` は invenio-s3 が処理。`instance.cfg` の `S3_ACCCESS_KEY_ID` 等（読み出し用の `S3_READONLY_*` を含む）を環境変数から読む配線を `gen-tenant.sh` が実施。
   - 検証済: tenant1→`s3://weko-tenant1/...`, tenant2→`s3://weko-tenant2/...` に実オブジェクト確認。
@@ -131,7 +131,7 @@ NFS 共有FS（本番の config-pvc/data-pvc 相当）:
 | 管理者(tenant1) | `admin@example.org` / `adminpass123` |
 | 管理者(tenant2) | `admin@tenant2.local` / `adminpass2` |
 | DB | user `weko` / pass `weko`（PG接続先 `weko-postgresql`、現構成では `pgpool`） |
-| MinIO | `wekominio` / `wekominio-secret-key`（endpoint `http://minio:9000`） |
+| S3(SeaweedFS) | `wekominio` / `wekominio-secret-key`（endpoint `http://s3:9000`） |
 | RabbitMQ | user `weko` / pass `weko`（接続先 `weko-rabbitmq`, vhost `<tenant>/`） |
 
 ポートフォワード（リモート）: `kubectl port-forward -n ingress-nginx --address 127.0.0.1,::1 svc/ingress-nginx-controller 8080:80` → `http://tenantN.localhost:8080/`
@@ -154,7 +154,9 @@ NFS 共有FS（本番の config-pvc/data-pvc 相当）:
 |---|---|
 | `00-namespace.yaml` | namespace weko3 |
 | `10/11/12/13-*.yaml` | (10 旧単体PG=未使用) / (11 旧単体Redis=未使用) / RabbitMQ旧 / **ES 3ノード(arm64,-E引数)** |
-| `40-minio.yaml` | MinIO(S3) |
+| `40-s3.yaml` | S3(SeaweedFS)。endpoint `http://s3:9000` |
+| `s3-create-buckets.sh` | S3 にバケットを作る（aws-cli の Job。既存はそのまま） |
+| `pull-images-arm64.sh` | 配布元イメージをホストで pull（`load` で kind へ読み込み。deploy の手順1が呼ぶ） |
 | `41-redis-sentinel.yaml` | Redis Sentinel HA(weko3re) |
 | `50-rabbitmq-cluster.yaml` | RabbitMQ Cluster Operator の RabbitmqCluster(3ノード) |
 | `51-postgresql-ha.yaml` | Zalando postgresql CR(Patroni 3ノード) |
@@ -166,7 +168,7 @@ NFS 共有FS（本番の config-pvc/data-pvc 相当）:
 | `provision-tenants.sh` | テナント別 PG DB / RabbitMQ vhost 作成 |
 | `provision-nfs.sh` | 共有FS(NFS)の `/fs-nginx` `/fs-shibboleth` `/fs-config` `/fs-data` にテナント別ディレクトリを作成＋テンプレート投入（本番 `make_volumes.sh` 相当）。**apply の前に実行**。busybox ヘルパーPod経由 |
 | `weko-init.sh` / `es-reinit.sh` | DB初期化 / ESインデックス初期化 |
-| `set-s3-location.sh` | テナント別 MinIO バケット `weko-<tenant>` 作成 + `files_location` を S3タイプに設定（init後に実行） |
+| `set-s3-location.sh` | テナント別 S3 バケット `weko-<tenant>` 作成（`s3-create-buckets.sh`） + `files_location` を S3タイプに設定（init後に実行） |
 | `deploy-arm64.sh` | **現フル構成（最終形）を素から一気通貫**構築（1)クラスタ〜9)疎通。README 付録D）。amd64版は `../k8s-weko-amd64/deploy-amd64.sh` |
 | `../build-push-weko.sh` | WEKO イメージを weko ソースからビルド→Docker Hub push（native/multiarch/manifest）。差し替えは `WEKO_IMAGE` 環境変数 |
 
@@ -192,7 +194,7 @@ kind delete cluster --name weko3                     # 全削除(データも消
 
 ## 10. キャパシティプランニング（テナント数 × 1テナントあたりアイテム数）
 
-バックエンド（PG/ES/RabbitMQ/MinIO/Redis）は**全テナント共有**、weko web と各種DB/index/vhost/PVC は**テナント別**。
+バックエンド（PG/ES/RabbitMQ/SeaweedFS/Redis）は**全テナント共有**、weko web と各種DB/index/vhost/PVC は**テナント別**。
 そこで「**T テナント × 1テナント N アイテム（総 = T×N）**」で見積もる。
 
 ### 変数
@@ -248,7 +250,7 @@ kind delete cluster --name weko3                     # 全削除(データも消
 
 ### 拡張レバー
 1. **ES heap 増強**（`ES_JAVA_OPTS -Xmx` 2〜4g、ノードRAMの50%以内・最大~30g）＋ 必要なら item index の主シャード増やして reindex、ESノード追加 → 総doc 数十万〜100万へ。
-2. **ファイルは既に S3(MinIO) Location**（`files_location.type='s3'`）→ ファイル容量は MinIO PVC 次第で、外部S3に endpoint を向ければ実質無制限にスケール。
+2. **ファイルは既に S3(SeaweedFS) Location**（`files_location.type='s3'`）→ ファイル容量は S3 の PVC（`s3-data`）次第で、外部S3に endpoint を向ければ実質無制限にスケール。
 3. **ディスク増設** / **テナント数超過時はテナント別 Redis 化**。
 4. PostgreSQL はメタデータが軽く（100万件でも数十GB）ほぼ律速にならない。
 
@@ -258,7 +260,7 @@ kind delete cluster --name weko3                     # 全削除(データも消
 3. **ES heap** を 総 T×N に合わせる（1g≒数万doc。足りなければ増強）。
 4. **メモリ** = `12 + T×2 + ES_heap`(GiB) → サーバRAMと比較。
 5. Redis は `databases`(現512)で **~170テナント**まで可。それ以上は `databases` 増設 or Redis メモリ増強（真の律速はメモリ）。
-→ 現状（heap 1g・**ファイルはS3(MinIO) Location**）は「数テナント × 数万アイテム」規模。**heap増強＋MinIO拡大/外部S3化**で「多テナント × 数十万アイテム」の本番規模まで同構成で拡張可能。
+→ 現状（heap 1g・**ファイルはS3(SeaweedFS) Location**）は「数テナント × 数万アイテム」規模。**heap増強＋S3(SeaweedFS) の PVC 拡大/外部S3化**で「多テナント × 数十万アイテム」の本番規模まで同構成で拡張可能。
 
 ---
 
@@ -270,27 +272,27 @@ kind delete cluster --name weko3                     # 全削除(データも消
 | コンポーネント | 種別 | バックアップ | 方法 |
 |---|---|---|---|
 | **PostgreSQL** | **原本**（メタデータ/レコード/ユーザ/ロール/ワークフロー） | ✅ **必須** | `pg_dumpall`（論理）→ S3。または Patroni＋WAL-G で継続アーカイブ |
-| **コンテンツファイル**（S3(MinIO) バケット `weko-<tenant>`） | **原本**（アップロード実体、再生成不可） | ✅ **必須** | `mc mirror`/rclone で外部S3・オフサイトへ複製 |
+| **コンテンツファイル**（S3(SeaweedFS) バケット `weko-<tenant>`） | **原本**（アップロード実体、再生成不可） | ✅ **必須** | `aws s3 sync`/rclone で外部S3・オフサイトへ複製 |
 | Elasticsearch（item検索索引） | **派生**（PGから再indexで復元可） | △ 任意 | 急ぐなら ES snapshot→S3 |
-| ES stats/events 索引（利用統計） | 準原本（ESにしか無い） | ○ 推奨 | ES snapshot（repository-s3→MinIO） |
+| ES stats/events 索引（利用統計） | 準原本（ESにしか無い） | ○ 推奨 | ES snapshot（repository-s3→SeaweedFS） |
 | RabbitMQ（キュー/メッセージ） | **一時的**（celeryタスク） | ✕ 不要 | vhost/user は provision で再作成 |
 | Redis（cache/session） | **一時的** | ✕ 不要 | 失っても再ログイン/再キャッシュ |
 | マニフェスト/スクリプト/`SECRET_KEY`等 | **設定（コード）** | ✅ **git管理** | 復旧時に同じ値を再現できるよう版管理 |
 
 ### 原則
 1. **生のPVCファイルを直接コピーしない**（稼働中DBは不整合になる）。必ず **`pg_dump`／ESスナップショット／ファイルコピー**の**論理/整合バックアップ**。
-2. **バックアップは必ずクラスタの外へ**。local-path は `kind delete cluster` で消えるため、ノード内保管は無意味 → **S3(MinIO)／外部ストレージ／オフサイト**。
+2. **バックアップは必ずクラスタの外へ**。local-path は `kind delete cluster` で消えるため、ノード内保管は無意味 → **S3(SeaweedFS)／外部ストレージ／オフサイト**。
 3. **原本の2つ**（① PostgreSQL ダンプ ② コンテンツファイル）を外部退避すれば復旧可能。ES/RabbitMQ/Redis は原本から作り直せる。
 
 ### この構成で既にある基盤
-- **MinIO** バケット: `weko-backup`（DBダンプ）/`weko-content`（ファイル）/`weko-esbackup`（ESスナップショット）
-- **pg_dumpall → MinIO** のバックアップ Job 実演済み（initContainer=postgres で dump → mc upload）
-- **ES に repository-s3 プラグイン内蔵**（MinIO へスナップショット可）
+- **SeaweedFS** バケット: `weko-backup`（DBダンプ）/`weko-content`（ファイル）/`weko-esbackup`（ESスナップショット）
+- **pg_dumpall → SeaweedFS** のバックアップ Job 実演済み（initContainer=postgres で dump → S3 へアップロード）
+- **ES に repository-s3 プラグイン内蔵**（SeaweedFS へスナップショット可）
 - 本番（weko-k8s）も同方式: `pgdump` / `essnapshooter` / `contents-backup(rclone)` → **オブジェクトストレージ**（ノードストレージは直接バックアップしない）
 
 ### 推奨運用（3点セット）
-1. **PG**: 定期 `pg_dumpall`（全テナントDB）→ MinIO/外部S3（日次＋世代管理）
-2. **ファイル**: S3(MinIO) バケット `weko-<tenant>` → 外部S3/オフサイトへ `mc mirror`/rclone 同期
+1. **PG**: 定期 `pg_dumpall`（全テナントDB）→ SeaweedFS/外部S3（日次＋世代管理）
+2. **ファイル**: S3(SeaweedFS) バケット `weko-<tenant>` → 外部S3/オフサイトへ `aws s3 sync`/rclone 同期
 3. **設定**: マニフェスト一式（`gen-tenant.sh`/`tenants.txt`/Secret鍵）を git 管理
 
 > 完全なDR（クラスタ全損→再構築）手順: ①kind再構築＋バックエンド展開 → ②各テナントDBを dump からリストア → ③ファイルを S3/退避先から戻す → ④ES を `invenio index reindex` で再構築（stats索引はスナップショットから復元）。

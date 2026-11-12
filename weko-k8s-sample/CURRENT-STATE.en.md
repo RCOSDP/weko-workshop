@@ -19,7 +19,7 @@ Host memory usage: 18GiB / 121GiB
 kind cluster "weko3" (3 containers = nodes on one physical host)
 ├ weko3-control-plane           : API server etc. + ingress-nginx (host 80/443)
 ├ weko3-worker  (nodeType=WEKO) : tenant1-web / tenant2-web
-└ weko3-worker2 (nodeType=DATA) : ES / RabbitMQ / MinIO / part of PG / NFS / Redis (weko3re)
+└ weko3-worker2 (nodeType=DATA) : ES / RabbitMQ / SeaweedFS / part of PG / NFS / Redis (weko3re)
 
 App: weko3-web:arm64 (native) = nginx + web(uwsgi) + worker(celery) per tenant
 Shared backends (HA clusters):
@@ -27,7 +27,7 @@ Shared backends (HA clusters):
   RabbitMQ   : RabbitMQ Cluster Operator + 3 nodes (rabbitmq:4.0.9)
   Elasticsearch : 3-node cluster (arm64-native 6.8.23, kuromoji / kui.txt / repository-s3)
   Redis      : Sentinel HA (master + 2 replicas + 3 sentinels) @ namespace weko3re
-  MinIO(S3)  : weko-backup / weko-content / weko-esbackup + per-tenant weko-<tenant> (the real file Location)
+  S3(SeaweedFS): weko-backup / weko-content / weko-esbackup + per-tenant weko-<tenant> (the real file Location)
 Shared FS (NFS/RWX): nfs-ganesha → per-tenant conf (/fs-config) / data (/fs-data)
 ```
 
@@ -45,7 +45,7 @@ Shared FS (NFS/RWX): nfs-ganesha → per-tenant conf (/fs-config) / data (/fs-da
 | RabbitMQ | `weko-rabbitmq-server-0/1/2` | **all on weko3-worker2** | 3/3 Running |
 | Elasticsearch | `elasticsearch-0/1/2` | **all on weko3-worker2** | 3/3 Running |
 | Redis (weko3re) | `redis-0/1/2` + `sentinel-*` ×3 | — | 6/6 Running |
-| MinIO | `minio-*` | weko3-worker2 | Running |
+| S3 (SeaweedFS) | `s3-*` | weko3-worker2 | Running |
 | Operators | postgres-operator (default) / rabbitmq-cluster-operator / cert-manager ×3 / nfs-provisioner | — | Running |
 
 > ⚠️ **All three ES and RabbitMQ nodes sit on weko3-worker2** (`nodeSelector: nodeType: DATA` matches only that one node).
@@ -63,7 +63,7 @@ Shared FS (NFS/RWX): nfs-ganesha → per-tenant conf (/fs-config) / data (/fs-da
 | PostgreSQL | `ghcr.io/zalando/spilo-17:4.0-p2` | arm64 (operator default) |
 | RabbitMQ | `rabbitmq:4.0.9-management` | multi-arch |
 | Redis/Sentinel | `redis:6.2` | multi-arch |
-| MinIO | `minio/minio:RELEASE.2025-04-08...` | multi-arch |
+| S3 (SeaweedFS) | `chrislusf/seaweedfs:4.53` | multi-arch |
 | NFS server | `registry.k8s.io/sig-storage/nfs-provisioner:v4.0.8` | arm64 (ganesha) |
 
 > Emulation is not used (weko/ES were made arm64-native, so no qemu).
@@ -74,7 +74,7 @@ Shared FS (NFS/RWX): nfs-ganesha → per-tenant conf (/fs-config) / data (/fs-da
 
 | StorageClass | Provisioner | Access | Purpose |
 |---|---|---|---|
-| `standard` (default) | rancher.io/local-path | **RWO, node-local** | Backing store for PG/ES/RabbitMQ/Redis/MinIO/NFS export |
+| `standard` (default) | rancher.io/local-path | **RWO, node-local** | Backing store for PG/ES/RabbitMQ/Redis/SeaweedFS/NFS export |
 | `nfs` | weko.example.com/nfs (ganesha) | **RWX, network shared** | For dynamic provisioning (the current per-tenant FS uses static PVs on `nfs-static`) |
 | `nfs-static` | none (static PVs) | **RWX, network shared** | Per-tenant `/fs-config`, `/fs-data`, `/fs-shibboleth`, `/fs-nginx` (same layout as production) |
 
@@ -82,7 +82,7 @@ PVC list:
 ```
 [local-path / RWO]
  weko3: data-elasticsearch-0/1/2, pgdata-weko-postgresql-0/1/2,
-        persistence-weko-rabbitmq-server-0/1/2, minio-data
+        persistence-weko-rabbitmq-server-0/1/2, s3-data
  weko3re: data-redis-0/1/2
  nfs-system: nfs-export (the NFS server's backing volume, 30Gi)
  * data-postgresql-0 is left over from the old standalone PG (unused, safe to delete)
@@ -95,7 +95,7 @@ NFS shared FS (same as production's config-pvc/data-pvc):
 - `<tenant>-data` → `.../var/instance/data` (theme `_variables.scss` / indextree, etc.) * does not hold uploaded files
 - `<tenant>-shib` → `/etc/shibboleth` in the nginx container (a static PV over `/fs-shibboleth/<tenant>` on NFS; seeded from shibboleth_template by `provision-nfs.sh`)
 - `<tenant>-nginx-pvc` → `/etc/nginx` in the nginx container (`/fs-nginx/<tenant>` on NFS; seeded from nginx_template by `provision-nfs.sh`)
-- **Uploads go to the S3 (MinIO) Location**: the DB `files_location` is set to `type='s3'` / `uri='s3://weko-<tenant>'` (`set-s3-location.sh`). weko writes objects into the MinIO bucket with `invenio-s3`'s s3fs.
+- **Uploads go to the S3 (SeaweedFS) Location**: the DB `files_location` is set to `type='s3'` / `uri='s3://weko-<tenant>'` (`set-s3-location.sh`). weko writes objects into the SeaweedFS bucket with `invenio-s3`'s s3fs.
   - How it works: `invenio-s3`'s `_get_fs` connects s3fs with the location's S3 info (access_key/secret_key/s3_endpoint_url) **only when** `location.type=='s3'`. If it stays None, it falls back to PyFilesystem2 and fails with `AWS_ACCESS_KEY_ID not set`.
   - path-style and `signature_version=s3v4` are handled by invenio-s3. `gen-tenant.sh` sets `instance.cfg`'s `S3_ACCCESS_KEY_ID` etc. (including the `S3_READONLY_*` pair used for reading) to read from environment variables.
   - Tested: real objects at `s3://weko-tenant1/...` for tenant1 and `s3://weko-tenant2/...` for tenant2.
@@ -131,7 +131,7 @@ Key points:
 | Administrator (tenant1) | `admin@example.org` / `adminpass123` |
 | Administrator (tenant2) | `admin@tenant2.local` / `adminpass2` |
 | DB | user `weko` / pass `weko` (PG endpoint `weko-postgresql`, or `pgpool` in the current setup) |
-| MinIO | `wekominio` / `wekominio-secret-key` (endpoint `http://minio:9000`) |
+| S3 (SeaweedFS) | `wekominio` / `wekominio-secret-key` (endpoint `http://s3:9000`) |
 | RabbitMQ | user `weko` / pass `weko` (endpoint `weko-rabbitmq`, vhost `<tenant>/`) |
 
 Port forwarding (remote): `kubectl port-forward -n ingress-nginx --address 127.0.0.1,::1 svc/ingress-nginx-controller 8080:80` → `http://tenantN.localhost:8080/`
@@ -154,7 +154,9 @@ Port forwarding (remote): `kubectl port-forward -n ingress-nginx --address 127.0
 |---|---|
 | `00-namespace.yaml` | namespace weko3 |
 | `10/11/12/13-*.yaml` | (10 old standalone PG = unused) / (11 old standalone Redis = unused) / old RabbitMQ / **ES 3 nodes (arm64, `-E` args)** |
-| `40-minio.yaml` | MinIO (S3) |
+| `40-s3.yaml` | S3 (SeaweedFS); endpoint `http://s3:9000` |
+| `s3-create-buckets.sh` | Makes buckets on S3 (an aws-cli Job; existing ones are left alone) |
+| `pull-images-arm64.sh` | Pulls the third-party images on the host (`load` also loads them into kind; deploy step 1 calls it) |
 | `41-redis-sentinel.yaml` | Redis Sentinel HA (weko3re) |
 | `50-rabbitmq-cluster.yaml` | RabbitmqCluster (3 nodes) for the RabbitMQ Cluster Operator |
 | `51-postgresql-ha.yaml` | Zalando postgresql CR (Patroni, 3 nodes) |
@@ -166,7 +168,7 @@ Port forwarding (remote): `kubectl port-forward -n ingress-nginx --address 127.0
 | `provision-tenants.sh` | Makes the per-tenant PG DB / RabbitMQ vhost |
 | `provision-nfs.sh` | Makes the per-tenant directories under `/fs-nginx`, `/fs-shibboleth`, `/fs-config`, `/fs-data` on the shared FS (NFS) and seeds the templates (= production's `make_volumes.sh`). **Run it before you apply**; it works through a busybox helper Pod |
 | `weko-init.sh` / `es-reinit.sh` | DB setup / ES index setup |
-| `set-s3-location.sh` | Makes the per-tenant MinIO bucket `weko-<tenant>` + sets `files_location` to the S3 type (run after setup) |
+| `set-s3-location.sh` | Makes the per-tenant S3 bucket `weko-<tenant>` (with `s3-create-buckets.sh`) + sets `files_location` to the S3 type (run after setup) |
 | `deploy-arm64.sh` | **Builds the current full setup (final form) from nothing in one pass** (1) cluster … 9) connectivity. README Appendix D). The amd64 version is `../k8s-weko-amd64/deploy-amd64.sh` |
 | `../build-push-weko.sh` | Builds the WEKO image from the weko source → pushes to Docker Hub (native/multiarch/manifest). Swap images with the `WEKO_IMAGE` environment variable |
 
@@ -193,7 +195,7 @@ kind delete cluster --name weko3                     # delete everything (data i
 
 ## 10. Capacity planning (number of tenants × items per tenant)
 
-The backends (PG/ES/RabbitMQ/MinIO/Redis) are **shared by all tenants**, while weko web and the DB/index/vhost/PVC
+The backends (PG/ES/RabbitMQ/SeaweedFS/Redis) are **shared by all tenants**, while weko web and the DB/index/vhost/PVC
 resources are **per tenant**. So estimate as "**T tenants × N items per tenant (total = T×N)**".
 
 ### Variables
@@ -251,7 +253,7 @@ resources are **per tenant**. So estimate as "**T tenants × N items per tenant 
 
 ### Ways to scale up
 1. **Raise the ES heap** (`ES_JAVA_OPTS -Xmx` 2–4g, within 50% of node RAM, max ~30g). If needed, raise the primary shard count for the item index and reindex, and add ES nodes → total docs into the hundreds of thousands to 1M.
-2. **Files already use the S3 (MinIO) Location** (`files_location.type='s3'`) → file capacity depends on the MinIO PVC, and pointing the endpoint at an external S3 makes it almost unlimited.
+2. **Files already use the S3 (SeaweedFS) Location** (`files_location.type='s3'`) → file capacity depends on the S3 PVC (`s3-data`), and pointing the endpoint at an external S3 makes it almost unlimited.
 3. **Add disk** / **use per-tenant Redis if the tenant count grows too large**.
 4. PostgreSQL metadata is light (tens of GB even at 1M records), so it is almost never the bottleneck.
 
@@ -261,8 +263,8 @@ resources are **per tenant**. So estimate as "**T tenants × N items per tenant 
 3. Size the **ES heap** for the total T×N (1g ≈ tens of thousands of docs; raise it if too small).
 4. **Memory** = `12 + T×2 + ES_heap` (GiB) → compare against server RAM.
 5. Redis holds **~170 tenants** with `databases` (now 512). Beyond that, raise `databases` or add Redis memory (memory is the real limit).
-→ The current setup (heap 1g, **files on the S3 (MinIO) Location**) is sized for "a few tenants × tens of thousands of items".
-**Raising the heap and growing MinIO / moving to external S3** scales the same architecture to production scale: "many tenants × hundreds of thousands of items".
+→ The current setup (heap 1g, **files on the S3 (SeaweedFS) Location**) is sized for "a few tenants × tens of thousands of items".
+**Raising the heap and growing the S3 (SeaweedFS) PVC / moving to external S3** scales the same architecture to production scale: "many tenants × hundreds of thousands of items".
 
 ---
 
@@ -275,27 +277,27 @@ resources are **per tenant**. So estimate as "**T tenants × N items per tenant 
 | Component | Type | Backup | Method |
 |---|---|---|---|
 | **PostgreSQL** | **Source of truth** (metadata / records / users / roles / workflows) | ✅ **Required** | `pg_dumpall` (logical) → S3. Or Patroni + WAL-G for continuous archiving |
-| **Content files** (S3 (MinIO) bucket `weko-<tenant>`) | **Source of truth** (uploaded files, cannot be remade) | ✅ **Required** | Copy to external S3 / offsite with `mc mirror` or rclone |
+| **Content files** (S3 (SeaweedFS) bucket `weko-<tenant>`) | **Source of truth** (uploaded files, cannot be remade) | ✅ **Required** | Copy to external S3 / offsite with `aws s3 sync` or rclone |
 | Elasticsearch (item search index) | **Derived** (can be rebuilt from PG by reindexing) | △ Optional | ES snapshot → S3 if you want fast recovery |
-| ES stats/events indices (usage statistics) | Almost source-of-truth (only in ES) | ○ Recommended | ES snapshot (repository-s3 → MinIO) |
+| ES stats/events indices (usage statistics) | Almost source-of-truth (only in ES) | ○ Recommended | ES snapshot (repository-s3 → SeaweedFS) |
 | RabbitMQ (queues/messages) | **Transient** (celery tasks) | ✕ Not needed | vhosts/users are remade by provisioning |
 | Redis (cache/session) | **Transient** | ✕ Not needed | Losing it just means re-login / re-caching |
 | Manifests / scripts / `SECRET_KEY`, etc. | **Configuration (code)** | ✅ **Keep in git** | Version-control it so you can reproduce the same values during recovery |
 
 ### Principles
 1. **Do not copy raw PVC files directly** (a running DB gives an inconsistent copy). Always take **logical/consistent backups**: `pg_dump`, ES snapshots, file copies.
-2. **Always store backups outside the cluster.** local-path data disappears on `kind delete cluster`, so keeping backups inside a node is pointless → **S3 (MinIO) / external storage / offsite**.
+2. **Always store backups outside the cluster.** local-path data disappears on `kind delete cluster`, so keeping backups inside a node is pointless → **S3 (SeaweedFS) / external storage / offsite**.
 3. If you copy **the two sources of truth** (① the PostgreSQL dump ② the content files) to an outside place, you can recover. ES/RabbitMQ/Redis can be rebuilt from them.
 
 ### What this setup already gives you
-- **MinIO** buckets: `weko-backup` (DB dumps) / `weko-content` (files) / `weko-esbackup` (ES snapshots)
-- A working **pg_dumpall → MinIO** backup Job (initContainer=postgres dumps, then mc uploads)
-- **ES ships with the repository-s3 plugin** (snapshots can go to MinIO)
+- **SeaweedFS** buckets: `weko-backup` (DB dumps) / `weko-content` (files) / `weko-esbackup` (ES snapshots)
+- A working **pg_dumpall → SeaweedFS** backup Job (initContainer=postgres dumps, then uploads to S3)
+- **ES ships with the repository-s3 plugin** (snapshots can go to SeaweedFS)
 - Production (weko-k8s) does the same: `pgdump` / `essnapshooter` / `contents-backup (rclone)` → **object storage** (node storage is never backed up directly)
 
 ### Recommended operations (three pillars)
-1. **PG**: regular `pg_dumpall` (all tenant DBs) → MinIO / external S3 (daily + keep generations)
-2. **Files**: sync the S3 (MinIO) bucket `weko-<tenant>` to external S3 / offsite with `mc mirror` or rclone
+1. **PG**: regular `pg_dumpall` (all tenant DBs) → SeaweedFS / external S3 (daily + keep generations)
+2. **Files**: sync the S3 (SeaweedFS) bucket `weko-<tenant>` to external S3 / offsite with `aws s3 sync` or rclone
 3. **Config**: keep the manifest set (`gen-tenant.sh` / `tenants.txt` / secret keys) in git
 
 > Full DR steps (whole cluster lost → rebuild): ① rebuild kind and deploy the backends → ② restore each tenant DB from its dump → ③ restore files from S3 / the copy target → ④ rebuild ES with `invenio index reindex` (restore the stats indices from snapshots).

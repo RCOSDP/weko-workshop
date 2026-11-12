@@ -2,7 +2,7 @@
 # Generate the k8s manifests for each tenant from tenants.txt into generated/<name>.yaml.
 # Output: <name>-config(ConfigMap) / <name>-secret / <name>-web(Deploy: nginx+web+worker)
 #         / <name>-nginx(Svc) / <name>-ingress
-# The backends (PostgreSQL/ES/RabbitMQ/MinIO), Redis Sentinel (weko3re) and the nginx config
+# The backends (PostgreSQL/ES/RabbitMQ/S3), Redis Sentinel (weko3re) and the nginx config
 # (weko-nginx-conf) are shared by all tenants.
 # Redis runs in redissentinel mode (the instance.cfg default); tenants are separated by Redis DB number.
 set -euo pipefail
@@ -13,8 +13,8 @@ mkdir -p "$OUT"
 
 # Sentinel/Redis endpoint (instance.cfg refers to weko-sentinel-service.weko3re:26379)
 REDIS_MASTER_HOST="redis-0.redis.weko3re.svc.cluster.local"
-# MinIO(S3)
-S3_KEY="wekominio"; S3_SECRET="wekominio-secret-key"; S3_ENDPOINT="http://minio:9000"
+# S3 (SeaweedFS, 40-s3.yaml)
+S3_KEY="wekominio"; S3_SECRET="wekominio-secret-key"; S3_ENDPOINT="http://s3:9000"
 # The NFS server (the pinned ClusterIP from 60-nfs-server.yaml), referenced by the static PVs /fs-*/<tenant>.
 NFS_SERVER="${NFS_SERVER:-10.96.0.99}"
 #   WEKO_TLS_SECRET   name of the TLS Secret used by the Ingress. Empty (the default) emits no
@@ -443,7 +443,7 @@ spec:
           export PATH=/home/invenio/.virtualenvs/invenio/bin:\$PATH
           # Switch to redissentinel mode (the bundled instance.cfg hardcodes 'redis')
           sed -i "s#CACHE_TYPE = OAUTH2_CACHE_TYPE =  'redis'#CACHE_TYPE = OAUTH2_CACHE_TYPE = 'redissentinel'#" /code/scripts/instance.cfg
-          # Use S3 (MinIO) as the file Location: read the S3 credentials from the Secret (env vars).
+          # Use S3 (SeaweedFS) as the file Location: read the S3 credentials from the Secret (env vars).
           # invenio-s3 writes with S3_ACCESS_KEY_ID and reads with S3_READONLY_ACCESS_KEY_ID, so the
           # readonly pair needs the same keys too: left at None, uploads work and registering the
           # item then fails with NoCredentialsError ("Server Error. Please reload this page.").

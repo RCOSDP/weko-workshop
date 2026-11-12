@@ -9,13 +9,13 @@
 
 ### この手順の到達点（現在の構成）
 - **マルチテナント**（`tenant1.localhost` / `tenant2.localhost` が独立稼働）
-- **Redis Sentinel HA** / **データ永続化(PVC)** / **S3(MinIO)** まで適用済み（本番忠実度アップ）
+- **Redis Sentinel HA** / **データ永続化(PVC)** / **S3(SeaweedFS)** まで適用済み（本番忠実度アップ）
 
 読み方（3ルート）:
 - **ルートA（学習向け）**: **§1〜9 で単一テナント最小構成を素から** → **[マルチテナント構成](#マルチテナント構成)** →
   **[本番忠実度アップグレード](#本番忠実度アップグレードredis-sentinel--永続化--s3)** → **[HAクラスタ化](#haクラスタ化operator方式と-arm64-ネイティブ化)** → **[NFS](#nfs-共有ストレージ本番の-fs-config-fs-data-相当)** と段階的に積み上げる。
 - **ルートB（本番忠実度を一気に）**: **[付録B の一括ランブック](#付録b-本番忠実度構成をゼロから構築する一括ランブック)** を上から実行すれば、最初から Sentinel＋永続化＋S3＋マルチテナントで立ち上がる（PG/RabbitMQ は**単体**）。
-- **ルートD（現フル構成＝最終形を素から一発）**: **[付録D の一気通貫ランブック](#付録d-arm64-で現フル構成最終形を素から一気通貫で構築する)** = `k8s-weko/deploy-arm64.sh` 一発で、**HAクラスタ(PG Patroni3/RabbitMQ3/ES3)＋Sentinel＋永続化＋NFS＋S3(MinIO) Location＋マルチテナント**（＝実機の現構成）を素から構築。amd64 は `k8s-weko-amd64/deploy-amd64.sh`。
+- **ルートD（現フル構成＝最終形を素から一発）**: **[付録D の一気通貫ランブック](#付録d-arm64-で現フル構成最終形を素から一気通貫で構築する)** = `k8s-weko/deploy-arm64.sh` 一発で、**HAクラスタ(PG Patroni3/RabbitMQ3/ES3)＋Sentinel＋永続化＋NFS＋S3(SeaweedFS) Location＋マルチテナント**（＝実機の現構成）を素から構築。amd64 は `k8s-weko-amd64/deploy-amd64.sh`。
 
 > **サーバが x86_64 / amd64 の場合**: 本文は arm64 前提だが、amd64 なら emulation も arm64 ビルドも不要で**より簡単**。
 > 差分は **[付録C: arm64 が無い場合のランブック](#付録c-arm64-が無い場合x86_64--amd64-サーバのランブック)** を参照。
@@ -28,13 +28,13 @@
 [ホスト:arm64]  kind クラスタ "weko3"
   control-plane … APIサーバ等 + ingress-nginx (host 80/443)
   worker  (nodeType=WEKO) … tenant1-web / tenant2-web  (各 nginx + web(uwsgi) + worker(celery))
-  worker2 (nodeType=DATA) … 共有[全PVC]: PostgreSQL / Elasticsearch / RabbitMQ / MinIO(S3)
+  worker2 (nodeType=DATA) … 共有[全PVC]: PostgreSQL / Elasticsearch / RabbitMQ / SeaweedFS(S3)
                             namespace weko3re … Redis master + replica×2 + sentinel×3 [全PVC]
 ```
 
 | テナント別に分離 | 共有バックエンド |
 |---|---|
-| Web Pod + Ingress（host=FQDN）／PostgreSQL DB 名／ES インデックス接頭辞／RabbitMQ vhost／Redis DB 番号 | PostgreSQL・Elasticsearch・RabbitMQ・Redis(Sentinel)・MinIO(S3) |
+| Web Pod + Ingress（host=FQDN）／PostgreSQL DB 名／ES インデックス接頭辞／RabbitMQ vhost／Redis DB 番号 | PostgreSQL・Elasticsearch・RabbitMQ・Redis(Sentinel)・SeaweedFS(S3) |
 
 | 要素 | 採用 | 備考 |
 |---|---|---|
@@ -43,7 +43,7 @@
 | キャッシュ/セッション | **Redis 6.2 Sentinel HA**（arm64, PVC） | `CACHE_TYPE=redissentinel`。テナントは DB 番号で分離 |
 | キュー | RabbitMQ 3.13（arm64, PVC） | quorum queue。テナント別 vhost `<name>/` |
 | 検索 | **Elasticsearch 6.8.23**（自前ビルド amd64 + kuromoji/icu, PVC） | weko は **ES6 系必須**（client `elasticsearch==6.1.1`） |
-| オブジェクトストレージ | **MinIO**（S3互換, arm64, PVC） | バックアップ/コンテンツ用（OCI Object Storage 相当） |
+| オブジェクトストレージ | **SeaweedFS**（`chrislusf/seaweedfs:4.53`, S3互換, arm64, PVC） | バックアップ/コンテンツ用（OCI Object Storage 相当） |
 | 前段 | **WEKO nginx を自前ビルド**（`weko3-nginx:<arch>`, Shibboleth SP=shibd + nginx-http-shibboleth 入り） | 設定 `/etc/nginx` は本番同様 NFS(RWX)。既定は HTTP+`uwsgi_pass`、`WEKO_NGINX_SHIB=yes` で本番 `weko.conf`(Shibboleth/TLS) を有効化 |
 
 > 注: §1〜9 の基本手順は **Redis 単体・emptyDir・単一テナント**の最小構成で解説する（学習しやすさ優先）。
@@ -79,15 +79,25 @@ cd /home/mhaya/weko-k8s-sample
 kind create cluster --config kind-weko-cluster.yaml --wait 120s
 
 kubectl get nodes -L nodeType,ingress-ready   # 3ノード Ready を確認
+
+# 配布元イメージ（ingress-nginx / redis / S3 など）をホストで pull して kind に読み込む
+bash k8s-weko/pull-images-arm64.sh load
 ```
 
 `kind-weko-cluster.yaml` … control-plane(80/443 公開) + worker(`nodeType=WEKO`) + worker2(`nodeType=DATA`)。
 
+> **イメージの pull について**: kind のノードは Docker Hub から**匿名で** pull し、Docker Hub は匿名 pull を IP ごとに制限する（6時間で100回）。
+> ワークショップ会場のように同じ IP から何人も pull すると `ErrImagePull`（`toomanyrequests`）で止まるので、
+> `pull-images-arm64.sh` でホストに pull してから `kind load` する。手元にあるイメージは飛ばすので再実行しても枠を使わない。
+> 制限に当たったら `docker login` するか時間をおいて再実行する。対象一覧は `bash k8s-weko/pull-images-arm64.sh list`
+> （§1〜9 の簡素版だけが使う `postgres:13` / `rabbitmq:3.13-management` / `nginx:1.27-alpine` は含まれず、ノードが取りに行く）。
+
 ## 3. Ingress と amd64 エミュレーション
 
 ```bash
-# ingress-nginx
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
+# ingress-nginx（digest @sha256:... を落として apply: kind に読み込んだイメージは digest では見つからない。タグで固定のまま）
+curl -fsSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml \
+  | sed -E 's/(image: [^@[:space:]]+)@sha256:[0-9a-f]+/\1/' | kubectl apply -f -
 kubectl wait -n ingress-nginx --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller --timeout=150s
 
@@ -241,7 +251,7 @@ kubectl exec -n weko3 <postgres-pod> -- psql -U weko -d <DBNAME> \
   -c "INSERT INTO admin_settings (id,name,settings) VALUES (0,'__seed__','{}'::jsonb) ON CONFLICT DO NOTHING;"
 kubectl rollout restart deployment/<NAME>-web -n weko3
 
-# 5) （MinIO をデプロイ済みの場合）ファイル保存先を S3(MinIO) Location に
+# 5) （S3 = 40-s3.yaml をデプロイ済みの場合）ファイル保存先を S3 Location に
 bash set-s3-location.sh                   # weko-<tenant> バケット作成 + files_location を type='s3' に
 ```
 
@@ -335,28 +345,42 @@ kubectl port-forward -n weko3 svc/tenant2-nginx 8082:80    # → http://localhos
 - 検証: worker が sentinel 経由で `ready`、master→replica 複製、`sentinel master mymaster` が quorum=2 で認識。
 
 ### データ永続化（PVC / kind `standard` StorageClass）
-- PostgreSQL / Elasticsearch / RabbitMQ / Redis(×3) / MinIO をすべて **PVC 化**（emptyDir 廃止）。
+- PostgreSQL / Elasticsearch / RabbitMQ / Redis(×3) / S3(SeaweedFS) をすべて **PVC 化**（emptyDir 廃止）。
 - PostgreSQL は **`pg_dumpall` → PVC版へ再デプロイ → restore** でデータ保持（再初期化を回避）。
 - 検証: `postgresql-0` Pod を削除→同一 PVC で再作成後も **188 テーブル・管理者ユーザ保持**。
 
-### S3 オブジェクトストレージ（`40-minio.yaml`）
-- **MinIO**（S3互換, PVC）をデプロイ。バケット `weko-backup` / `weko-content` / `weko-esbackup` ＋ **テナント別 `weko-<tenant>`（ファイルLocation実体）**。
-- 各テナントの Secret に S3 接続情報を投入（`S3_ENDPOINT_URL=http://minio:9000`, key=`wekominio`）。
-- **WEKO のアップロード先＝S3(MinIO) Location**: 初期化後に `set-s3-location.sh` で各テナントDBの `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` に設定（下記「適用手順」参照）。`type` を `s3` にしないと invenio-s3 が PyFilesystem2 にフォールバックして `AWS_ACCESS_KEY_ID not set` で失敗する。
+### S3 オブジェクトストレージ（`40-s3.yaml`）
+- **SeaweedFS**（`chrislusf/seaweedfs:4.53`, Apache-2.0, S3互換, PVC `s3-data`）をデプロイ。Deployment/Service `s3`（ポート 9000 のみ）、キーは Secret `s3-config` の `s3.json`。`weed server` 1プロセスで master+volume+filer+S3 を動かし、状態はすべて `/data` に置く。
+  > 以前は MinIO だったが、MinIO の公式イメージ（`minio/minio`, `minio/mc`）が配布されなくなったため SeaweedFS に替えた。キー（`wekominio`）はそのまま。
+- バケット `weko-backup` / `weko-content` / `weko-esbackup` ＋ **テナント別 `weko-<tenant>`（ファイルLocation実体）**。作成は `bash s3-create-buckets.sh <bucket>...`（クラスタ内で aws-cli の Job を1回走らせる。`deploy/s3` の Ready を待ってから作り、既にあるバケットはそのまま。作れなければ 0 以外で終わり、Job は調査用に残る）。
+- 各テナントの Secret に S3 接続情報を投入（`S3_ENDPOINT_URL=http://s3:9000`, key=`wekominio`）。
+- **WEKO のアップロード先＝S3 Location**: 初期化後に `set-s3-location.sh` で各テナントDBの `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` に設定（下記「適用手順」参照）。`type` を `s3` にしないと invenio-s3 が PyFilesystem2 にフォールバックして `AWS_ACCESS_KEY_ID not set` で失敗する。
 - バックアップ実演: `pg_dumpall` を `weko-backup/postgres/` へアップロード（JAIRO Cloud の Object Storage 相当）。
-- コンソール: `kubectl port-forward -n weko3 svc/minio 9001:9001` → `http://localhost:9001`（wekominio / wekominio-secret-key）。
+- 中身の確認: Web コンソールは無い。aws-cli で見る（キーは wekominio / wekominio-secret-key）。
+  ```bash
+  # クラスタ内から（イメージの entrypoint が aws なので --command は付けない）
+  kubectl run s3cli -n weko3 --rm -i --restart=Never --image=public.ecr.aws/aws-cli/aws-cli:2.40.1 \
+    --env AWS_ACCESS_KEY_ID=wekominio --env AWS_SECRET_ACCESS_KEY=wekominio-secret-key \
+    --env AWS_DEFAULT_REGION=us-east-1 -- --endpoint-url http://s3:9000 s3 ls
+  # ホストから（別ターミナルで port-forward を開いたまま）
+  kubectl -n weko3 port-forward svc/s3 9000:9000
+  AWS_ACCESS_KEY_ID=wekominio AWS_SECRET_ACCESS_KEY=wekominio-secret-key AWS_DEFAULT_REGION=us-east-1 \
+    aws --endpoint-url http://localhost:9000 s3 ls s3://weko-tenant1/
+  ```
+  中身ごとバケットを消すときは `... s3 rb s3://<bucket> --force`。
 
 ### 適用手順（要約）
 ```bash
 cd k8s-weko
-kubectl apply -f 40-minio.yaml          # S3(MinIO)
+kubectl apply -f 40-s3.yaml             # S3(SeaweedFS)
+bash s3-create-buckets.sh weko-backup weko-content weko-esbackup   # 共有バケット（既存はそのまま）
 kubectl apply -f 41-redis-sentinel.yaml # Redis Sentinel(weko3re)
 # PG/ES/RabbitMQ を PVC 版へ（データ保持する場合は事前に pg_dumpall → restore）
 kubectl apply -f 10-postgresql.yaml -f 13-elasticsearch.yaml -f 12-rabbitmq.yaml
 bash gen-tenant.sh && kubectl apply -f generated/   # redissentinel + S3配線 版テナント
 bash provision-tenants.sh                            # vhost 再作成
 # ES インデックス再作成(各テナントの web コンテナで es-reinit.sh)
-# 初期化 + admin_settings シードの後、ファイル保存先を S3(MinIO)に:
+# 初期化 + admin_settings シードの後、ファイル保存先を S3 に:
 bash set-s3-location.sh                              # weko-<tenant> バケット作成 + files_location を type='s3' に
 ```
 
@@ -416,7 +440,7 @@ kubectl rollout restart -n weko3 $(awk '!/^#|^$/{print "deploy/"$1"-web"}' tenan
 
 ## 付録B: 本番忠実度構成をゼロから構築する一括ランブック
 
-まっさらな状態から、**最初から Sentinel＋永続化(PVC)＋S3(MinIO)＋マルチテナント**で立ち上げる手順。
+まっさらな状態から、**最初から Sentinel＋永続化(PVC)＋S3(SeaweedFS)＋マルチテナント**で立ち上げる手順。
 ルートA（段階的）と違い、簡素版バックエンドを経由せず**本番寄り構成を直接**デプロイする。
 （既存クラスタを作り直す場合は先に `kind delete cluster --name weko3`）
 
@@ -433,8 +457,11 @@ chmod +x ~/.local/bin/kubectl ~/.local/bin/kind; hash -r
 
 ### B-2. クラスタ＋Ingress＋amd64エミュレーション
 ```bash
+bash k8s-weko/pull-images-arm64.sh       # 先にホストへ pull（クラスタ不要。全部 OK になるまで再実行）
 kind create cluster --config kind-weko-cluster.yaml --wait 120s
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
+bash k8s-weko/pull-images-arm64.sh load  # kind の全ノードへ読み込む
+curl -fsSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml \
+  | sed -E 's/(image: [^@[:space:]]+)@sha256:[0-9a-f]+/\1/' | kubectl apply -f -   # digest を落として apply（§3 参照）
 kubectl wait -n ingress-nginx --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller --timeout=150s
 docker run --rm --privileged tonistiigi/binfmt --install amd64
@@ -454,7 +481,7 @@ kind load docker-image weko3-web:arm64 --name weko3
 ### B-4. 共有基盤（namespace / nginx設定 / S3 / Sentinel / 永続化バックエンド）
 ```bash
 kubectl apply -f 00-namespace.yaml -f 21-nginx-config.yaml
-kubectl apply -f 40-minio.yaml            # S3(MinIO) + PVC
+kubectl apply -f 40-s3.yaml               # S3(SeaweedFS) + PVC
 kubectl apply -f 41-redis-sentinel.yaml   # Redis Sentinel HA(weko3re) + PVC
 kubectl apply -f 10-postgresql.yaml -f 13-elasticsearch.yaml -f 12-rabbitmq.yaml   # PG/ES/MQ 全PVC版
 # 準備完了待ち
@@ -462,9 +489,8 @@ kubectl wait -n weko3 --for=condition=ready pod -l app=postgresql --timeout=180s
 kubectl wait -n weko3 --for=condition=ready pod -l app=elasticsearch --timeout=300s
 kubectl wait -n weko3 --for=condition=ready pod -l app=rabbitmq --timeout=180s
 kubectl wait -n weko3re --for=condition=ready pod -l app=redis --timeout=180s
-# MinIO バケット作成
-kubectl run mc-init -n weko3 --rm -i --restart=Never --image=minio/mc:RELEASE.2025-04-08T15-39-49Z -- \
-  sh -c 'mc alias set l http://minio:9000 wekominio wekominio-secret-key && mc mb -p l/weko-backup l/weko-content l/weko-esbackup'
+# 共有バケット作成（S3 の Ready を待ってから aws-cli の Job で作る。既存はそのまま）
+bash s3-create-buckets.sh weko-backup weko-content weko-esbackup
 ```
 
 ### B-5. テナント定義 → 生成 → プロビジョニング
@@ -509,10 +535,10 @@ done
 kubectl rollout restart deploy/tenant1-web deploy/tenant2-web -n weko3
 for t in tenant1 tenant2; do kubectl rollout status deploy/${t}-web -n weko3 --timeout=600s; done
 
-# ファイル保存先を S3(MinIO) Location に設定（バケット作成 + files_location を type='s3' に）
+# ファイル保存先を S3 Location に設定（バケット作成 + files_location を type='s3' に）
 bash set-s3-location.sh
 ```
-> `set-s3-location.sh` 後、アップロードは `s3://weko-<tenant>` (MinIO) に保存される。未実行だと `files_location.type` が `None` のままで、アップロード時に invenio-s3 が PyFilesystem2 にフォールバックし `AWS_ACCESS_KEY_ID not set` で失敗する。
+> `set-s3-location.sh` 後、アップロードは `s3://weko-<tenant>`（SeaweedFS）に保存される。未実行だと `files_location.type` が `None` のままで、アップロード時に invenio-s3 が PyFilesystem2 にフォールバックし `AWS_ACCESS_KEY_ID not set` で失敗する。
 
 ### B-8. 疎通確認
 ```bash
@@ -526,7 +552,7 @@ done
 > **確認ポイント**: Redis Sentinel（`kubectl exec -n weko3re deploy/sentinel -- redis-cli -p 26379 sentinel master mymaster`）、
 > 永続化（`kubectl get pvc -A`）、S3（`weko-backup` などのバケット ＋ テナント別 `weko-<tenant>`）、
 > ファイルLocation（`kubectl exec -n weko3 <PG> -- psql -U weko -d tenant1 -c "SELECT name,type,uri FROM files_location;"` が `type=s3` / `uri=s3://weko-tenant1`）。
-> バックアップ例（`pg_dumpall`→MinIO）や port-forward は上記各節を参照。
+> バックアップ例（`pg_dumpall`→S3）や S3 の中身の確認・port-forward は上記各節を参照。
 
 ---
 
@@ -581,7 +607,7 @@ kind load docker-image weko3-web:arm64 --name weko3
 ### 最終検証（両テナント）
 ```
 /  → 200   /login/ → 200   /admin/ → 302   /api/records/ → 200   （すべて 200×15/15 で安定）
-PostgreSQL: master+replica×2 / RabbitMQ: 3/3 / Elasticsearch: green・3ノード / Redis: Sentinel 6/6 / MinIO: 稼働
+PostgreSQL: master+replica×2 / RabbitMQ: 3/3 / Elasticsearch: green・3ノード / Redis: Sentinel 6/6 / S3(SeaweedFS): 稼働
 weko web: weko3-web:arm64（ネイティブ）  PVC 15本  ホストメモリ ~18GiB
 ```
 
@@ -619,7 +645,7 @@ initContainer `init`（jinja2 で `invenio.cfg` 生成）＋ `seed-data`／`seed
 実装上のポイント（`gen-tenant.sh` で自動化）:
 - **conf**: NFSで空になるため起動時に `cp -f /code/scripts/uwsgi.ini` ＋ `jinja2` で `invenio.cfg` 生成（`var/instance/invenio.cfg` の絶対シンボリックリンクが NFS 上を指す）。
 - **data**: 空 NFS だとイメージ内の `_variables.scss` が隠れ、CSS(sass) の `@import "../../../data/_variables"` が失敗して**トップが500**になる。→ **initContainer**（`weko3-web:arm64`）で NFS data を `/seed` にマウントし `cp -an .../data/. /seed/` でテーマファイルをシード。
-- **アップロード先＝S3(MinIO) Location**（NFS共有ではない）: 初期化後に `set-s3-location.sh` で DB `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` ＋ S3接続情報（access_key/secret_key/s3_endpoint_url）に設定。weko は `invenio-s3` の s3fs 経由で MinIO バケットへ保存。
+- **アップロード先＝S3(SeaweedFS) Location**（NFS共有ではない）: 初期化後に `set-s3-location.sh` で DB `files_location` を `type='s3'` / `uri='s3://weko-<tenant>'` ＋ S3接続情報（access_key/secret_key/s3_endpoint_url）に設定。weko は `invenio-s3` の s3fs 経由で SeaweedFS のバケットへ保存。
   - 注意: `location.type` が `None` のままだと invenio-s3 が PyFilesystem2 にフォールバックして `AWS_ACCESS_KEY_ID not set` で失敗する。必ず `type='s3'` にする。
   - `gen-tenant.sh` が `instance.cfg` の `S3_ACCCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_ENDPOINT_URL` を環境変数から読む配線を実施済み。読み出し用の `S3_READONLY_ACCESS_KEY_ID`/`S3_READONLY_SECRET_ACCESS_KEY` にも同じキーを入れる（invenio-s3 は読み出しにこちらを使い、未設定だとアイテム登録時に NoCredentialsError になる）。path-style・`signature_version=s3v4` は invenio-s3 が処理。
 
@@ -639,7 +665,7 @@ files_location: type=s3, uri=s3://weko-<tenant> / 秘密鍵: テナント毎に�
 ### 永続化の全体像と注意
 | 種別 | 対象 | 備考 |
 |---|---|---|
-| **local-path**（RWO） | PostgreSQL / Elasticsearch / RabbitMQ / Redis / MinIO / NFS export の裏 | Pod再起動で保持。`kind delete cluster` で消える |
+| **local-path**（RWO） | PostgreSQL / Elasticsearch / RabbitMQ / Redis / S3(SeaweedFS) / NFS export の裏 | Pod再起動で保持。`kind delete cluster` で消える |
 | **NFS**（RWX） | テナント別 conf / data（`/fs-config` `/fs-data`） | 複数Pod/ノード共有。weko web の複数レプリカ化が可能 |
 
 > **完全なホスト永続化**（`kind delete cluster` しても残す）にしたい場合は、NFS export の裏（現状 local-path）を
@@ -668,8 +694,11 @@ KVER=$(curl -sL https://dl.k8s.io/release/stable.txt)
 curl -sLo ~/.local/bin/kubectl "https://dl.k8s.io/release/${KVER}/bin/linux/amd64/kubectl"
 curl -sLo ~/.local/bin/kind    "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64"
 chmod +x ~/.local/bin/kubectl ~/.local/bin/kind; hash -r
+bash k8s-weko-amd64/pull-images-amd64.sh       # 先にホストへ pull（全部 OK になるまで再実行）
 kind create cluster --config kind-weko-cluster.yaml --wait 120s
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
+bash k8s-weko-amd64/pull-images-amd64.sh load  # kind の全ノードへ読み込む
+curl -fsSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml \
+  | sed -E 's/(image: [^@[:space:]]+)@sha256:[0-9a-f]+/\1/' | kubectl apply -f -
 # ★ docker run ... tonistiigi/binfmt の手順は不要
 ```
 
@@ -684,7 +713,7 @@ kind load docker-image weko3-web:amd64 --name weko3
 docker build -f /home/mhaya/weko/elasticsearch/Dockerfile \
   --build-arg ELASTICSEARCH_S3_ACCESS_KEY=wekominio \
   --build-arg ELASTICSEARCH_S3_SECRET_KEY=wekominio-secret-key \
-  --build-arg ELASTICSEARCH_S3_ENDPOINT=http://minio:9000 \
+  --build-arg ELASTICSEARCH_S3_ENDPOINT=http://s3:9000 \
   --build-arg ELASTICSEARCH_S3_BUCKET=weko-esbackup \
   -t weko-elasticsearch:6.8.23 /home/mhaya/weko
 kind load docker-image weko-elasticsearch:6.8.23 --name weko3
@@ -705,7 +734,7 @@ sed -i 's#weko-elasticsearch:6.8.23-arm64#weko-elasticsearch:6.8.23#' 13-elastic
 
 ### C-4. デプロイ〜初期化〜疎通
 [本番忠実度アップグレード](#haクラスタ化operator方式と-arm64-ネイティブ化) / 付録B と同じ流れ:
-operator群(cert-manager / rabbitmq / postgres-operator) → `40〜51` 適用 → `gen-tenant.sh` → `provision-tenants.sh` → 各テナント `weko-init.sh` → admin_settings シード → **`set-s3-location.sh`（ファイル保存先を S3(MinIO) Location に）** → 疎通。
+operator群(cert-manager / rabbitmq / postgres-operator) → `40〜51` 適用 → `gen-tenant.sh` → `provision-tenants.sh` → 各テナント `weko-init.sh` → admin_settings シード → **`set-s3-location.sh`（ファイル保存先を S3 Location に）** → 疎通。
 （amd64 一式は `k8s-weko-amd64/deploy-amd64.sh` が 1)〜9) を一括実行。詳細は [`k8s-weko-amd64/README-amd64.md`](./k8s-weko-amd64/README-amd64.md)。）
 
 - **アプリ層バグ(/login, /api/records)**: 公開 `mhayashi55/weko3-web:latest` では発生しない（元々 200）。ソースからビルドした場合は arm64 と同じ app 層修正が効くよう `gen-tenant.sh` の該当修正を残す（`|| true` / 設定追記のみで無害）。
@@ -718,7 +747,7 @@ operator群(cert-manager / rabbitmq / postgres-operator) → `40〜51` 適用 �
 
 ## 付録D: arm64 で「現フル構成（最終形）」を素から一気通貫で構築する
 
-本文の HAクラスタ化・arm64ネイティブ化・NFS・S3(MinIO) Location を**段階ではなく1スクリプトで一括**構築する。
+本文の HAクラスタ化・arm64ネイティブ化・NFS・S3(SeaweedFS) Location を**段階ではなく1スクリプトで一括**構築する。
 到達点は**実機で稼働中の現構成そのもの**（付録B はここまで到達しないので注意 → 下表）。
 
 | | 付録B（ルートB） | **付録D（ルートD）** |
@@ -744,32 +773,37 @@ sudo sysctl -w vm.max_map_count=262144
 ### D-1. 実行（1コマンド）
 ```bash
 cd k8s-weko
+bash pull-images-arm64.sh                # 先に配布元イメージをホストへ pull（全部 OK になるまで再実行。pull 済みは飛ばす）
 bash deploy-arm64.sh                     # 1)クラスタ →9)疎通 まで一括（ES/weko の arm64 ビルド込み、数十分）
 # weko ソースが別パスなら: WEKO_SRC=/opt/weko bash deploy-arm64.sh
 # 既存クラスタへ再実行し INIT 列に従わせたい時: FORCE_INIT=no bash deploy-arm64.sh
 ```
 `deploy-arm64.sh` の流れ:
 0. **weko 最新ソースの取得/更新**（未取得なら `git clone`、既存なら `git pull`。`WEKO_REPO`/`WEKO_BRANCH`/`WEKO_SRC_UPDATE` で制御）
-1. kind クラスタ + ingress（**binfmt無し**）
+1. kind クラスタ作成 → **`pull-images-arm64.sh load`**（配布元イメージをホストで pull して kind に読み込む。失敗したら止まる）→ ingress（digest を落として apply。**binfmt無し**）
 2. イメージ: `weko3-web:arm64` / `weko3-nginx:arm64`（Shibboleth SP入り前段） / `weko-elasticsearch:6.8.23-arm64` を**最新ソースから** native ビルド → kind load。さらに `weko-pgpool:4.2.2-arm64`（公式 arm64 pgpool イメージが無いため自前ビルド）→ kind load。
    - **weko3-nginx** は `$WEKO_SRC/nginx/Dockerfile` からビルド。**arm64 固有の要点**: supervisord.conf が `shibauthorizer`/`shibresponder` のパスを `/usr/lib/x86_64-linux-gnu/shibboleth/` で決め打ちしているため、deploy-arm64.sh が RUN sed で `x86_64 → aarch64-linux-gnu` に置換してからビルドする（これを忘れると shibd が起動しない）。`.deb` 名の `focal_amd64.deb → focal_arm64.deb` 置換も行うが、現行ソースは Dockerfile が `focal_*.deb` のワイルドカードに修正済みのため実質 no-op（旧ソース互換で残置）。3イメージとも**レジストリ不要**（ローカルビルド→`kind load`、`imagePullPolicy: Never`）。既成イメージを使う時のみ `WEKO_IMAGE`/`WEKO_NGINX_IMAGE` を指定。
 3. operator: cert-manager / rabbitmq / **postgres-operator を `ghcr.io/zalando`(arm64)・spilo-17 にピン留め**
-4. 共有基盤: **ES3 / PG(Patroni)3 / RabbitMQ3 / Redis Sentinel / MinIO / NFS**（全PVC）＋ MinIO 共通バケット
+4. 共有基盤: **ES3 / PG(Patroni)3 / RabbitMQ3 / Redis Sentinel / S3(SeaweedFS) / NFS**（全PVC）＋ 共通バケット（`s3-create-buckets.sh weko-backup weko-content weko-esbackup`。作れなければここで止まる）
 5. PG `weko` PW を `weko` に固定（operator のリセット対策）
 5.5. **pgpool** を展開（weko と PostgreSQL の間：コネクションプール＋参照負荷分散→Patroni primary/replica）
 6. `gen-tenant.sh`→`provision-nfs.sh`（/fs-* にテナント別ディレクトリ作成＋nginx/Shibboleth設定投入）→apply→`provision-tenants.sh`
 7. 各テナント `weko-init.sh`（既定 `FORCE_INIT=yes`＝全テナント新規初期化・並列）
-8. admin_settings シード + **`set-s3-location.sh`（files_location を S3(MinIO) に）** + web 再起動
+8. admin_settings シード + **`set-s3-location.sh`（テナント別バケット作成 + files_location を S3 に。失敗したら止まる）** + web 再起動
 9. 疎通（`http://tenantN.localhost/`）
 
 > 完了後の期待: 両テナント `/`200・`/login/`200・`/admin/`302・`/api/records/`200、
-> PG master+replica×2 / RabbitMQ 3/3 / ES green・3ノード / Redis Sentinel 6/6 / MinIO 稼働、
+> PG master+replica×2 / RabbitMQ 3/3 / ES green・3ノード / Redis Sentinel 6/6 / S3(SeaweedFS) 稼働、
 > `files_location.type=s3`（`uri=s3://weko-<tenant>`）。ホストメモリ ~18GiB。
+
+> **MinIO 時代に作ったクラスタへ再実行する場合**: 手順4 が `deploy/minio` `svc/minio` `secret/minio-secret` を消して SeaweedFS に置き換える。
+> PVC `minio-data` は残すので、要らなければ `kubectl -n weko3 delete pvc minio-data`。
 
 ---
 
 ## 既知の注意点
 
 - **データ永続化なし**: PostgreSQL / Elasticsearch は `emptyDir`。Pod 再起動でデータ消失 → 再初期化が必要。永続化するなら PVC（kind の `standard` StorageClass）へ変更する。
+- **`ErrImagePull` / `ImagePullBackOff`（`toomanyrequests`）**: Docker Hub の匿名 pull 制限（IP ごとに6時間で100回）。`bash k8s-weko/pull-images-arm64.sh`（amd64 は `k8s-weko-amd64/pull-images-amd64.sh`）を全部 OK になるまで再実行し（制限中は `docker login` するか時間をおく）、`... load` で読み込んでから Pod を作り直す（deploy なら再実行）。
 - **エミュレーションで低速**: 初回リクエストや `invenio` コマンドは時間がかかる。2回目以降のページ表示は数秒。
 - **一部の本番 OKE 専用機能は不使用**: pgbouncer / WAF、および約10種のカスタムイメージは再現していない。（pgpool・Redis Sentinel・postgres-operator は現フル構成で導入済み。）

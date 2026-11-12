@@ -155,7 +155,7 @@ past this phase you can iterate with real feedback.
 
 **2-1. Image supply (nothing starts until this works)**
 1. Stand up a registry and push the three images (WEKO / ES / nginx)
-2. Delete all four `kind load docker-image` calls
+2. Delete all four `kind load docker-image` calls, and the `pull-images-amd64.sh load` call that pulls the third-party images on the host and loads them
 3. Fix all nine `imagePullPolicy: Never` occurrences
 4. Add `imagePullSecrets` to every Pod spec
 
@@ -163,7 +163,7 @@ past this phase you can iterate with real feedback.
 1. Replace `storageClassName: standard` in all six places
 2. **Delete `60-nfs-server.yaml` entirely** and provide external NFS
 3. Point `NFS_SERVER` at the real NFS; remove the dependency on `clusterIP: 10.96.0.99`
-4. Remove MinIO and point the S3 endpoint at real object storage (rewrite `set-s3-location.sh`)
+4. Remove SeaweedFS (`40-s3.yaml`) and point the S3 endpoint at real object storage (rewrite `set-s3-location.sh`)
 
 **2-3. Placement**
 1. Apply `nodeType` labels to the nodes (the two-value `WEKO`/`DATA` scheme is fine for now)
@@ -341,7 +341,7 @@ improve too. If the latter, consider feeding the change back upstream.
 - [ ] 9 `imagePullPolicy: Never` fixed; `imagePullSecrets` added
 - [ ] 6 `storageClassName: standard` replaced
 - [ ] `60-nfs-server.yaml` deleted, external NFS in use, hardcoded ClusterIP dependency gone
-- [ ] MinIO removed, real object storage in use
+- [ ] SeaweedFS removed, real object storage in use
 - [ ] `nodeType` labels applied
 - [ ] Privileged initContainer removed, sysctl set on nodes
 - [ ] Ingress controller and exposure path configured
