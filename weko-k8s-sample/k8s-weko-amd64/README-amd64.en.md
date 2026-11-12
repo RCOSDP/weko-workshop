@@ -2,8 +2,8 @@
 
 Manifests and scripts that build a production-like **JAIRO Cloud** environment, based on **WEKO3**, on a
 single amd64 Linux host using **kind** (Kubernetes-in-Docker). Everything is **amd64 native** and no
-external registry is needed: weko, nginx and ES are built locally from source and loaded straight into
-the kind nodes; only pgpool comes from the official image.
+registry of your own is needed: weko, nginx and ES are built locally from source, the third-party images
+(pgpool among them) are pulled on the host, and both are loaded straight into the kind nodes.
 
 Target host: **amd64 (x86_64) Linux / 64 GB RAM or more / plenty of free disk** (the reference machine
 has 20 cores and 121 GB RAM).
