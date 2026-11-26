@@ -441,7 +441,29 @@ fi
 # Applying the whole generated/ directory also applies stale manifests of tenants that were removed
 # from tenants.txt, creating orphan tenants that are never provisioned or initialized (and whose PVs
 # are Retain, so they linger). Apply only what tenants.txt lists, and just warn about leftovers.
+# 前回デプロイのテナント PV は Retain かつ cluster-scoped なので、ns を消しても `Released` のまま残り、
+# 消えた PVC への claimRef を持ち続ける。そのままだと同名の PVC がバインドできず、web pod が
+# `Pending`（unbound immediate PersistentVolumeClaims）で止まる。claimRef を外して `Available` に戻し、
+# NFS 上の中身を引き継ぐ。まっさらにしたい場合は UNDEPLOY の手順6で PV と NFS のディレクトリを消す。
+# Tenant PVs from a previous deployment are Retain and cluster-scoped, so deleting the namespace leaves
+# them `Released`, still holding a claimRef to the PVC that is gone. A new PVC with the same name then
+# cannot bind and the web pod stays `Pending` (unbound immediate PersistentVolumeClaims). Remove the
+# claimRef so the PV is `Available` again and the contents on NFS are carried over. To start clean
+# instead, remove the PVs and the NFS directories with step 6 of UNDEPLOY.
+release_tenant_pvs() {
+  local t=$1 v pv phase
+  for v in config data shib nginx; do
+    pv="${t}-${v}-pv"
+    phase=$(kubectl get pv "$pv" -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [ "$phase" = "Released" ]; then
+      echo "   PV $pv is Released (left over from a previous deployment): removing its claimRef to reuse it"
+      kubectl patch pv "$pv" --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]' >/dev/null \
+        || echo "WARNING: failed to remove the claimRef of PV $pv; the tenant PVC will stay Pending"
+    fi
+  done
+}
 for t in $(grep -vE '^\s*#|^\s*$' tenants.txt | awk '{print $1}'); do
+  release_tenant_pvs "$t"
   kubectl apply -f "generated/${t}.yaml"
 done
 for f in generated/*.yaml; do

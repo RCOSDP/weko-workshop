@@ -109,8 +109,9 @@ kubectl exec -n nfs-system $NFS -- rm -rf /export/fs-nginx/tenant1 /export/fs-sh
                                           /export/fs-config/tenant1 /export/fs-data/tenant1
 ```
 > テナント PV は `persistentVolumeReclaimPolicy: Retain` かつ namespace に属さないため、
-> `kubectl delete ns weko3` では**消えない**。消し忘れると `Released` のまま残り、次回デプロイで
-> PVC がバインドできずに web pod が `Pending` になる。
+> `kubectl delete ns weko3` では**消えない**。消し忘れると `Released` のまま残り、PVC がバインドできずに
+> web pod が `Pending` になる。`deploy-arm64.sh` は再実行時に claimRef を外して PV を再利用するが、
+> その場合は NFS 上の前回の中身がそのまま引き継がれる。まっさらにしたいならここで消す。
 >
 > 今後そのテナントを使わないなら `generated/tenant1.yaml` 自体も削除する。残しておくと
 > `tenants.txt` から外しても残骸として警告が出る。

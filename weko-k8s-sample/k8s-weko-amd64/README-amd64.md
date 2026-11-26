@@ -713,6 +713,33 @@ kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリ
 - **ファイル大**: S3 の PVC（`s3-data`、600Gi）拡大／ディスク増設。限界なら `set-s3-location.sh` の `S3_ENDPOINT` を外部S3に向ける。
 
 ## トラブルシュート
+### 見方の基本（Events とログ）
+Pod が動かないときは **`get` で STATUS を見る → おかしいものを `describe` して末尾の Events を読む →
+そこに出てきたリソース（PVC、PV、ノード…）へ移る**、を繰り返す。手がかりは2種類あり、見る場所が違う。
+
+| | Events | ログ |
+|---|---|---|
+| 出すもの | Kubernetes 自身（スケジューラ、kubelet など） | コンテナ内のアプリ（uwsgi / celery / nginx） |
+| 内容 | 置けない・マウントできない・イメージが無い | アプリのエラー、スタックトレース |
+| 見方 | `kubectl describe <種類> <名前>` の末尾、`kubectl get events` | `kubectl logs` |
+| 保持 | 約1時間で消える | コンテナが残っている間 |
+
+| STATUS | まず見るもの |
+|---|---|
+| `Pending` | `describe pod` の Events（`FailedScheduling` の `:` 以降が理由） |
+| `ContainerCreating` のまま / `ErrImagePull` / `ImagePullBackOff` | `describe pod` の Events（マウント失敗、イメージ不在） |
+| `Init:N/4` で止まる | `kubectl logs <pod> -c init`（他の init は `seed-data` `seed-static` `seed-nginx`） |
+| `CrashLoopBackOff` / `Error` / 画面が 500 | `kubectl logs <pod> -c web --previous`（worker / nginx も同様） |
+
+```bash
+kubectl get pod -n weko3
+kubectl describe pod -n weko3 <pod名> | tail -20               # 上の長い部分は設定の写し。答えは Events
+kubectl get events -n weko3 --sort-by=.lastTimestamp | tail -30 # namespace 全体を時系列で
+kubectl logs -n weko3 deploy/tenant1-web -c web -f              # Pod はコンテナが複数あるので -c 必須
+```
+コンテナが一度も起動していない（`Pending` など）ときはログは存在しない。Events だけが手がかりになる。
+
+### 症状別
 - **【最重要】原因不明の不調が同時多発する（`kind create` が間欠失敗 / cert-manager が
   `leader election lost` で CrashLoopBackOff / RabbitMQ が丸ごと作られない / `postgresql` CR が
   `SyncFailed` で `weko` ロールも DB も出来ない / pgpool が PostgreSQL にタイムアウト /
@@ -759,6 +786,24 @@ kubectl get pods -n weko3 -w     # Patroni のリーダー再選出と ES のリ
   `deploy-amd64.sh` は `tenants.txt` に載っているものだけを適用し、残骸は WARNING を出すよう修正済み。
   既に作られてしまった孤児は[手順別アンデプロイ](./UNDEPLOY-amd64.md)の手順6で消す
   （`generated/<tenant>.yaml` 自体も不要なら削除する）。
+- **テナントの web pod が `Pending` のまま。Events が `pod has unbound immediate PersistentVolumeClaims`、
+  PVC の Events が `no volume plugin matched name: kubernetes.io/no-provisioner`** → 前回デプロイの
+  テナント PV が **`Released` のまま残っている**。`kubectl get pv | grep <tenant>` で STATUS が `Released`、
+  CLAIM が `weko3/<tenant>-conf` など、AGE が PVC より古ければ確定。テナント PV は `Retain` かつ
+  cluster-scoped なので `kubectl delete ns weko3` では消えず、前の PVC への `claimRef` を持ち続ける。
+  そのため同名の PVC を作り直してもバインドできない（`no-provisioner` のエラーは、合う PV が無いので
+  動的作成を試みて失敗しているだけの副次的なもの）。NFS 上の中身を引き継いでよければ claimRef を外す。
+  `deploy-amd64.sh` はテナントを適用する前にこれを自動で行うので（修正済み）、**再実行すれば直る**。
+  手で直す場合は次のとおり。外すと PV が `Available` に戻ってすぐバインドされ、Pod は再デプロイなしで
+  スケジュールされる:
+  ```bash
+  for v in config data shib nginx; do
+    kubectl patch pv <tenant>-$v-pv --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
+  done
+  ```
+  conf は init コンテナが毎回上書きするが、data / nginx の seed は `cp -an`（既存を上書きしない）なので、
+  前回のファイルがそのまま使われる。DB を作り直しているなど、まっさらにしたい場合は
+  [UNDEPLOY-amd64.md](./UNDEPLOY-amd64.md#6-テナント展開) の手順6で PV と NFS 上のディレクトリを消してから再デプロイする。
 - **手順9が `http:308 https:502`（または `https:502`）で終わる** → デプロイは成功しており、
   **web pod の起動待ちに過ぎない**ことがほとんど。数十秒おいて確認すると 200 になる:
   ```bash

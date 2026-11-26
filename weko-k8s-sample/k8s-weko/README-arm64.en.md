@@ -937,6 +937,34 @@ To undo specific steps while keeping the cluster (rebuild one tenant, replace an
   `set-s3-location.sh` at an external S3.
 
 ## If something goes wrong
+### How to look (Events and logs)
+When a Pod will not run, repeat: **`get` to read the STATUS → `describe` whatever looks wrong and read the
+Events at the bottom → move on to the resource they name (PVC, PV, node…)**. There are two kinds of clue,
+and they live in different places.
+
+| | Events | Logs |
+|---|---|---|
+| Written by | Kubernetes itself (scheduler, kubelet, …) | the app inside the container (uwsgi / celery / nginx) |
+| Content | cannot be placed / cannot mount / image missing | app errors, stack traces |
+| How to read | bottom of `kubectl describe <kind> <name>`, `kubectl get events` | `kubectl logs` |
+| Kept for | about an hour | as long as the container exists |
+
+| STATUS | Look at first |
+|---|---|
+| `Pending` | Events of `describe pod` (the reason follows the `:` in `FailedScheduling`) |
+| stuck in `ContainerCreating` / `ErrImagePull` / `ImagePullBackOff` | Events of `describe pod` (mount failure, missing image) |
+| stuck at `Init:N/4` | `kubectl logs <pod> -c init` (the other init containers are `seed-data` `seed-static` `seed-nginx`) |
+| `CrashLoopBackOff` / `Error` / the page returns 500 | `kubectl logs <pod> -c web --previous` (same for worker / nginx) |
+
+```bash
+kubectl get pod -n weko3
+kubectl describe pod -n weko3 <pod> | tail -20                   # the long top part is a copy of the spec; the answer is in Events
+kubectl get events -n weko3 --sort-by=.lastTimestamp | tail -30  # the whole namespace, in time order
+kubectl logs -n weko3 deploy/tenant1-web -c web -f               # the Pod has several containers, so -c is required
+```
+A container that never started (`Pending` and the like) has no logs; the Events are the only clue.
+
+### By symptom
 - **[READ THIS FIRST] Many unrelated-looking things break at once (`kind create` fails intermittently /
   cert-manager CrashLoopBackOff with `leader election lost` / RabbitMQ never gets created at all / the
   `postgresql` CR sits at `SyncFailed` so neither the `weko` role nor the databases exist / pgpool times
@@ -985,6 +1013,24 @@ To undo specific steps while keeping the cluster (rebuild one tenant, replace an
   `deploy-arm64.sh` now applies only what `tenants.txt` lists and warns about leftovers. Remove an
   orphan that already exists with step 6 of [UNDEPLOY-arm64.en.md](./UNDEPLOY-arm64.en.md) (and delete
   `generated/<tenant>.yaml` itself if you no longer need it).
+- **A tenant web pod stays `Pending`, its Events say `pod has unbound immediate PersistentVolumeClaims`
+  and the PVC's Events say `no volume plugin matched name: kubernetes.io/no-provisioner`** → the
+  tenant PVs from a previous deployment **are still `Released`**. It is this when `kubectl get pv | grep <tenant>`
+  shows STATUS `Released`, CLAIM `weko3/<tenant>-conf` and so on, and an AGE older than the PVC. Tenant PVs are
+  `Retain` and cluster-scoped, so `kubectl delete ns weko3` does not remove them and they keep a `claimRef`
+  to the old PVC; a new PVC with the same name then cannot bind. (The `no-provisioner` error is only a side
+  effect: with no matching PV the controller tries dynamic provisioning and fails.) If carrying over the
+  contents on NFS is fine, remove the claimRef. The PV goes back to `Available`, binds at once, and the Pod
+  is scheduled without a redeploy. `deploy-arm64.sh` now does this before applying each tenant, so
+  **re-running it fixes this**; by hand:
+  ```bash
+  for v in config data shib nginx; do
+    kubectl patch pv <tenant>-$v-pv --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
+  done
+  ```
+  The init container rewrites conf every time, but the data / nginx seeds use `cp -an` (never overwrite), so
+  the previous files are kept. To start clean (for example because the database was recreated), remove the
+  PVs and the directories on NFS with step 6 of [UNDEPLOY-arm64.en.md](./UNDEPLOY-arm64.en.md#6-tenant-deployment) and redeploy.
 - **Step 9 ends with `http:308 https:502` (or just `https:502`)** → the deployment almost always
   succeeded and **the web pod is simply still starting**. Check again after a few tens of seconds:
   ```bash
